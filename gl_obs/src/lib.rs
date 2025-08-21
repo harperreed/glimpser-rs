@@ -159,8 +159,7 @@ async fn readiness(state: web::Data<ObsState>) -> ActixResult<HttpResponse> {
 async fn metrics(state: web::Data<ObsState>) -> ActixResult<HttpResponse> {
     tracing::debug!("Metrics scrape requested");
     
-    // Record request metric
-    state.metrics.inc_requests();
+    // Don't increment metrics counter for metrics endpoint to avoid feedback loop
     
     match state.metrics.encode() {
         Ok(metrics_text) => {
@@ -178,17 +177,6 @@ async fn metrics(state: web::Data<ObsState>) -> ActixResult<HttpResponse> {
     }
 }
 
-/// Tracing middleware factory
-pub fn tracing_middleware() -> actix_web::middleware::DefaultHeaders {
-    use actix_web::http::header::{HeaderName, HeaderValue};
-    
-    // For now, use DefaultHeaders as a placeholder - we'll add proper tracing in the handlers
-    actix_web::middleware::DefaultHeaders::new()
-        .add((
-            HeaderName::from_static("x-request-id"), 
-            HeaderValue::from_static("placeholder")
-        ))
-}
 
 /// Create observability service factory
 pub fn create_service(state: ObsState) -> App<
@@ -283,7 +271,7 @@ mod tests {
     async fn test_metrics_endpoint() {
         let state = ObsState::new();
         
-        // Record some metrics
+        // Record some metrics (but not from the metrics endpoint itself)
         state.metrics.inc_requests();
         state.metrics.observe_duration(0.5);
         

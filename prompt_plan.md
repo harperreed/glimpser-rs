@@ -235,7 +235,7 @@ Wire-up:
 
 ---
 
-### Prompt 04 — Observability Service (Health & Metrics)
+### Prompt 04 — Observability Service (Health & Metrics) ✅ COMPLETED
 
 ```text
 Add crate `gl_obs`:

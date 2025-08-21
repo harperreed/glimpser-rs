@@ -263,6 +263,11 @@ impl Config {
         if let Ok(pool_size) = std::env::var("GLIMPSER_DATABASE_POOL_SIZE") {
             builder = builder.set_override("database.pool_size", pool_size)?;
         }
+        
+        // Server observability port
+        if let Ok(obs_port) = std::env::var("GLIMPSER_SERVER_OBS_PORT") {
+            builder = builder.set_override("server.obs_port", obs_port)?;
+        }
 
         // Try to load from .env file if it exists (optional)
         if std::path::Path::new(".env").exists() {

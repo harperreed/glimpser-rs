@@ -35,11 +35,10 @@ async fn main() {
     let obs_bind_addr = format!("0.0.0.0:{}", config.server.obs_port);
     tracing::info!("Starting observability server on {}", obs_bind_addr);
     
-    // Start the observability server (this will run indefinitely)
+    // For this prompt, the observability server IS the main application
+    // Future prompts will add the business logic server alongside this
     if let Err(e) = gl_obs::start_server(&obs_bind_addr, obs_state).await {
         tracing::error!("Failed to start observability server: {}", e);
         process::exit(1);
     }
-    
-    tracing::info!("Observability server started successfully");
 }
