@@ -1,0 +1,18 @@
+# ABOUTME: Core types, errors, IDs, and tracing utilities
+# ABOUTME: Foundation crate used by all other glimpser components
+
+[package]
+name = "gl_core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+test_support = { path = "../test_support" }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ulid.workspace = true
+tokio.workspace = true

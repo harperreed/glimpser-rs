@@ -1,0 +1,15 @@
+# ABOUTME: Web API layer with authentication and routing
+# ABOUTME: Provides REST endpoints and OpenAPI documentation
+
+[package]
+name = "gl_web"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+gl_db = { path = "../gl_db" }
+actix-web.workspace = true
+serde.workspace = true
+serde_json.workspace = true

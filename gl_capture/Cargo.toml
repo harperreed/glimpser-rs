@@ -1,0 +1,13 @@
+# ABOUTME: Capture engine for various media sources (ffmpeg, websites, files)
+# ABOUTME: Provides trait-based capture abstractions and implementations
+
+[package]
+name = "gl_capture"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+gl_proc = { path = "../gl_proc" }
+tokio.workspace = true

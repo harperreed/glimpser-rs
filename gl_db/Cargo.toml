@@ -1,0 +1,13 @@
+# ABOUTME: Database layer with SQLite, migrations, and repositories
+# ABOUTME: Handles all data persistence and database operations
+
+[package]
+name = "gl_db"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+sqlx.workspace = true
+serde.workspace = true

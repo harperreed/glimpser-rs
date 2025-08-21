@@ -1,0 +1,12 @@
+# ABOUTME: Process runner for external commands with timeouts and logging
+# ABOUTME: Manages execution of ffmpeg, yt-dlp, and other external tools
+
+[package]
+name = "gl_proc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+tokio.workspace = true

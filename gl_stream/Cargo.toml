@@ -1,0 +1,14 @@
+# ABOUTME: Streaming services for MJPEG and RTSP video streams
+# ABOUTME: Provides real-time video streaming capabilities
+
+[package]
+name = "gl_stream"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+gl_capture = { path = "../gl_capture" }
+actix-web.workspace = true
+tokio.workspace = true

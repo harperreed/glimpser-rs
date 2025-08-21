@@ -1,0 +1,13 @@
+# ABOUTME: Job scheduler with cron support and database persistence
+# ABOUTME: Manages scheduled capture jobs and recurring tasks
+
+[package]
+name = "gl_sched"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+gl_db = { path = "../gl_db" }
+tokio.workspace = true

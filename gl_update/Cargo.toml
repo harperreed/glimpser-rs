@@ -1,0 +1,12 @@
+# ABOUTME: Auto-update system with signature verification
+# ABOUTME: Manages application updates and rollbacks safely
+
+[package]
+name = "gl_update"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+tokio.workspace = true

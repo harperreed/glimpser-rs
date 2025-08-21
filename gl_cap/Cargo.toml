@@ -1,0 +1,12 @@
+# ABOUTME: CAP (Common Alerting Protocol) message builder and validator
+# ABOUTME: Creates standardized emergency alert messages
+
+[package]
+name = "gl_cap"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+serde.workspace = true
