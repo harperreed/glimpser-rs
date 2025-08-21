@@ -168,7 +168,7 @@ Below are representative “micro-steps” (we’ll push deeper for the early fo
 
 ---
 
-### Prompt 01 — Initialize Workspace, CI, and Tooling
+### Prompt 01 — Initialize Workspace, CI, and Tooling ✅ COMPLETED
 
 ```text
 You are implementing the initial Rust workspace for "glimpser".
@@ -193,7 +193,7 @@ Deliverables:
 
 ---
 
-### Prompt 02 — Core Types, Errors, and Tracing Bootstrap
+### Prompt 02 — Core Types, Errors, and Tracing Bootstrap ✅ COMPLETED
 
 ```text
 Extend `gl_core` with:
