@@ -13,5 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 gl_core = { path = "../gl_core" }
+gl_config = { path = "../gl_config" }
 tokio.workspace = true
 tracing.workspace = true

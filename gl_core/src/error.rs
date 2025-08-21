@@ -11,5 +11,11 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
+impl From<config::ConfigError> for Error {
+    fn from(err: config::ConfigError) -> Self {
+        Error::Config(err.to_string())
+    }
+}
+
 /// Result type alias
 pub type Result<T> = std::result::Result<T, Error>;

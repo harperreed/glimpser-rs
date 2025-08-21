@@ -39,5 +39,9 @@ actix-web = "4.9"
 # Database
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
 
+# Configuration
+config = "0.14"
+validator = { version = "0.18", features = ["derive"] }
+
 # Testing
 wiremock = "0.6"
