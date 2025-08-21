@@ -11,11 +11,16 @@ use validator::Validate;
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
 #[serde(default)]
 pub struct Config {
+    #[validate(nested)]
     pub server: ServerConfig,
+    #[validate(nested)]
     pub database: DatabaseConfig,
+    #[validate(nested)]
     pub security: SecurityConfig,
     pub features: FeaturesConfig,
+    #[validate(nested)]
     pub external: ExternalConfig,
+    #[validate(nested)]
     pub storage: StorageConfig,
 }
 
@@ -26,6 +31,8 @@ pub struct ServerConfig {
     pub host: String,
     #[validate(range(min = 1, max = 65535))]
     pub port: u16,
+    #[validate(range(min = 1, max = 65535))]
+    pub obs_port: u16,
 }
 
 impl Default for ServerConfig {
@@ -33,6 +40,7 @@ impl Default for ServerConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 8080,
+            obs_port: 9000,
         }
     }
 }
@@ -224,31 +232,49 @@ impl Config {
     pub fn load() -> Result<Self> {
         let mut builder = ConfigBuilder::builder();
 
-        // Try to load from .env file if it exists (optional)
-        if std::path::Path::new(".env").exists() {
-            builder = builder.add_source(File::with_name(".env").required(false));
-        }
-
-        // Load from environment variables with GLIMPSER_ prefix
-        builder = builder.add_source(Environment::with_prefix("GLIMPSER").separator("_"));
-
-        // Set defaults
+        // Set defaults first
         builder = builder
             .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 8080)?
+            .set_default("server.obs_port", 9000)?
             .set_default("database.path", "glimpser.db")?
             .set_default("database.pool_size", 10)?
             .set_default("database.sqlite_wal", true)?
-            .set_default("security.jwt_secret", format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", 
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos()))?
             .set_default("security.argon2_params.memory_cost", 19456)?
             .set_default("security.argon2_params.time_cost", 2)?
             .set_default("security.argon2_params.parallelism", 1)?
             .set_default("features.enable_rtsp", false)?
             .set_default("features.enable_ai", false)?;
+
+        // Handle nested environment variables that don't work with the standard separator
+        // JWT secret
+        if let Ok(jwt_secret) = std::env::var("GLIMPSER_SECURITY_JWT_SECRET") {
+            builder = builder.set_override("security.jwt_secret", jwt_secret)?;
+        } else {
+            let default_jwt_secret = format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", 
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos());
+            builder = builder.set_default("security.jwt_secret", default_jwt_secret)?;
+        }
+        
+        // Database pool size
+        if let Ok(pool_size) = std::env::var("GLIMPSER_DATABASE_POOL_SIZE") {
+            builder = builder.set_override("database.pool_size", pool_size)?;
+        }
+
+        // Try to load from .env file if it exists (optional)
+        if std::path::Path::new(".env").exists() {
+            builder = builder.add_source(File::with_name(".env").required(false));
+        }
+
+        // Load from environment variables with GLIMPSER_ prefix (highest priority)
+        builder = builder.add_source(
+            Environment::with_prefix("GLIMPSER")
+                .try_parsing(true)
+                .separator("_")
+        );
 
         let config = builder.build()
             .map_err(|e| Error::Config(format!("Failed to build config: {}", e)))?;
@@ -257,7 +283,8 @@ impl Config {
             .map_err(|e| Error::Config(format!("Failed to deserialize config: {}", e)))?;
 
         // Validate the configuration
-        parsed.validate()
+        let validation_result = parsed.validate();
+        validation_result
             .map_err(|e| Error::Config(format!("Config validation failed: {}", e)))?;
 
         Ok(parsed)
@@ -289,6 +316,8 @@ mod tests {
             "GLIMPSER_SERVER_HOST",
             "GLIMPSER_SERVER_PORT",
             "GLIMPSER_DATABASE_PATH",
+            "GLIMPSER_DATABASE_POOL_SIZE",
+            "GLIMPSER_SECURITY_JWT_SECRET",
         ];
         
         let original_values: Vec<_> = vars_to_clear
@@ -326,6 +355,7 @@ mod tests {
         
         env::set_var("GLIMPSER_SERVER_HOST", "0.0.0.0");
         env::set_var("GLIMPSER_SERVER_PORT", "9000");
+        env::set_var("GLIMPSER_SECURITY_JWT_SECRET", "valid32characterjwtsecretfortest"); // Valid length
         
         let config = Config::load().expect("Should load from env");
         
@@ -335,6 +365,7 @@ mod tests {
         // Cleanup
         env::remove_var("GLIMPSER_SERVER_HOST");
         env::remove_var("GLIMPSER_SERVER_PORT");
+        env::remove_var("GLIMPSER_SECURITY_JWT_SECRET");
     }
 
     #[test]
@@ -364,7 +395,7 @@ mod tests {
         
         // Secrets should be redacted
         assert!(debug_output.contains("[REDACTED]"));
-        assert!(!debug_output.contains("change-me-in-production"));
+        assert!(!debug_output.contains("INSECURE-RANDOM"));
     }
 
     #[test]

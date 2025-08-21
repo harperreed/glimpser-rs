@@ -36,6 +36,10 @@ ulid = { version = "1.2", features = ["serde"] }
 # Web framework
 actix-web = "4.9"
 
+# Observability
+prometheus-client = "0.22"
+uuid = { version = "1.10", features = ["v4"] }
+
 # Database
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
 

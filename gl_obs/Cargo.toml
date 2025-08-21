@@ -12,3 +12,10 @@ gl_core = { path = "../gl_core" }
 actix-web.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+prometheus-client.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+# actix-web test utilities are available by default in the main crate
