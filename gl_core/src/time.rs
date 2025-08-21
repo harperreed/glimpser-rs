@@ -38,6 +38,19 @@ pub fn to_rfc3339(time: SystemTime) -> String {
     format!("{}.{:09}", secs, nanos)
 }
 
+/// Get current time as ISO 8601 formatted string (simplified)
+/// 
+/// # Examples
+///
+/// ```
+/// use gl_core::time::now_iso8601;
+/// let timestamp = now_iso8601();
+/// assert!(!timestamp.is_empty());
+/// ```
+pub fn now_iso8601() -> String {
+    to_rfc3339(utc_now())
+}
+
 /// Create a monotonic duration measurer
 ///
 /// # Examples

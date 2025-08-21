@@ -7,6 +7,12 @@ pub enum Error {
     #[error("Database error: {0}")]
     Database(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

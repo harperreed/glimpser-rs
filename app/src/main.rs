@@ -1,5 +1,6 @@
 use gl_config::Config;
 use gl_core::telemetry;
+use gl_db::Db;
 use gl_obs::ObsState;
 use std::process;
 
@@ -27,6 +28,24 @@ async fn main() {
         db_path = %config.database.path,
         "Application configured and ready"
     );
+
+    // Initialize database with migrations
+    let db = match Db::new(&config.database.path).await {
+        Ok(db) => {
+            tracing::info!("Database initialized successfully");
+            db
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize database: {}", e);
+            process::exit(1);
+        }
+    };
+
+    // Verify database health
+    if let Err(e) = db.health_check().await {
+        tracing::error!("Database health check failed: {}", e);
+        process::exit(1);
+    }
 
     // Initialize observability state
     let obs_state = ObsState::new();
