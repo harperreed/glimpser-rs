@@ -67,8 +67,15 @@ pub struct SecurityConfig {
 
 impl Default for SecurityConfig {
     fn default() -> Self {
+        // Generate a random JWT secret by default for security
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        
         Self {
-            jwt_secret: "change-me-in-production-min-32-chars-long".to_string(),
+            jwt_secret: format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", timestamp),
             argon2_params: Argon2Config::default(),
         }
     }
@@ -86,11 +93,11 @@ impl fmt::Debug for SecurityConfig {
 /// Argon2 parameters
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
 pub struct Argon2Config {
-    #[validate(range(min = 1, max = 100))]
+    #[validate(range(min = 1024, max = 1048576))] // 1 KiB to 1 GiB
     pub memory_cost: u32,
     #[validate(range(min = 1, max = 100))]
     pub time_cost: u32,
-    #[validate(range(min = 1, max = 100))]
+    #[validate(range(min = 1, max = 16))]
     pub parallelism: u32,
 }
 
@@ -232,7 +239,11 @@ impl Config {
             .set_default("database.path", "glimpser.db")?
             .set_default("database.pool_size", 10)?
             .set_default("database.sqlite_wal", true)?
-            .set_default("security.jwt_secret", "change-me-in-production-min-32-chars-long")?
+            .set_default("security.jwt_secret", format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", 
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()))?
             .set_default("security.argon2_params.memory_cost", 19456)?
             .set_default("security.argon2_params.time_cost", 2)?
             .set_default("security.argon2_params.parallelism", 1)?

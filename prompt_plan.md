@@ -213,7 +213,7 @@ Wire-up:
 
 ---
 
-### Prompt 03 — Typed Config With Validation
+### Prompt 03 — Typed Config With Validation ✅ COMPLETED
 
 ```text
 Create crate `gl_config`:
