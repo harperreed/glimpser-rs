@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+  <identifier>test-alert-123</identifier>
+  <sender>test.example.org</sender>
+  <sent>2023-01-01T12:00:00Z</sent>
+  <status>Test</status>
+  <msgType>Alert</msgType>
+  <scope>Public</scope>
+  <info>
+    <language>en-US</language>
+    <category>Other</category>
+    <event>Test Event</event>
+    <urgency>Future</urgency>
+    <severity>Minor</severity>
+    <certainty>Unknown</certainty>
+    <headline>TEST ALERT - NO ACTION REQUIRED</headline>
+    <description>This is a test of the emergency alert system. No action is required.</description>
+    <instruction>This is only a test. Please disregard this message.</instruction>
+    <expires>2023-01-01T12:15:00Z</expires>
+    <senderName>Emergency Alert System</senderName>
+  </info>
+</alert>

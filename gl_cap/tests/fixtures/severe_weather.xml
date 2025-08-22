@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+  <identifier>severe-weather-456</identifier>
+  <sender>weather.example.org</sender>
+  <sent>2023-06-15T14:30:00Z</sent>
+  <status>Actual</status>
+  <msgType>Alert</msgType>
+  <scope>Public</scope>
+  <info>
+    <language>en-US</language>
+    <category>Met</category>
+    <event>Severe Weather Alert</event>
+    <responseType>Prepare</responseType>
+    <responseType>Monitor</responseType>
+    <urgency>Expected</urgency>
+    <severity>Severe</severity>
+    <certainty>Likely</certainty>
+    <headline>Severe Weather Warning</headline>
+    <description>Severe thunderstorms with damaging winds and large hail are expected across the region.</description>
+    <instruction>Secure outdoor objects and avoid unnecessary travel. Monitor local conditions closely.</instruction>
+    <effective>2023-06-15T15:00:00Z</effective>
+    <expires>2023-06-15T19:00:00Z</expires>
+    <senderName>National Weather Service</senderName>
+    <area>
+      <areaDesc>Downtown Area</areaDesc>
+      <circle>42.0,-71.0 10.0</circle>
+      <geocode>
+        <valueName>FIPS6</valueName>
+        <value>25025</value>
+      </geocode>
+    </area>
+  </info>
+</alert>

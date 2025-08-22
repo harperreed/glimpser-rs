@@ -10,3 +10,20 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 serde.workspace = true
+serde_json.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
+thiserror.workspace = true
+
+# XML processing
+quick-xml = { version = "0.36", features = ["serialize"] }
+url = { version = "2.5", features = ["serde"] }
+
+# Optional XSD validation (placeholder for now)
+# xmlschema = { version = "0.1", optional = true }
+
+[dev-dependencies]
+test_support = { path = "../test_support" }
+
+[features]
+default = []
+xsd-validation = []  # Placeholder for future XSD validation

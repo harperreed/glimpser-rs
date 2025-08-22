@@ -15,3 +15,10 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+test_*.db*
+glimpser.db*

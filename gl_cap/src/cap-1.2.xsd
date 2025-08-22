@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 
+  CAP 1.2 XML Schema Definition (Simplified)
+  This is a minimal schema for basic CAP validation.
+  For full validation, use the official OASIS CAP 1.2 schema.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:oasis:names:tc:emergency:cap:1.2"
+           xmlns="urn:oasis:names:tc:emergency:cap:1.2"
+           elementFormDefault="qualified">
+
+  <!-- Root Alert Element -->
+  <xs:element name="alert" type="AlertType"/>
+
+  <!-- Alert Type Definition -->
+  <xs:complexType name="AlertType">
+    <xs:sequence>
+      <xs:element name="identifier" type="xs:string"/>
+      <xs:element name="sender" type="xs:string"/>
+      <xs:element name="sent" type="xs:dateTime"/>
+      <xs:element name="status" type="StatusType"/>
+      <xs:element name="msgType" type="MsgTypeType"/>
+      <xs:element name="scope" type="ScopeType"/>
+      <xs:element name="source" type="xs:string" minOccurs="0"/>
+      <xs:element name="restriction" type="xs:string" minOccurs="0"/>
+      <xs:element name="addresses" type="xs:string" minOccurs="0"/>
+      <xs:element name="code" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="note" type="xs:string" minOccurs="0"/>
+      <xs:element name="references" type="xs:string" minOccurs="0"/>
+      <xs:element name="incidents" type="xs:string" minOccurs="0"/>
+      <xs:element name="info" type="InfoType" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="xmlns" type="xs:anyURI" use="required"/>
+  </xs:complexType>
+
+  <!-- Info Type Definition -->
+  <xs:complexType name="InfoType">
+    <xs:sequence>
+      <xs:element name="language" type="xs:string" minOccurs="0"/>
+      <xs:element name="category" type="CategoryType" maxOccurs="unbounded"/>
+      <xs:element name="event" type="xs:string"/>
+      <xs:element name="responseType" type="ResponseTypeType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="urgency" type="UrgencyType"/>
+      <xs:element name="severity" type="SeverityType"/>
+      <xs:element name="certainty" type="CertaintyType"/>
+      <xs:element name="audience" type="xs:string" minOccurs="0"/>
+      <xs:element name="eventCode" type="EventCodeType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="effective" type="xs:dateTime" minOccurs="0"/>
+      <xs:element name="onset" type="xs:dateTime" minOccurs="0"/>
+      <xs:element name="expires" type="xs:dateTime" minOccurs="0"/>
+      <xs:element name="senderName" type="xs:string" minOccurs="0"/>
+      <xs:element name="headline" type="xs:string" minOccurs="0"/>
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="instruction" type="xs:string" minOccurs="0"/>
+      <xs:element name="web" type="xs:anyURI" minOccurs="0"/>
+      <xs:element name="contact" type="xs:string" minOccurs="0"/>
+      <xs:element name="parameter" type="ParameterType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="resource" type="ResourceType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="area" type="AreaType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Area Type Definition -->
+  <xs:complexType name="AreaType">
+    <xs:sequence>
+      <xs:element name="areaDesc" type="xs:string"/>
+      <xs:element name="polygon" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="circle" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="geocode" type="GeocodeType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="altitude" type="xs:decimal" minOccurs="0"/>
+      <xs:element name="ceiling" type="xs:decimal" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Resource Type Definition -->
+  <xs:complexType name="ResourceType">
+    <xs:sequence>
+      <xs:element name="resourceDesc" type="xs:string"/>
+      <xs:element name="mimeType" type="xs:string"/>
+      <xs:element name="size" type="xs:nonNegativeInteger" minOccurs="0"/>
+      <xs:element name="uri" type="xs:anyURI" minOccurs="0"/>
+      <xs:element name="derefUri" type="xs:string" minOccurs="0"/>
+      <xs:element name="digest" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Simple Type Definitions -->
+  <xs:complexType name="EventCodeType">
+    <xs:sequence>
+      <xs:element name="valueName" type="xs:string"/>
+      <xs:element name="value" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="ParameterType">
+    <xs:sequence>
+      <xs:element name="valueName" type="xs:string"/>
+      <xs:element name="value" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="GeocodeType">
+    <xs:sequence>
+      <xs:element name="valueName" type="xs:string"/>
+      <xs:element name="value" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Enumerated Types -->
+  <xs:simpleType name="StatusType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Actual"/>
+      <xs:enumeration value="Exercise"/>
+      <xs:enumeration value="System"/>
+      <xs:enumeration value="Test"/>
+      <xs:enumeration value="Draft"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="MsgTypeType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Alert"/>
+      <xs:enumeration value="Update"/>
+      <xs:enumeration value="Cancel"/>
+      <xs:enumeration value="Ack"/>
+      <xs:enumeration value="Error"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ScopeType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Public"/>
+      <xs:enumeration value="Restricted"/>
+      <xs:enumeration value="Private"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CategoryType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Geo"/>
+      <xs:enumeration value="Met"/>
+      <xs:enumeration value="Safety"/>
+      <xs:enumeration value="Security"/>
+      <xs:enumeration value="Rescue"/>
+      <xs:enumeration value="Fire"/>
+      <xs:enumeration value="Health"/>
+      <xs:enumeration value="Env"/>
+      <xs:enumeration value="Transport"/>
+      <xs:enumeration value="Infra"/>
+      <xs:enumeration value="CBRNE"/>
+      <xs:enumeration value="Other"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="UrgencyType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Immediate"/>
+      <xs:enumeration value="Expected"/>
+      <xs:enumeration value="Future"/>
+      <xs:enumeration value="Past"/>
+      <xs:enumeration value="Unknown"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="SeverityType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Extreme"/>
+      <xs:enumeration value="Severe"/>
+      <xs:enumeration value="Moderate"/>
+      <xs:enumeration value="Minor"/>
+      <xs:enumeration value="Unknown"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CertaintyType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Observed"/>
+      <xs:enumeration value="Likely"/>
+      <xs:enumeration value="Possible"/>
+      <xs:enumeration value="Unlikely"/>
+      <xs:enumeration value="Unknown"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ResponseTypeType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Shelter"/>
+      <xs:enumeration value="Evacuate"/>
+      <xs:enumeration value="Prepare"/>
+      <xs:enumeration value="Execute"/>
+      <xs:enumeration value="Avoid"/>
+      <xs:enumeration value="Monitor"/>
+      <xs:enumeration value="Assess"/>
+      <xs:enumeration value="AllClear"/>
+      <xs:enumeration value="None"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+</xs:schema>

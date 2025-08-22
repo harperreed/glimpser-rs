@@ -9,5 +9,35 @@ rust-version.workspace = true
 
 [dependencies]
 gl_core = { path = "../gl_core" }
+gl_cap = { path = "../gl_cap" }
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
+url = { version = "2.5", features = ["serde"] }
+thiserror.workspace = true
+
+# SMTP support
+lettre = { version = "0.11", default-features = false, features = ["tokio1-native-tls", "smtp-transport", "builder"] }
+
+# HTTP client for webhooks and SMS
+reqwest = { version = "0.12", features = ["json"] }
+
+# WebPush support (optional)
+web-push = { version = "0.10", optional = true }
+
+# Simple retry logic (no external backoff crate needed)
+
+# Circuit breaker - using simple internal implementation
+
+[dev-dependencies]
+test_support = { path = "../test_support" }
+wiremock.workspace = true
+tokio-test = "0.4"
+
+[features]
+default = []
+webpush = ["dep:web-push"]
