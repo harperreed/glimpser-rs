@@ -308,7 +308,7 @@ Wire-up:
 
 ---
 
-### Prompt 07 — Process Runner (`gl_proc`) With Timeouts & Logs
+### Prompt 07 — Process Runner (`gl_proc`) With Timeouts & Logs ✅ COMPLETED
 
 ```text
 Create `gl_proc`:

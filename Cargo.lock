@@ -949,9 +949,14 @@ dependencies = [
 name = "gl_capture"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bytes",
  "gl_core",
  "gl_proc",
+ "serde",
+ "test_support",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1070,6 +1075,7 @@ dependencies = [
  "actix-web",
  "argon2",
  "futures-util",
+ "gl_capture",
  "gl_core",
  "gl_db",
  "jsonwebtoken",

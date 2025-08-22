@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_db = { path = "../gl_db" }
+gl_capture = { path = "../gl_capture" }
 actix-web.workspace = true
 serde.workspace = true
 serde_json.workspace = true

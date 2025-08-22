@@ -10,4 +10,9 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_proc = { path = "../gl_proc" }
+test_support = { path = "../test_support" }
 tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true
+bytes.workspace = true
+async-trait.workspace = true

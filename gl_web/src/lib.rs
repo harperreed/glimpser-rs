@@ -12,7 +12,7 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 
-use routes::{admin, auth as auth_routes, public};
+use routes::{admin, auth as auth_routes, public, stream};
 
 /// Application state shared across all handlers
 #[derive(Debug, Clone)]
@@ -27,6 +27,7 @@ pub struct AppState {
     paths(
         auth_routes::login,
         public::me,
+        stream::snapshot,
     ),
     components(
         schemas(
@@ -41,6 +42,7 @@ pub struct AppState {
         (name = "auth", description = "Authentication endpoints"),
         (name = "public", description = "Public endpoints"),
         (name = "admin", description = "Admin endpoints"),
+        (name = "stream", description = "Stream snapshot endpoints"),
     )
 )]
 pub struct ApiDoc;
@@ -78,6 +80,11 @@ pub fn create_app(state: AppState) -> App<
                         .wrap(middleware::auth::RequireAuth::new())
                         .wrap(middleware::rbac::RequireRole::admin())
                         .service(admin::list_templates)
+                )
+                .service(
+                    web::scope("/stream")
+                        .wrap(middleware::auth::RequireAuth::new())
+                        .service(stream::snapshot)
                 )
         )
 }
