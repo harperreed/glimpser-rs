@@ -348,7 +348,7 @@ Wire-up:
 
 ---
 
-### Prompt 09 — FFmpeg Capture Source
+### Prompt 09 — FFmpeg Capture Source ✅ COMPLETED
 
 ```text
 Extend `gl_capture`:
