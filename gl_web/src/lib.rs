@@ -65,6 +65,7 @@ pub fn create_app(
 
     App::new()
         .app_data(web::Data::new(state))
+        .app_data(web::Data::new(static_config.clone()))
         .wrap(actix_web::middleware::Logger::default())
         .wrap(static_files::security_headers())
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi()))
