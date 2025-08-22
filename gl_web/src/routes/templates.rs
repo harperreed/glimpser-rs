@@ -168,6 +168,47 @@ fn validate_yt_config(config: &Map<String, Value>) -> Result<(), String> {
     if !config.contains_key("url") {
         return Err("yt config must have 'url' field".to_string());
     }
+    
+    // Validate url is a string
+    if let Some(url) = config.get("url") {
+        if !url.is_string() {
+            return Err("yt 'url' must be a string".to_string());
+        }
+        let url_str = url.as_str().unwrap();
+        if url_str.is_empty() {
+            return Err("yt 'url' cannot be empty".to_string());
+        }
+        // Basic URL validation - should start with http/https
+        if !url_str.starts_with("http://") && !url_str.starts_with("https://") {
+            return Err("yt 'url' must start with http:// or https://".to_string());
+        }
+    }
+    
+    // Validate optional fields
+    if let Some(format) = config.get("format") {
+        if !format.is_string() {
+            return Err("yt 'format' must be a string".to_string());
+        }
+    }
+    
+    if let Some(is_live) = config.get("is_live") {
+        if !is_live.is_boolean() {
+            return Err("yt 'is_live' must be a boolean".to_string());
+        }
+    }
+    
+    if let Some(timeout) = config.get("timeout") {
+        if !timeout.is_number() {
+            return Err("yt 'timeout' must be a number".to_string());
+        }
+    }
+    
+    if let Some(options) = config.get("options") {
+        if !options.is_object() {
+            return Err("yt 'options' must be an object".to_string());
+        }
+    }
+    
     Ok(())
 }
 
@@ -594,6 +635,56 @@ mod tests {
             "kind": "website",
             "url": "https://example.com",
             "headless": "not-a-boolean"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+    }
+    
+    #[test]
+    fn test_yt_config_validation() {
+        let valid_config = json!({
+            "kind": "yt",
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "format": "best",
+            "is_live": false,
+            "timeout": 60,
+            "options": {
+                "cookies": "/path/to/cookies.txt"
+            }
+        });
+        assert!(validate_template_config(&valid_config).is_ok());
+        
+        // Missing url
+        let invalid_config = json!({
+            "kind": "yt"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+        
+        // Invalid url
+        let invalid_config = json!({
+            "kind": "yt",
+            "url": "not-a-url"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+        
+        // Invalid field types
+        let invalid_config = json!({
+            "kind": "yt",
+            "url": "https://youtube.com/watch?v=test",
+            "is_live": "not-a-boolean"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+        
+        let invalid_config = json!({
+            "kind": "yt",
+            "url": "https://youtube.com/watch?v=test",
+            "timeout": "not-a-number"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+        
+        let invalid_config = json!({
+            "kind": "yt",
+            "url": "https://youtube.com/watch?v=test",
+            "options": "not-an-object"
         });
         assert!(validate_template_config(&invalid_config).is_err());
     }

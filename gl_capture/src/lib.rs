@@ -15,12 +15,14 @@ use tracing::{debug, error, info, instrument, warn};
 
 pub mod file_source;
 pub mod ffmpeg_source;
+pub mod yt_dlp_source;
 
 #[cfg(feature = "website")]
 pub mod website_source;
 
 pub use file_source::FileSource;
 pub use ffmpeg_source::{FfmpegSource, FfmpegConfig, HardwareAccel};
+pub use yt_dlp_source::{YtDlpSource, YtDlpConfig, OutputFormat};
 
 #[cfg(feature = "website")]
 pub use website_source::{WebsiteSource, WebsiteConfig, WebDriverClient};

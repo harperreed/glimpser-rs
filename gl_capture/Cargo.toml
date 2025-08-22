@@ -18,6 +18,7 @@ serde_json.workspace = true
 bytes.workspace = true
 async-trait.workspace = true
 metrics.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
 
 # Website capture dependencies (feature-gated)
 thirtyfour = { version = "0.34", optional = true }

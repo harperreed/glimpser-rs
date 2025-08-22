@@ -2,7 +2,7 @@
 //! ABOUTME: Handles video stream snapshot generation from templates
 
 use actix_web::{web, HttpResponse, Result as ActixResult};
-use gl_capture::{FileSource, FfmpegSource, FfmpegConfig, HardwareAccel, CaptureSource};
+use gl_capture::{FileSource, FfmpegSource, FfmpegConfig, HardwareAccel, CaptureSource, YtDlpSource, YtDlpConfig, OutputFormat};
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteSource, WebsiteConfig};
 use gl_core::{Error, Result};
@@ -199,6 +199,59 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
             {
                 return Err(Error::Config("Website capture not enabled - compile with 'website' feature".to_string()));
             }
+        }
+        "yt" => {
+            // yt-dlp-based source
+            let url = config
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Error::Config("yt template config missing 'url' field".to_string()))?;
+                
+            let mut ytdlp_config = YtDlpConfig {
+                url: url.to_string(),
+                ..Default::default()
+            };
+            
+            // Parse optional fields from config
+            if let Some(format) = config.get("format").and_then(|v| v.as_str()) {
+                ytdlp_config.format = match format {
+                    "best" => OutputFormat::Best,
+                    "worst" => OutputFormat::Worst,
+                    format_id if format_id.chars().all(|c| c.is_numeric() || c == '+') => {
+                        OutputFormat::FormatId(format_id.to_string())
+                    }
+                    height_str if height_str.starts_with("best[height<=") && height_str.ends_with("]") => {
+                        let height_part = &height_str[13..height_str.len()-1];
+                        if let Ok(height) = height_part.parse::<u32>() {
+                            OutputFormat::BestWithHeight(height)
+                        } else {
+                            OutputFormat::Best
+                        }
+                    }
+                    _ => OutputFormat::Best,
+                };
+            }
+            
+            if let Some(is_live) = config.get("is_live").and_then(|v| v.as_bool()) {
+                ytdlp_config.is_live = is_live;
+            }
+            
+            if let Some(timeout) = config.get("timeout").and_then(|v| v.as_u64()) {
+                ytdlp_config.timeout = Some(timeout as u32);
+            }
+            
+            // Parse options if provided
+            if let Some(opts) = config.get("options").and_then(|v| v.as_object()) {
+                for (key, value) in opts {
+                    if let Some(value_str) = value.as_str() {
+                        ytdlp_config.options.insert(key.clone(), value_str.to_string());
+                    }
+                }
+            }
+            
+            let ytdlp_source = YtDlpSource::new(ytdlp_config);
+            let handle = ytdlp_source.start().await?;
+            handle.snapshot().await?
         }
         _ => {
             return Err(Error::Config(format!("Unsupported template kind: {}", kind)));
