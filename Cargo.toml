@@ -38,6 +38,7 @@ actix-web = "4.9"
 
 # Observability
 prometheus-client = "0.22"
+metrics = "0.23"
 uuid = { version = "1.10", features = ["v4"] }
 
 # Database

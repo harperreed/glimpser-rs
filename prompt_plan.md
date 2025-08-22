@@ -285,7 +285,7 @@ Wire-up:
 
 ---
 
-### Prompt 06 — Web Skeleton, Auth (JWT + API Keys), OpenAPI
+### Prompt 06 — Web Skeleton, Auth (JWT + API Keys), OpenAPI ✅ COMPLETED
 
 ```text
 Add crate `gl_web` (Actix Web):
