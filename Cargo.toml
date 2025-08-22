@@ -15,6 +15,7 @@ members = [
     "gl_cap",
     "gl_ai",
     "gl_vision",
+    "gl_analysis",
     "gl_update",
     "test_support",
 ]
@@ -57,6 +58,8 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 futures-util = "0.3"
 async-trait = "0.1"
 bytes = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.10"
 
 # OpenAPI
 utoipa = { version = "4.2", features = ["actix_extras", "chrono", "uuid"] }
