@@ -21,6 +21,12 @@ impl RequireAuth {
     }
 }
 
+impl Default for RequireAuth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S, B> Transform<S, ServiceRequest> for RequireAuth
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
@@ -63,9 +69,7 @@ where
             // Try JWT authentication first
             if let Some(auth_header) = req.headers().get("authorization") {
                 if let Ok(auth_str) = auth_header.to_str() {
-                    if auth_str.starts_with("Bearer ") {
-                        let token = &auth_str[7..];
-
+                    if let Some(token) = auth_str.strip_prefix("Bearer ") {
                         if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
                             match JwtAuth::verify_token(token, &app_state.jwt_secret) {
                                 Ok(claims) => {

@@ -2,7 +2,7 @@
 CREATE TABLE users (
     id TEXT PRIMARY KEY NOT NULL,
     username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,  
+    email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
     is_active BOOLEAN NOT NULL DEFAULT true,

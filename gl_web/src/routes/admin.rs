@@ -1,14 +1,9 @@
 //! ABOUTME: Admin endpoints requiring administrator role
 //! ABOUTME: Provides administrative functionality for managing templates and system
 
-use crate::{
-    middleware::auth::get_http_auth_user,
-    models::{ErrorResponse, TemplateInfo},
-    AppState,
-};
+use crate::{models::TemplateInfo, AppState};
 use actix_web::{get, web, HttpRequest, HttpResponse, Result};
-use gl_db::TemplateRepository;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// List all templates (admin only)
 #[get("/templates")]

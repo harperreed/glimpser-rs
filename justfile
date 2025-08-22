@@ -28,6 +28,6 @@ clean:
 audit:
     cargo audit
 
-# Check for licensing and supply chain issues  
+# Check for licensing and supply chain issues
 deny:
     cargo deny check

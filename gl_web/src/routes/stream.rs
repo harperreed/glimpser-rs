@@ -58,7 +58,7 @@ pub async fn snapshot(
         Err(e) => {
             error!(error = %e, template_id = template_id, "Failed to take snapshot");
             Ok(HttpResponse::InternalServerError()
-                .json(ErrorResponse::new("capture_error", &e.to_string())))
+                .json(ErrorResponse::new("capture_error", e.to_string())))
         }
     }
 }
@@ -292,7 +292,7 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
 #[actix_web::get("/{template_id}/mjpeg")]
 pub async fn mjpeg_stream(
     path: web::Path<String>,
-    state: web::Data<AppState>,
+    _state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
     let template_id = path.into_inner();
 

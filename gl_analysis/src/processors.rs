@@ -12,6 +12,7 @@ use tracing::{debug, warn};
 /// Motion detection processor
 pub struct MotionProcessor {
     motion_service: MotionDetectionService,
+    #[allow(dead_code)]
     config: MotionProcessorConfig,
 }
 
@@ -415,7 +416,6 @@ impl Processor for SummaryProcessor {
 mod tests {
     use super::*;
     use crate::{AnalysisEvent, EventSeverity, ProcessorContext};
-    use bytes::Bytes;
     use chrono::Utc;
 
     #[tokio::test]

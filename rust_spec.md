@@ -201,7 +201,7 @@ pub struct Config {
 
     #[serde(rename = "GLIMPSER_DATABASE_PATH")]
     pub database_path: String,
-    
+
     #[serde(rename = "CHATGPT_KEY")]
     pub openai_key: Option<String>,
     // ... and so on for all other variables

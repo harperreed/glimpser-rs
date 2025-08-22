@@ -1,4 +1,4 @@
--- Create alerts table for system notifications and user alerts  
+-- Create alerts table for system notifications and user alerts
 CREATE TABLE alerts (
     id TEXT PRIMARY KEY NOT NULL,
     user_id TEXT NOT NULL,

@@ -105,7 +105,7 @@ impl AnalysisPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EventSeverity, ProcessorContext};
+    use crate::ProcessorContext;
     use bytes::Bytes;
     use chrono::Utc;
     use std::collections::HashMap;

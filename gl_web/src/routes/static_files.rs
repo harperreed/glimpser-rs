@@ -1,15 +1,9 @@
 //! ABOUTME: Static file serving for PWA with caching and CSP headers
 //! ABOUTME: Provides SPA fallback routing and strong ETags for browser caching
 
-use actix_files::{Files, NamedFile};
 use actix_web::{
-    dev::{fn_service, ServiceRequest, ServiceResponse},
-    http::header::{
-        CacheControl, CacheDirective, ETag, EntityTag, Header, HeaderName, HeaderValue,
-        TryIntoHeaderValue,
-    },
-    middleware::DefaultHeaders,
-    web, HttpRequest, HttpResponse, Result as ActixResult,
+    http::header::EntityTag, middleware::DefaultHeaders, web, HttpRequest, HttpResponse,
+    Result as ActixResult,
 };
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;

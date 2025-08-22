@@ -172,6 +172,7 @@ mod tests {
     }
 
     /// Clean up test database
+    #[allow(dead_code)]
     async fn cleanup_test_db(db_path: &str) {
         let _ = fs::remove_file(db_path).await;
         let _ = fs::remove_file(format!("{}-wal", db_path)).await;

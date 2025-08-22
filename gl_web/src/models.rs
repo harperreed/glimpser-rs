@@ -2,6 +2,7 @@
 //! ABOUTME: Defines request/response structures with serde and validation
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use utoipa::ToSchema;
 use validator::Validate;
 
@@ -124,16 +125,20 @@ pub enum Role {
     Viewer,
 }
 
-impl Role {
-    pub fn from_str(role: &str) -> Option<Self> {
+impl FromStr for Role {
+    type Err = String;
+
+    fn from_str(role: &str) -> Result<Self, Self::Err> {
         match role.to_lowercase().as_str() {
-            "admin" => Some(Role::Admin),
-            "operator" => Some(Role::Operator),
-            "viewer" => Some(Role::Viewer),
-            _ => None,
+            "admin" => Ok(Role::Admin),
+            "operator" => Ok(Role::Operator),
+            "viewer" => Ok(Role::Viewer),
+            _ => Err(format!("Invalid role: {}", role)),
         }
     }
+}
 
+impl Role {
     pub fn as_str(&self) -> &'static str {
         match self {
             Role::Admin => "admin",

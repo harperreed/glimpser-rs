@@ -118,6 +118,7 @@ impl JwtAuth {
 mod tests {
     use super::*;
     use crate::models::Role;
+    use std::str::FromStr;
 
     #[test]
     fn test_password_hash_and_verify() {
@@ -177,11 +178,11 @@ mod tests {
 
     #[test]
     fn test_role_enum() {
-        assert_eq!(Role::from_str("admin"), Some(Role::Admin));
-        assert_eq!(Role::from_str("ADMIN"), Some(Role::Admin));
-        assert_eq!(Role::from_str("operator"), Some(Role::Operator));
-        assert_eq!(Role::from_str("viewer"), Some(Role::Viewer));
-        assert_eq!(Role::from_str("invalid"), None);
+        assert_eq!(Role::from_str("admin"), Ok(Role::Admin));
+        assert_eq!(Role::from_str("ADMIN"), Ok(Role::Admin));
+        assert_eq!(Role::from_str("operator"), Ok(Role::Operator));
+        assert_eq!(Role::from_str("viewer"), Ok(Role::Viewer));
+        assert!(Role::from_str("invalid").is_err());
 
         assert_eq!(Role::Admin.as_str(), "admin");
         assert_eq!(Role::Operator.as_str(), "operator");

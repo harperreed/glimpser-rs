@@ -210,7 +210,6 @@ mod tests {
     use super::*;
     use crate::tests::create_test_db;
     use crate::{CreateUserRequest, UserRepository};
-    use gl_core::Id;
 
     #[tokio::test]
     async fn test_template_crud_operations() {

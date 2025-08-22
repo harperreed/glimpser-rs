@@ -9,6 +9,7 @@ use actix_web::{
 };
 use futures_util::future::{ready, LocalBoxFuture, Ready};
 use std::rc::Rc;
+use std::str::FromStr;
 use tracing::{debug, warn};
 
 /// RBAC middleware that requires specific roles
@@ -90,7 +91,7 @@ where
             match auth_user {
                 Some(auth_user) => {
                     // Parse user's role
-                    if let Some(user_role) = Role::from_str(&auth_user.role) {
+                    if let Ok(user_role) = Role::from_str(&auth_user.role) {
                         // Check if user has any of the required roles
                         if required_roles.contains(&user_role) {
                             debug!(
@@ -103,11 +104,11 @@ where
                                 "RBAC check failed for user {} with role {}. Required roles: {:?}",
                                 auth_user.id, auth_user.role, required_roles
                             );
-                            return Err(ErrorForbidden("Insufficient permissions"));
+                            Err(ErrorForbidden("Insufficient permissions"))
                         }
                     } else {
                         warn!("Invalid user role: {}", auth_user.role);
-                        return Err(ErrorForbidden("Invalid user role"));
+                        Err(ErrorForbidden("Invalid user role"))
                     }
                 }
                 None => {
