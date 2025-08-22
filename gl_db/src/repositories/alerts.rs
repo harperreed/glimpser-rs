@@ -1,7 +1,7 @@
 //! ABOUTME: Alert repository for managing system notifications and user alerts
 //! ABOUTME: Provides compile-time checked queries for alert CRUD operations
 
-use gl_core::{Result, Error, time::now_iso8601, Id};
+use gl_core::{time::now_iso8601, Error, Id, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
@@ -52,7 +52,7 @@ impl<'a> AlertRepository<'a> {
     pub async fn create(&self, request: CreateAlertRequest) -> Result<Alert> {
         let id = Id::new().to_string();
         let now = now_iso8601();
-        
+
         let alert = sqlx::query_as!(
             Alert,
             r#"
@@ -75,21 +75,17 @@ impl<'a> AlertRepository<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to create alert: {}", e)))?;
-        
+
         Ok(alert)
     }
 
     /// Find alert by ID
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Alert>> {
-        let alert = sqlx::query_as!(
-            Alert,
-            "SELECT * FROM alerts WHERE id = ?1",
-            id
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to find alert: {}", e)))?;
-        
+        let alert = sqlx::query_as!(Alert, "SELECT * FROM alerts WHERE id = ?1", id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to find alert: {}", e)))?;
+
         Ok(alert)
     }
 }

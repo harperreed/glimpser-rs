@@ -2,8 +2,8 @@
 //! ABOUTME: Tests known motion scenarios and algorithm performance comparisons
 
 use gl_vision::{
-    MotionConfig, MotionAlgorithm, MotionDetectionService,
-    utils::{create_test_frame_pair, create_test_frame_with_motion, image_to_jpeg_bytes}
+    utils::{create_test_frame_pair, create_test_frame_with_motion, image_to_jpeg_bytes},
+    MotionAlgorithm, MotionConfig, MotionDetectionService,
 };
 
 /// Test motion detection service creation with different algorithms
@@ -27,7 +27,7 @@ async fn test_motion_service_creation() {
         let service = MotionDetectionService::new(config_mog2);
         assert!(service.is_ok());
     }
-    
+
     #[cfg(not(feature = "heavy_opencv"))]
     {
         // Should fall back to PixelDiff when OpenCV not available
@@ -51,22 +51,22 @@ async fn test_known_motion_detection() {
         max_width: 100,
         max_height: 100,
     };
-    
+
     let mut service = MotionDetectionService::new(config).unwrap();
-    
+
     // Create synthetic frame pair with known motion
     let (frame1, frame2) = create_test_frame_pair(100, 100);
-    
+
     // Convert frames to JPEG bytes
     let frame1_bytes = image_to_jpeg_bytes(&frame1).unwrap();
     let frame2_bytes = image_to_jpeg_bytes(&frame2).unwrap();
-    
+
     // First frame - baseline
     let result1 = service.detect_motion_from_bytes(&frame1_bytes).unwrap();
     assert!(!result1.motion_detected); // No previous frame
     assert_eq!(result1.changed_pixels, 0);
     assert_eq!(result1.confidence, 0.0);
-    
+
     // Second frame - should detect motion
     let result2 = service.detect_motion_from_bytes(&frame2_bytes).unwrap();
     assert!(result2.motion_detected);
@@ -88,17 +88,17 @@ async fn test_no_motion_detection() {
         max_width: 100,
         max_height: 100,
     };
-    
+
     let mut service = MotionDetectionService::new(config).unwrap();
-    
+
     // Create identical frames
     let frame = create_test_frame_with_motion(100, 100, 20, 20, 30, 30, 200);
     let frame_bytes = image_to_jpeg_bytes(&frame).unwrap();
-    
+
     // First frame - baseline
     let result1 = service.detect_motion_from_bytes(&frame_bytes).unwrap();
     assert!(!result1.motion_detected);
-    
+
     // Identical second frame - no motion
     let result2 = service.detect_motion_from_bytes(&frame_bytes).unwrap();
     assert!(!result2.motion_detected);
@@ -119,7 +119,7 @@ async fn test_threshold_sensitivity() {
         max_width: 100,
         max_height: 100,
     };
-    
+
     // Low threshold - more sensitive
     let config_low = MotionConfig {
         algorithm: MotionAlgorithm::PixelDiff,
@@ -129,24 +129,28 @@ async fn test_threshold_sensitivity() {
         max_width: 100,
         max_height: 100,
     };
-    
+
     let mut service_high = MotionDetectionService::new(config_high).unwrap();
     let mut service_low = MotionDetectionService::new(config_low).unwrap();
-    
+
     // Create frames with subtle difference
     let frame1 = create_test_frame_with_motion(100, 100, 0, 0, 0, 0, 64);
     let frame2 = create_test_frame_with_motion(100, 100, 10, 10, 20, 20, 100); // Subtle change
-    
+
     let frame1_bytes = image_to_jpeg_bytes(&frame1).unwrap();
     let frame2_bytes = image_to_jpeg_bytes(&frame2).unwrap();
-    
+
     // Process with both services
-    let _ = service_high.detect_motion_from_bytes(&frame1_bytes).unwrap();
+    let _ = service_high
+        .detect_motion_from_bytes(&frame1_bytes)
+        .unwrap();
     let _ = service_low.detect_motion_from_bytes(&frame1_bytes).unwrap();
-    
-    let result_high = service_high.detect_motion_from_bytes(&frame2_bytes).unwrap();
+
+    let result_high = service_high
+        .detect_motion_from_bytes(&frame2_bytes)
+        .unwrap();
     let result_low = service_low.detect_motion_from_bytes(&frame2_bytes).unwrap();
-    
+
     // Low threshold should be more sensitive to changes
     assert!(result_low.changed_pixels >= result_high.changed_pixels);
 }
@@ -162,22 +166,22 @@ async fn test_downscaling_behavior() {
         max_width: 100,
         max_height: 100,
     };
-    
+
     let mut service = MotionDetectionService::new(config).unwrap();
-    
+
     // Create large frames that will be downscaled
     let frame1 = create_test_frame_with_motion(400, 400, 0, 0, 0, 0, 64);
     let frame2 = create_test_frame_with_motion(400, 400, 40, 40, 80, 80, 200);
-    
+
     let frame1_bytes = image_to_jpeg_bytes(&frame1).unwrap();
     let frame2_bytes = image_to_jpeg_bytes(&frame2).unwrap();
-    
+
     // Process frames
     let result1 = service.detect_motion_from_bytes(&frame1_bytes).unwrap();
     assert!(!result1.motion_detected);
-    
+
     let result2 = service.detect_motion_from_bytes(&frame2_bytes).unwrap();
-    
+
     // Should work with downscaled frames
     assert!(result2.total_pixels < 400 * 400); // Frames were downscaled
     assert!(result2.total_pixels <= 100 * 100); // Within max dimensions
@@ -192,10 +196,10 @@ async fn test_config_updates() {
         min_change_area: 100,
         ..Default::default()
     };
-    
+
     let mut service = MotionDetectionService::new(initial_config).unwrap();
     assert_eq!(service.config().threshold, 0.1);
-    
+
     // Update configuration
     let new_config = MotionConfig {
         algorithm: MotionAlgorithm::PixelDiff,
@@ -203,7 +207,7 @@ async fn test_config_updates() {
         min_change_area: 200,
         ..Default::default()
     };
-    
+
     let update_result = service.update_config(new_config);
     assert!(update_result.is_ok());
     assert_eq!(service.config().threshold, 0.2);
@@ -221,25 +225,29 @@ async fn test_raw_frame_detection() {
         max_width: 100,
         max_height: 100,
     };
-    
+
     let mut service = MotionDetectionService::new(config).unwrap();
-    
+
     // Create raw grayscale frame data
     let frame1_data = vec![64u8; 100 * 100]; // Uniform gray
     let mut frame2_data = vec![64u8; 100 * 100];
-    
+
     // Add motion region to second frame
     for y in 10..30 {
         for x in 10..30 {
             frame2_data[y * 100 + x] = 200; // Bright region
         }
     }
-    
+
     // Process frames
-    let result1 = service.detect_motion_from_frame(&frame1_data, 100, 100).unwrap();
+    let result1 = service
+        .detect_motion_from_frame(&frame1_data, 100, 100)
+        .unwrap();
     assert!(!result1.motion_detected);
-    
-    let result2 = service.detect_motion_from_frame(&frame2_data, 100, 100).unwrap();
+
+    let result2 = service
+        .detect_motion_from_frame(&frame2_data, 100, 100)
+        .unwrap();
     assert!(result2.motion_detected);
     assert!(result2.changed_pixels >= 100); // 20x20 = 400 pixels changed
     assert!(result2.confidence > 0.7);
@@ -250,16 +258,16 @@ async fn test_raw_frame_detection() {
 async fn test_service_reset() {
     let config = MotionConfig::default();
     let mut service = MotionDetectionService::new(config).unwrap();
-    
+
     // Process a frame to initialize internal state
     let frame = create_test_frame_with_motion(100, 100, 10, 10, 20, 20, 200);
     let frame_bytes = image_to_jpeg_bytes(&frame).unwrap();
     let _ = service.detect_motion_from_bytes(&frame_bytes).unwrap();
-    
+
     // Reset service
     let reset_result = service.reset();
     assert!(reset_result.is_ok());
-    
+
     // Next frame should behave like first frame (no previous frame)
     let result = service.detect_motion_from_bytes(&frame_bytes).unwrap();
     assert!(!result.motion_detected);
@@ -271,12 +279,12 @@ async fn test_service_reset() {
 async fn test_error_handling() {
     let config = MotionConfig::default();
     let mut service = MotionDetectionService::new(config).unwrap();
-    
+
     // Test with invalid image data
     let invalid_data = vec![0u8; 10]; // Too small to be valid image
     let result = service.detect_motion_from_bytes(&invalid_data);
     assert!(result.is_err());
-    
+
     // Test with mismatched frame dimensions
     let frame_data = vec![128u8; 50]; // Not matching declared dimensions
     let result = service.detect_motion_from_frame(&frame_data, 100, 100);
@@ -294,36 +302,44 @@ async fn test_motion_detection_performance() {
         max_width: 200,
         max_height: 200,
     };
-    
+
     let mut service = MotionDetectionService::new(config).unwrap();
-    
+
     // Create larger test frames
     let frame1 = create_test_frame_with_motion(200, 200, 0, 0, 0, 0, 64);
     let frame2 = create_test_frame_with_motion(200, 200, 50, 50, 100, 100, 200);
-    
+
     let frame1_bytes = image_to_jpeg_bytes(&frame1).unwrap();
     let frame2_bytes = image_to_jpeg_bytes(&frame2).unwrap();
-    
+
     let start_time = std::time::Instant::now();
-    
+
     // Process multiple frames to get average performance
     let mut total_processing_time = 0u64;
     let iterations = 10;
-    
+
     for i in 0..iterations {
-        let frame_bytes = if i % 2 == 0 { &frame1_bytes } else { &frame2_bytes };
+        let frame_bytes = if i % 2 == 0 {
+            &frame1_bytes
+        } else {
+            &frame2_bytes
+        };
         let result = service.detect_motion_from_bytes(frame_bytes).unwrap();
         total_processing_time += result.processing_time_ms;
     }
-    
+
     let total_time = start_time.elapsed();
     let avg_processing_time = total_processing_time as f64 / iterations as f64;
-    
+
     println!("Motion detection performance:");
     println!("  Total time: {:?}", total_time);
     println!("  Average processing time: {:.2}ms", avg_processing_time);
     println!("  Iterations: {}", iterations);
-    
+
     // Performance should be reasonable (under 100ms per frame for this test size)
-    assert!(avg_processing_time < 100.0, "Motion detection too slow: {:.2}ms", avg_processing_time);
+    assert!(
+        avg_processing_time < 100.0,
+        "Motion detection too slow: {:.2}ms",
+        avg_processing_time
+    );
 }

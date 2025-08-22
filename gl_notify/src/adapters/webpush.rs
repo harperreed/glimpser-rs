@@ -1,4 +1,4 @@
-//! ABOUTME: WebPush notification adapter for browser push notifications  
+//! ABOUTME: WebPush notification adapter for browser push notifications
 //! ABOUTME: Sends push notifications to web browsers using the WebPush protocol
 
 use async_trait::async_trait;
@@ -29,7 +29,12 @@ impl Default for WebPushAdapter {
 impl Notifier for WebPushAdapter {
     async fn send(&self, msg: &Notification) -> Result<()> {
         for channel in &msg.channels {
-            if let NotificationChannel::WebPush { endpoint, p256dh, auth } = channel {
+            if let NotificationChannel::WebPush {
+                endpoint,
+                p256dh,
+                auth,
+            } = channel
+            {
                 debug!(
                     notification_id = %msg.id,
                     endpoint = %endpoint,
@@ -47,7 +52,7 @@ impl Notifier for WebPushAdapter {
                 );
             }
         }
-        
+
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-//! ABOUTME: Configuration management with validation and environment loading  
+//! ABOUTME: Configuration management with validation and environment loading
 //! ABOUTME: Handles all application settings from environment variables and files
 
 use config::{Config as ConfigBuilder, Environment, File};
@@ -81,7 +81,7 @@ impl Default for SecurityConfig {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        
+
         Self {
             jwt_secret: format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", timestamp),
             argon2_params: Argon2Config::default(),
@@ -251,19 +251,21 @@ impl Config {
         if let Ok(jwt_secret) = std::env::var("GLIMPSER_SECURITY_JWT_SECRET") {
             builder = builder.set_override("security.jwt_secret", jwt_secret)?;
         } else {
-            let default_jwt_secret = format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", 
+            let default_jwt_secret = format!(
+                "INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_nanos());
+                    .as_nanos()
+            );
             builder = builder.set_default("security.jwt_secret", default_jwt_secret)?;
         }
-        
+
         // Database pool size
         if let Ok(pool_size) = std::env::var("GLIMPSER_DATABASE_POOL_SIZE") {
             builder = builder.set_override("database.pool_size", pool_size)?;
         }
-        
+
         // Server observability port
         if let Ok(obs_port) = std::env::var("GLIMPSER_SERVER_OBS_PORT") {
             builder = builder.set_override("server.obs_port", obs_port)?;
@@ -278,19 +280,20 @@ impl Config {
         builder = builder.add_source(
             Environment::with_prefix("GLIMPSER")
                 .try_parsing(true)
-                .separator("_")
+                .separator("_"),
         );
 
-        let config = builder.build()
+        let config = builder
+            .build()
             .map_err(|e| Error::Config(format!("Failed to build config: {}", e)))?;
 
-        let parsed: Config = config.try_deserialize()
+        let parsed: Config = config
+            .try_deserialize()
             .map_err(|e| Error::Config(format!("Failed to deserialize config: {}", e)))?;
 
         // Validate the configuration
         let validation_result = parsed.validate();
-        validation_result
-            .map_err(|e| Error::Config(format!("Config validation failed: {}", e)))?;
+        validation_result.map_err(|e| Error::Config(format!("Config validation failed: {}", e)))?;
 
         Ok(parsed)
     }
@@ -324,24 +327,21 @@ mod tests {
             "GLIMPSER_DATABASE_POOL_SIZE",
             "GLIMPSER_SECURITY_JWT_SECRET",
         ];
-        
-        let original_values: Vec<_> = vars_to_clear
-            .iter()
-            .map(|key| env::var(key).ok())
-            .collect();
-            
+
+        let original_values: Vec<_> = vars_to_clear.iter().map(|key| env::var(key).ok()).collect();
+
         for key in &vars_to_clear {
             env::remove_var(key);
         }
 
         let config = Config::load().expect("Should load with defaults");
-        
+
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 8080);
         assert_eq!(config.database.path, "glimpser.db");
         assert_eq!(config.database.pool_size, 10);
         assert!(config.database.sqlite_wal);
-        
+
         // Restore original env vars
         for (key, value) in vars_to_clear.iter().zip(original_values.iter()) {
             if let Some(val) = value {
@@ -357,16 +357,19 @@ mod tests {
         env::remove_var("GLIMPSER_SERVER_PORT");
         env::remove_var("GLIMPSER_DATABASE_POOL_SIZE");
         env::remove_var("GLIMPSER_SECURITY_JWT_SECRET");
-        
+
         env::set_var("GLIMPSER_SERVER_HOST", "0.0.0.0");
         env::set_var("GLIMPSER_SERVER_PORT", "9000");
-        env::set_var("GLIMPSER_SECURITY_JWT_SECRET", "valid32characterjwtsecretfortest"); // Valid length
-        
+        env::set_var(
+            "GLIMPSER_SECURITY_JWT_SECRET",
+            "valid32characterjwtsecretfortest",
+        ); // Valid length
+
         let config = Config::load().expect("Should load from env");
-        
+
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 9000);
-        
+
         // Cleanup
         env::remove_var("GLIMPSER_SERVER_HOST");
         env::remove_var("GLIMPSER_SERVER_PORT");
@@ -377,12 +380,15 @@ mod tests {
     fn test_config_validation_failure() {
         // Clear any existing values first
         env::remove_var("GLIMPSER_SERVER_PORT");
-        env::set_var("GLIMPSER_SECURITY_JWT_SECRET", "toolongbutstillvalid32charactershere"); // Valid length
+        env::set_var(
+            "GLIMPSER_SECURITY_JWT_SECRET",
+            "toolongbutstillvalid32charactershere",
+        ); // Valid length
         env::set_var("GLIMPSER_DATABASE_POOL_SIZE", "200"); // Invalid - too big
-        
+
         let result = Config::load();
         assert!(result.is_err());
-        
+
         // Cleanup
         env::remove_var("GLIMPSER_SECURITY_JWT_SECRET");
         env::remove_var("GLIMPSER_DATABASE_POOL_SIZE");
@@ -394,10 +400,10 @@ mod tests {
         env::remove_var("GLIMPSER_SERVER_PORT");
         env::remove_var("GLIMPSER_DATABASE_POOL_SIZE");
         env::remove_var("GLIMPSER_SECURITY_JWT_SECRET");
-        
+
         let config = Config::load().expect("Should load with defaults");
         let debug_output = format!("{:?}", config);
-        
+
         // Secrets should be redacted
         assert!(debug_output.contains("[REDACTED]"));
         assert!(!debug_output.contains("INSECURE-RANDOM"));
@@ -406,10 +412,10 @@ mod tests {
     #[test]
     fn test_jwt_secret_too_short() {
         env::set_var("GLIMPSER_SECURITY_JWT_SECRET", "short"); // Too short
-        
+
         let result = Config::load();
         assert!(result.is_err());
-        
+
         // Cleanup
         env::remove_var("GLIMPSER_SECURITY_JWT_SECRET");
     }

@@ -2,13 +2,15 @@
 //! ABOUTME: Provides full template management with pagination, filtering, and ETag support
 
 use actix_web::{web, HttpRequest, HttpResponse, Result as ActixResult};
-use gl_db::{TemplateRepository, Template, CreateTemplateRequest, UpdateTemplateRequest};
+use gl_db::{CreateTemplateRequest, Template, TemplateRepository, UpdateTemplateRequest};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, Map};
+use serde_json::{Map, Value};
 use tracing::{info, warn};
 use validator::Validate;
 
-use crate::{middleware::rbac::RequireRole, middleware::auth::get_http_auth_user, models::ApiResponse};
+use crate::{
+    middleware::auth::get_http_auth_user, middleware::rbac::RequireRole, models::ApiResponse,
+};
 
 /// Query parameters for listing templates
 #[derive(Debug, Deserialize)]
@@ -113,7 +115,7 @@ fn validate_website_config(config: &Map<String, Value>) -> Result<(), String> {
     if !config.contains_key("url") {
         return Err("website config must have 'url' field".to_string());
     }
-    
+
     // Validate url is a string
     if let Some(url) = config.get("url") {
         if !url.is_string() {
@@ -128,38 +130,38 @@ fn validate_website_config(config: &Map<String, Value>) -> Result<(), String> {
             return Err("website 'url' must start with http:// or https://".to_string());
         }
     }
-    
+
     // Validate optional fields
     if let Some(headless) = config.get("headless") {
         if !headless.is_boolean() {
             return Err("website 'headless' must be a boolean".to_string());
         }
     }
-    
+
     if let Some(stealth) = config.get("stealth") {
         if !stealth.is_boolean() {
             return Err("website 'stealth' must be a boolean".to_string());
         }
     }
-    
+
     if let Some(width) = config.get("width") {
         if !width.is_number() {
             return Err("website 'width' must be a number".to_string());
         }
     }
-    
+
     if let Some(height) = config.get("height") {
         if !height.is_number() {
             return Err("website 'height' must be a number".to_string());
         }
     }
-    
+
     if let Some(selector) = config.get("element_selector") {
         if !selector.is_string() {
             return Err("website 'element_selector' must be a string".to_string());
         }
     }
-    
+
     Ok(())
 }
 
@@ -168,7 +170,7 @@ fn validate_yt_config(config: &Map<String, Value>) -> Result<(), String> {
     if !config.contains_key("url") {
         return Err("yt config must have 'url' field".to_string());
     }
-    
+
     // Validate url is a string
     if let Some(url) = config.get("url") {
         if !url.is_string() {
@@ -183,32 +185,32 @@ fn validate_yt_config(config: &Map<String, Value>) -> Result<(), String> {
             return Err("yt 'url' must start with http:// or https://".to_string());
         }
     }
-    
+
     // Validate optional fields
     if let Some(format) = config.get("format") {
         if !format.is_string() {
             return Err("yt 'format' must be a string".to_string());
         }
     }
-    
+
     if let Some(is_live) = config.get("is_live") {
         if !is_live.is_boolean() {
             return Err("yt 'is_live' must be a boolean".to_string());
         }
     }
-    
+
     if let Some(timeout) = config.get("timeout") {
         if !timeout.is_number() {
             return Err("yt 'timeout' must be a number".to_string());
         }
     }
-    
+
     if let Some(options) = config.get("options") {
         if !options.is_object() {
             return Err("yt 'options' must be an object".to_string());
         }
     }
-    
+
     Ok(())
 }
 
@@ -218,9 +220,8 @@ pub async fn list_templates(
     req: HttpRequest,
     db: web::Data<gl_db::Db>,
 ) -> ActixResult<HttpResponse> {
-    let user = get_http_auth_user(&req).ok_or_else(|| {
-        actix_web::error::ErrorUnauthorized("Authentication required")
-    })?;
+    let user = get_http_auth_user(&req)
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
     info!(
         user_id = %user.id,
@@ -250,7 +251,9 @@ pub async fn list_templates(
 
     let (templates, total) = if let Some(search) = &query.search {
         // Search by name - note: this doesn't respect user filtering in current impl
-        let templates = repo.search_by_name(search, offset, limit).await
+        let templates = repo
+            .search_by_name(search, offset, limit)
+            .await
             .map_err(|e| {
                 warn!(error = %e, "Failed to search templates");
                 actix_web::error::ErrorInternalServerError("Database error")
@@ -258,16 +261,17 @@ pub async fn list_templates(
         let total = templates.len() as i64; // Approximate for search
         (templates, total)
     } else {
-        let templates = repo.list(filter_user_id, offset, limit).await
+        let templates = repo
+            .list(filter_user_id, offset, limit)
+            .await
             .map_err(|e| {
                 warn!(error = %e, "Failed to list templates");
                 actix_web::error::ErrorInternalServerError("Database error")
             })?;
-        let total = repo.count(filter_user_id).await
-            .map_err(|e| {
-                warn!(error = %e, "Failed to count templates");
-                actix_web::error::ErrorInternalServerError("Database error")
-            })?;
+        let total = repo.count(filter_user_id).await.map_err(|e| {
+            warn!(error = %e, "Failed to count templates");
+            actix_web::error::ErrorInternalServerError("Database error")
+        })?;
         (templates, total)
     };
 
@@ -290,9 +294,8 @@ pub async fn get_template(
     req: HttpRequest,
     db: web::Data<gl_db::Db>,
 ) -> ActixResult<HttpResponse> {
-    let user = get_http_auth_user(&req).ok_or_else(|| {
-        actix_web::error::ErrorUnauthorized("Authentication required")
-    })?;
+    let user = get_http_auth_user(&req)
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
     let template_id = path.into_inner();
 
@@ -303,24 +306,24 @@ pub async fn get_template(
     );
 
     let repo = TemplateRepository::new(db.pool());
-    let template = repo.find_by_id(&template_id).await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to find template");
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
+    let template = repo.find_by_id(&template_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to find template");
+        actix_web::error::ErrorInternalServerError("Database error")
+    })?;
 
     let template = match template {
         Some(t) => t,
-        None => return Ok(HttpResponse::NotFound().json(ApiResponse::<()>::error(
-            "Template not found".to_string(),
-        ))),
+        None => {
+            return Ok(HttpResponse::NotFound()
+                .json(ApiResponse::<()>::error("Template not found".to_string())))
+        }
     };
 
     // Check access: admin can see all, users can see their own
     if user.role != "admin" && template.user_id != user.id {
-        return Ok(HttpResponse::Forbidden().json(ApiResponse::<()>::error(
-            "Access denied".to_string(),
-        )));
+        return Ok(
+            HttpResponse::Forbidden().json(ApiResponse::<()>::error("Access denied".to_string()))
+        );
     }
 
     // Generate ETag
@@ -348,9 +351,8 @@ pub async fn create_template(
     req: HttpRequest,
     db: web::Data<gl_db::Db>,
 ) -> ActixResult<HttpResponse> {
-    let user = get_http_auth_user(&req).ok_or_else(|| {
-        actix_web::error::ErrorUnauthorized("Authentication required")
-    })?;
+    let user = get_http_auth_user(&req)
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
     info!(
         user_id = %user.id,
@@ -369,11 +371,10 @@ pub async fn create_template(
         return Ok(HttpResponse::BadRequest().json(ApiResponse::<()>::error(msg)));
     }
 
-    let config_json = serde_json::to_string(&payload.config)
-        .map_err(|e| {
-            warn!(error = %e, "Failed to serialize config");
-            actix_web::error::ErrorBadRequest("Invalid config JSON")
-        })?;
+    let config_json = serde_json::to_string(&payload.config).map_err(|e| {
+        warn!(error = %e, "Failed to serialize config");
+        actix_web::error::ErrorBadRequest("Invalid config JSON")
+    })?;
 
     let request = CreateTemplateRequest {
         user_id: user.id.clone(),
@@ -384,11 +385,10 @@ pub async fn create_template(
     };
 
     let repo = TemplateRepository::new(db.pool());
-    let template = repo.create(request).await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to create template");
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
+    let template = repo.create(request).await.map_err(|e| {
+        warn!(error = %e, "Failed to create template");
+        actix_web::error::ErrorInternalServerError("Database error")
+    })?;
 
     info!(
         template_id = %template.id,
@@ -405,9 +405,8 @@ pub async fn update_template(
     req: HttpRequest,
     db: web::Data<gl_db::Db>,
 ) -> ActixResult<HttpResponse> {
-    let user = get_http_auth_user(&req).ok_or_else(|| {
-        actix_web::error::ErrorUnauthorized("Authentication required")
-    })?;
+    let user = get_http_auth_user(&req)
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
     let template_id = path.into_inner();
 
@@ -424,26 +423,26 @@ pub async fn update_template(
     })?;
 
     let repo = TemplateRepository::new(db.pool());
-    
+
     // Check if template exists and user has access
-    let existing = repo.find_by_id(&template_id).await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to find template");
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
+    let existing = repo.find_by_id(&template_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to find template");
+        actix_web::error::ErrorInternalServerError("Database error")
+    })?;
 
     let existing = match existing {
         Some(t) => t,
-        None => return Ok(HttpResponse::NotFound().json(ApiResponse::<()>::error(
-            "Template not found".to_string(),
-        ))),
+        None => {
+            return Ok(HttpResponse::NotFound()
+                .json(ApiResponse::<()>::error("Template not found".to_string())))
+        }
     };
 
     // Check access: admin can update all, users can update their own
     if user.role != "admin" && existing.user_id != user.id {
-        return Ok(HttpResponse::Forbidden().json(ApiResponse::<()>::error(
-            "Access denied".to_string(),
-        )));
+        return Ok(
+            HttpResponse::Forbidden().json(ApiResponse::<()>::error("Access denied".to_string()))
+        );
     }
 
     // Check If-Match header for optimistic concurrency
@@ -451,9 +450,11 @@ pub async fn update_template(
         if let Ok(client_etag) = if_match.to_str() {
             let current_etag = generate_etag(&existing);
             if client_etag != current_etag {
-                return Ok(HttpResponse::PreconditionFailed().json(ApiResponse::<()>::error(
-                    "Template has been modified by another request".to_string(),
-                )));
+                return Ok(
+                    HttpResponse::PreconditionFailed().json(ApiResponse::<()>::error(
+                        "Template has been modified by another request".to_string(),
+                    )),
+                );
             }
         }
     }
@@ -478,11 +479,10 @@ pub async fn update_template(
         is_default: payload.is_default,
     };
 
-    let template = repo.update(&template_id, request).await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to update template");
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
+    let template = repo.update(&template_id, request).await.map_err(|e| {
+        warn!(error = %e, "Failed to update template");
+        actix_web::error::ErrorInternalServerError("Database error")
+    })?;
 
     let template = template.expect("Template should exist after update");
 
@@ -504,9 +504,8 @@ pub async fn delete_template(
     req: HttpRequest,
     db: web::Data<gl_db::Db>,
 ) -> ActixResult<HttpResponse> {
-    let user = get_http_auth_user(&req).ok_or_else(|| {
-        actix_web::error::ErrorUnauthorized("Authentication required")
-    })?;
+    let user = get_http_auth_user(&req)
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
     let template_id = path.into_inner();
 
@@ -517,38 +516,36 @@ pub async fn delete_template(
     );
 
     let repo = TemplateRepository::new(db.pool());
-    
+
     // Check if template exists and user has access
-    let existing = repo.find_by_id(&template_id).await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to find template");
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
+    let existing = repo.find_by_id(&template_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to find template");
+        actix_web::error::ErrorInternalServerError("Database error")
+    })?;
 
     let existing = match existing {
         Some(t) => t,
-        None => return Ok(HttpResponse::NotFound().json(ApiResponse::<()>::error(
-            "Template not found".to_string(),
-        ))),
+        None => {
+            return Ok(HttpResponse::NotFound()
+                .json(ApiResponse::<()>::error("Template not found".to_string())))
+        }
     };
 
     // Check access: admin can delete all, users can delete their own
     if user.role != "admin" && existing.user_id != user.id {
-        return Ok(HttpResponse::Forbidden().json(ApiResponse::<()>::error(
-            "Access denied".to_string(),
-        )));
+        return Ok(
+            HttpResponse::Forbidden().json(ApiResponse::<()>::error("Access denied".to_string()))
+        );
     }
 
-    let deleted = repo.delete(&template_id).await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to delete template");
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
+    let deleted = repo.delete(&template_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to delete template");
+        actix_web::error::ErrorInternalServerError("Database error")
+    })?;
 
     if !deleted {
-        return Ok(HttpResponse::NotFound().json(ApiResponse::<()>::error(
-            "Template not found".to_string(),
-        )));
+        return Ok(HttpResponse::NotFound()
+            .json(ApiResponse::<()>::error("Template not found".to_string())));
     }
 
     info!(
@@ -563,11 +560,26 @@ pub async fn delete_template(
 pub fn configure_template_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/templates")
-            .route("", web::get().to(list_templates).wrap(RequireRole::operator()))
-            .route("", web::post().to(create_template).wrap(RequireRole::admin()))
-            .route("/{id}", web::get().to(get_template).wrap(RequireRole::operator()))
-            .route("/{id}", web::put().to(update_template).wrap(RequireRole::admin()))
-            .route("/{id}", web::delete().to(delete_template).wrap(RequireRole::admin()))
+            .route(
+                "",
+                web::get().to(list_templates).wrap(RequireRole::operator()),
+            )
+            .route(
+                "",
+                web::post().to(create_template).wrap(RequireRole::admin()),
+            )
+            .route(
+                "/{id}",
+                web::get().to(get_template).wrap(RequireRole::operator()),
+            )
+            .route(
+                "/{id}",
+                web::put().to(update_template).wrap(RequireRole::admin()),
+            )
+            .route(
+                "/{id}",
+                web::delete().to(delete_template).wrap(RequireRole::admin()),
+            ),
     );
 }
 
@@ -616,20 +628,20 @@ mod tests {
             "element_selector": "#main"
         });
         assert!(validate_template_config(&valid_config).is_ok());
-        
+
         // Missing url
         let invalid_config = json!({
             "kind": "website"
         });
         assert!(validate_template_config(&invalid_config).is_err());
-        
+
         // Invalid url
         let invalid_config = json!({
-            "kind": "website", 
+            "kind": "website",
             "url": "not-a-url"
         });
         assert!(validate_template_config(&invalid_config).is_err());
-        
+
         // Invalid field types
         let invalid_config = json!({
             "kind": "website",
@@ -638,7 +650,7 @@ mod tests {
         });
         assert!(validate_template_config(&invalid_config).is_err());
     }
-    
+
     #[test]
     fn test_yt_config_validation() {
         let valid_config = json!({
@@ -652,20 +664,20 @@ mod tests {
             }
         });
         assert!(validate_template_config(&valid_config).is_ok());
-        
+
         // Missing url
         let invalid_config = json!({
             "kind": "yt"
         });
         assert!(validate_template_config(&invalid_config).is_err());
-        
+
         // Invalid url
         let invalid_config = json!({
             "kind": "yt",
             "url": "not-a-url"
         });
         assert!(validate_template_config(&invalid_config).is_err());
-        
+
         // Invalid field types
         let invalid_config = json!({
             "kind": "yt",
@@ -673,14 +685,14 @@ mod tests {
             "is_live": "not-a-boolean"
         });
         assert!(validate_template_config(&invalid_config).is_err());
-        
+
         let invalid_config = json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "timeout": "not-a-number"
         });
         assert!(validate_template_config(&invalid_config).is_err());
-        
+
         let invalid_config = json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
@@ -688,7 +700,7 @@ mod tests {
         });
         assert!(validate_template_config(&invalid_config).is_err());
     }
-    
+
     #[test]
     fn test_unknown_kind_validation() {
         let invalid_config = json!({

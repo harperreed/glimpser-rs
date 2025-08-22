@@ -2,10 +2,8 @@
 //! ABOUTME: Tests end-to-end notification delivery through various adapters
 
 use gl_notify::{
-    adapters::pushover::PushoverAdapter,
-    circuit_breaker::CircuitBreakerWrapper,
-    retry::RetryWrapper,
-    Notification, NotificationChannel, NotificationKind, NotificationManager,
+    adapters::pushover::PushoverAdapter, circuit_breaker::CircuitBreakerWrapper,
+    retry::RetryWrapper, Notification, NotificationChannel, NotificationKind, NotificationManager,
 };
 
 #[tokio::test]
@@ -42,14 +40,14 @@ async fn test_multi_channel_notification() {
     // This will fail for webhook since we don't have that adapter registered,
     // but demonstrates the multi-channel behavior
     let result = manager.send(&notification).await;
-    
+
     // Should get an error about missing webhook adapter
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("Adapter not found: webhook"));
 }
 
-#[tokio::test] 
+#[tokio::test]
 async fn test_notification_with_metadata_and_attachments() {
     let mut manager = NotificationManager::new();
 
@@ -77,8 +75,11 @@ async fn test_notification_with_metadata_and_attachments() {
     // Test that notification with metadata is constructed correctly
     assert_eq!(notification.attachments.len(), 1);
     assert_eq!(notification.metadata.len(), 2);
-    assert_eq!(notification.metadata.get("report_type"), Some(&"monthly".to_string()));
-    
+    assert_eq!(
+        notification.metadata.get("report_type"),
+        Some(&"monthly".to_string())
+    );
+
     // Test sending (will log but not actually send due to test token)
     let result = manager.send(&notification).await;
     // Should succeed because Pushover adapter is registered and handles the test gracefully
@@ -89,16 +90,16 @@ async fn test_notification_with_metadata_and_attachments() {
 async fn test_health_check_integration() {
     let mut manager = NotificationManager::new();
 
-    // Register multiple adapters  
+    // Register multiple adapters
     let pushover_adapter = PushoverAdapter::new("azGDORePK8gMaC0QOYAMyEEuzJnyUi".to_string()); // 30 chars
     manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));
 
     // Test health check
     let health_results = manager.health_check().await;
-    
+
     assert_eq!(health_results.len(), 1);
     assert!(health_results.contains_key("pushover"));
-    
+
     // Pushover health check should pass with valid token format
     let pushover_health = &health_results["pushover"];
     assert!(pushover_health.is_ok());

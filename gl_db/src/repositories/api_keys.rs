@@ -1,7 +1,7 @@
 //! ABOUTME: API key repository for managing API authentication tokens
 //! ABOUTME: Provides compile-time checked queries for API key CRUD operations
 
-use gl_core::{Result, Error, time::now_iso8601, Id};
+use gl_core::{time::now_iso8601, Error, Id, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 use tracing::{debug, instrument};
@@ -46,9 +46,9 @@ impl<'a> ApiKeyRepository<'a> {
     pub async fn create(&self, request: CreateApiKeyRequest) -> Result<ApiKey> {
         let id = Id::new().to_string();
         let now = now_iso8601();
-        
+
         debug!("Creating API key with id: {}", id);
-        
+
         let api_key = sqlx::query_as!(
             ApiKey,
             r#"
@@ -68,7 +68,7 @@ impl<'a> ApiKeyRepository<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to create API key: {}", e)))?;
-        
+
         debug!("Successfully created API key: {}", api_key.id);
         Ok(api_key)
     }
@@ -77,7 +77,7 @@ impl<'a> ApiKeyRepository<'a> {
     #[instrument(skip(self))]
     pub async fn find_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>> {
         debug!("Finding API key by hash");
-        
+
         let api_key = sqlx::query_as!(
             ApiKey,
             "SELECT * FROM api_keys WHERE key_hash = ?1 AND is_active = true",
@@ -86,7 +86,7 @@ impl<'a> ApiKeyRepository<'a> {
         .fetch_optional(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to find API key by hash: {}", e)))?;
-        
+
         Ok(api_key)
     }
 
@@ -94,7 +94,7 @@ impl<'a> ApiKeyRepository<'a> {
     #[instrument(skip(self))]
     pub async fn list_by_user(&self, user_id: &str) -> Result<Vec<ApiKey>> {
         debug!("Listing API keys for user: {}", user_id);
-        
+
         let api_keys = sqlx::query_as!(
             ApiKey,
             "SELECT * FROM api_keys WHERE user_id = ?1 ORDER BY created_at DESC",
@@ -103,7 +103,7 @@ impl<'a> ApiKeyRepository<'a> {
         .fetch_all(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to list API keys: {}", e)))?;
-        
+
         debug!("Found {} API keys for user", api_keys.len());
         Ok(api_keys)
     }

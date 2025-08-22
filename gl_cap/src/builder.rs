@@ -5,8 +5,8 @@ use chrono::{DateTime, Duration, Utc};
 use gl_core::Id;
 
 use crate::{
-    Alert, Area, Category, Certainty, Geocode, Info, MsgType, Resource, ResponseType, 
-    Scope, Severity, Status, Urgency
+    Alert, Area, Category, Certainty, Geocode, Info, MsgType, Resource, ResponseType, Scope,
+    Severity, Status, Urgency,
 };
 
 /// Builder for CAP Alert messages
@@ -19,7 +19,7 @@ impl AlertBuilder {
     pub fn new(sender: impl Into<String>) -> Self {
         let identifier = Id::new().to_string();
         let sender = sender.into();
-        
+
         Self {
             alert: Alert::new(identifier, sender),
         }
@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(alert.note, Some("This is a test alert".to_string()));
         assert!(alert.code.is_some());
         assert_eq!(alert.code.as_ref().unwrap()[0], "TEST");
-        
+
         assert_eq!(alert.info.len(), 1);
         let info = &alert.info[0];
         assert_eq!(info.event, "Test Event");
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(info.severity, Severity::Minor);
         assert_eq!(info.certainty, Certainty::Possible);
         assert_eq!(info.headline, Some("Test Alert Headline".to_string()));
-        
+
         assert_eq!(info.area.len(), 1);
         let area = &info.area[0];
         assert_eq!(area.area_desc, "Test Area");
@@ -420,11 +420,11 @@ mod tests {
 
         let xml = alert.to_xml().expect("Should serialize to XML");
         println!("Generated XML:\n{}", xml);
-        
+
         assert!(xml.contains("test.example.org"));
         assert!(xml.contains("Test Event"));
         assert!(xml.contains("Emergency Test"));
-        
+
         // TODO: Fix XML deserialization issue with Vec<Category>
         // The serialization works, but deserialization has issues with how
         // quick-xml handles repeated XML elements for Vec fields

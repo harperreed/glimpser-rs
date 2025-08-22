@@ -1,7 +1,7 @@
 //! ABOUTME: Job repository for managing background processing and scheduling
 //! ABOUTME: Provides compile-time checked queries for job CRUD operations
 
-use gl_core::{Result, Error, time::now_iso8601, Id};
+use gl_core::{time::now_iso8601, Error, Id, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
@@ -14,7 +14,7 @@ pub struct Job {
     pub job_type: String,
     pub priority: i64,
     pub status: String,
-    pub payload: String, // JSON
+    pub payload: String,        // JSON
     pub result: Option<String>, // JSON
     pub error_message: Option<String>,
     pub attempts: i64,
@@ -63,7 +63,7 @@ impl<'a> JobRepository<'a> {
     pub async fn create(&self, request: CreateJobRequest) -> Result<Job> {
         let id = Id::new().to_string();
         let now = now_iso8601();
-        
+
         let job = sqlx::query_as!(
             Job,
             r#"
@@ -85,21 +85,17 @@ impl<'a> JobRepository<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to create job: {}", e)))?;
-        
+
         Ok(job)
     }
 
     /// Find job by ID
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Job>> {
-        let job = sqlx::query_as!(
-            Job,
-            "SELECT * FROM jobs WHERE id = ?1",
-            id
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to find job: {}", e)))?;
-        
+        let job = sqlx::query_as!(Job, "SELECT * FROM jobs WHERE id = ?1", id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to find job: {}", e)))?;
+
         Ok(job)
     }
 }

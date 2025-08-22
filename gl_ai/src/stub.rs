@@ -6,8 +6,8 @@ use gl_core::Result;
 use tracing::debug;
 
 use crate::{
-    AiClient, ClassifyEventRequest, ClassifyEventResponse, DescribeFrameRequest, 
-    DescribeFrameResponse, EventClassification, SummarizeRequest, SummarizeResponse
+    AiClient, ClassifyEventRequest, ClassifyEventResponse, DescribeFrameRequest,
+    DescribeFrameResponse, EventClassification, SummarizeRequest, SummarizeResponse,
 };
 
 /// Stub AI client that returns predetermined responses
@@ -18,42 +18,52 @@ impl StubClient {
         debug!("Creating stub AI client");
         Self
     }
-    
+
     /// Generate a deterministic but somewhat realistic summary
     fn generate_stub_summary(&self, text: &str, max_length: Option<usize>) -> String {
         let words: Vec<&str> = text.split_whitespace().collect();
         let target_length = max_length.unwrap_or(50).min(words.len());
-        
+
         if words.len() <= target_length {
             return text.to_string();
         }
-        
+
         // Take first portion and add ellipsis
         let summary_words = &words[..target_length];
         let mut summary = summary_words.join(" ");
-        
+
         // Add contextual ending based on content
         if text.to_lowercase().contains("error") || text.to_lowercase().contains("failed") {
             summary.push_str("... [Error summary]");
-        } else if text.to_lowercase().contains("success") || text.to_lowercase().contains("complete") {
+        } else if text.to_lowercase().contains("success")
+            || text.to_lowercase().contains("complete")
+        {
             summary.push_str("... [Success summary]");
         } else {
             summary.push_str("...");
         }
-        
+
         summary
     }
-    
+
     /// Generate a deterministic frame description based on image size
     fn generate_stub_description(&self, image_size: usize, format: &str) -> (String, Vec<String>) {
         let objects = match image_size % 5 {
             0 => vec!["person".to_string(), "chair".to_string()],
-            1 => vec!["car".to_string(), "tree".to_string(), "building".to_string()],
+            1 => vec![
+                "car".to_string(),
+                "tree".to_string(),
+                "building".to_string(),
+            ],
             2 => vec!["dog".to_string(), "grass".to_string()],
-            3 => vec!["monitor".to_string(), "keyboard".to_string(), "desk".to_string()],
+            3 => vec![
+                "monitor".to_string(),
+                "keyboard".to_string(),
+                "desk".to_string(),
+            ],
             _ => vec!["outdoor scene".to_string()],
         };
-        
+
         let description = match format {
             "jpeg" => {
                 if objects.contains(&"person".to_string()) {
@@ -75,12 +85,16 @@ impl StubClient {
                 "An image in an uncommon format with basic visual content."
             }
         };
-        
+
         (description.to_string(), objects)
     }
-    
+
     /// Generate event classification based on event type
-    fn classify_stub_event(&self, event_type: &str, confidence: f64) -> (EventClassification, f64, String) {
+    fn classify_stub_event(
+        &self,
+        event_type: &str,
+        confidence: f64,
+    ) -> (EventClassification, f64, String) {
         let (classification, adjusted_confidence, reasoning) = match event_type.to_lowercase().as_str() {
             s if s.contains("motion") => (
                 EventClassification::Motion,
@@ -123,7 +137,7 @@ impl StubClient {
                 "Event type could not be classified with sufficient confidence."
             ),
         };
-        
+
         (classification, adjusted_confidence, reasoning.to_string())
     }
 }
@@ -137,13 +151,16 @@ impl Default for StubClient {
 #[async_trait]
 impl AiClient for StubClient {
     async fn summarize(&self, request: SummarizeRequest) -> Result<SummarizeResponse> {
-        debug!("Stub client summarizing text of {} characters", request.text.len());
-        
+        debug!(
+            "Stub client summarizing text of {} characters",
+            request.text.len()
+        );
+
         // Simulate processing delay
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
+
         let summary = self.generate_stub_summary(&request.text, request.max_length);
-        
+
         Ok(SummarizeResponse {
             original_length: request.text.len(),
             summary_length: summary.len(),
@@ -151,20 +168,21 @@ impl AiClient for StubClient {
             confidence: Some(0.85), // Stub confidence
         })
     }
-    
+
     async fn describe_frame(&self, request: DescribeFrameRequest) -> Result<DescribeFrameResponse> {
-        debug!("Stub client describing frame of {} bytes in {} format", 
-               request.image_data.len(), request.image_format);
-        
+        debug!(
+            "Stub client describing frame of {} bytes in {} format",
+            request.image_data.len(),
+            request.image_format
+        );
+
         // Simulate processing delay based on image size
         let delay_ms = (request.image_data.len() / 1000).max(50).min(500);
         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64)).await;
-        
-        let (description, objects) = self.generate_stub_description(
-            request.image_data.len(), 
-            &request.image_format
-        );
-        
+
+        let (description, objects) =
+            self.generate_stub_description(request.image_data.len(), &request.image_format);
+
         Ok(DescribeFrameResponse {
             description,
             objects_detected: objects,
@@ -172,19 +190,21 @@ impl AiClient for StubClient {
             processing_time_ms: Some(delay_ms as u64),
         })
     }
-    
+
     async fn classify_event(&self, request: ClassifyEventRequest) -> Result<ClassifyEventResponse> {
-        debug!("Stub client classifying event: {} with confidence {}", 
-               request.event_data.event_type, request.event_data.confidence);
-        
+        debug!(
+            "Stub client classifying event: {} with confidence {}",
+            request.event_data.event_type, request.event_data.confidence
+        );
+
         // Simulate processing delay
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-        
+
         let (classification, confidence, reasoning) = self.classify_stub_event(
-            &request.event_data.event_type, 
-            request.event_data.confidence
+            &request.event_data.event_type,
+            request.event_data.confidence,
         );
-        
+
         let suggested_actions = match classification {
             EventClassification::Fire => vec![
                 "Immediately alert fire department".to_string(),
@@ -204,15 +224,13 @@ impl AiClient for StubClient {
                 "Continue monitoring".to_string(),
                 "Log event for pattern tracking".to_string(),
             ],
-            EventClassification::Normal => vec![
-                "No action required".to_string(),
-            ],
+            EventClassification::Normal => vec!["No action required".to_string()],
             EventClassification::Unknown => vec![
                 "Review event data".to_string(),
                 "Consider manual classification".to_string(),
             ],
         };
-        
+
         Ok(ClassifyEventResponse {
             classification,
             confidence,
@@ -220,7 +238,7 @@ impl AiClient for StubClient {
             suggested_actions,
         })
     }
-    
+
     async fn health_check(&self) -> Result<()> {
         debug!("Stub client health check - always healthy");
         // Stub is always healthy
@@ -231,8 +249,8 @@ impl AiClient for StubClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
     use crate::EventData;
+    use bytes::Bytes;
 
     #[tokio::test]
     async fn test_stub_summarize() {
@@ -242,15 +260,15 @@ mod tests {
             max_length: Some(20),
             style: Some("brief".to_string()),
         };
-        
+
         let response = client.summarize(request).await.unwrap();
-        
+
         assert!(response.summary.len() < response.original_length);
         assert!(response.summary_length > 0);
         assert!(response.confidence.is_some());
         assert!(response.confidence.unwrap() > 0.0);
     }
-    
+
     #[tokio::test]
     async fn test_stub_describe_frame() {
         let client = StubClient::new();
@@ -260,15 +278,15 @@ mod tests {
             detail_level: Some("high".to_string()),
             focus: Some("objects".to_string()),
         };
-        
+
         let response = client.describe_frame(request).await.unwrap();
-        
+
         assert!(!response.description.is_empty());
         assert!(!response.objects_detected.is_empty());
         assert!(response.confidence.is_some());
         assert!(response.processing_time_ms.is_some());
     }
-    
+
     #[tokio::test]
     async fn test_stub_classify_event_motion() {
         let client = StubClient::new();
@@ -279,21 +297,21 @@ mod tests {
             timestamp: "2023-12-01T10:00:00Z".to_string(),
             source_id: "camera_01".to_string(),
         };
-        
+
         let request = ClassifyEventRequest {
             event_data,
             context: None,
             threshold: Some(0.8),
         };
-        
+
         let response = client.classify_event(request).await.unwrap();
-        
+
         assert_eq!(response.classification, EventClassification::Motion);
         assert!(response.confidence >= 0.8);
         assert!(!response.reasoning.is_empty());
         assert!(!response.suggested_actions.is_empty());
     }
-    
+
     #[tokio::test]
     async fn test_stub_classify_event_fire() {
         let client = StubClient::new();
@@ -304,58 +322,60 @@ mod tests {
             timestamp: "2023-12-01T10:00:00Z".to_string(),
             source_id: "sensor_01".to_string(),
         };
-        
+
         let request = ClassifyEventRequest {
             event_data,
             context: None,
             threshold: None,
         };
-        
+
         let response = client.classify_event(request).await.unwrap();
-        
+
         assert_eq!(response.classification, EventClassification::Fire);
         assert!(response.confidence >= 0.9);
-        assert!(response.suggested_actions.contains(&"Immediately alert fire department".to_string()));
+        assert!(response
+            .suggested_actions
+            .contains(&"Immediately alert fire department".to_string()));
     }
-    
+
     #[tokio::test]
     async fn test_stub_health_check() {
         let client = StubClient::new();
         let result = client.health_check().await;
-        
+
         assert!(result.is_ok());
     }
-    
+
     #[test]
     fn test_stub_generate_summary() {
         let client = StubClient::new();
         let text = "This is a test text that should be summarized properly";
-        
+
         let summary = client.generate_stub_summary(text, Some(5));
         assert!(summary.len() < text.len());
         assert!(summary.ends_with("..."));
     }
-    
+
     #[test]
     fn test_stub_generate_description_deterministic() {
         let client = StubClient::new();
-        
+
         // Same input should give same output
         let (desc1, objs1) = client.generate_stub_description(100, "jpeg");
         let (desc2, objs2) = client.generate_stub_description(100, "jpeg");
-        
+
         assert_eq!(desc1, desc2);
         assert_eq!(objs1, objs2);
     }
-    
+
     #[test]
     fn test_stub_classify_different_events() {
         let client = StubClient::new();
-        
+
         let (class1, _, _) = client.classify_stub_event("person_detected", 0.8);
         let (class2, _, _) = client.classify_stub_event("vehicle_moving", 0.7);
         let (class3, _, _) = client.classify_stub_event("fire_alarm", 0.9);
-        
+
         assert_eq!(class1, EventClassification::Person);
         assert_eq!(class2, EventClassification::Vehicle);
         assert_eq!(class3, EventClassification::Fire);

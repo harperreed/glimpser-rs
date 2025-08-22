@@ -3,9 +3,9 @@
 
 use async_trait::async_trait;
 use gl_core::{Error, Result};
-use tracing::{info, debug, instrument};
+use tracing::{debug, info, instrument};
 
-use crate::{JobHandler, JobContext, JobKind, SnapshotJobConfig, CaptureJobConfig};
+use crate::{CaptureJobConfig, JobContext, JobHandler, JobKind, SnapshotJobConfig};
 
 /// Handler for snapshot jobs
 pub struct SnapshotJobHandler;
@@ -13,8 +13,9 @@ pub struct SnapshotJobHandler;
 #[async_trait]
 impl JobHandler for SnapshotJobHandler {
     async fn execute(&self, context: JobContext) -> Result<String> {
-        let config: SnapshotJobConfig = serde_json::from_value(context.scheduled_job.config.clone())
-            .map_err(|e| Error::Config(format!("Invalid snapshot job config: {}", e)))?;
+        let config: SnapshotJobConfig =
+            serde_json::from_value(context.scheduled_job.config.clone())
+                .map_err(|e| Error::Config(format!("Invalid snapshot job config: {}", e)))?;
 
         info!(
             job_id = %context.scheduled_job.id,
@@ -25,8 +26,8 @@ impl JobHandler for SnapshotJobHandler {
         // For now, we'll create a simple file-based snapshot
         // In a real implementation, this would look up the template and use the appropriate capture source
         let result = format!(
-            "Snapshot job completed for template {} at {}", 
-            config.template_id, 
+            "Snapshot job completed for template {} at {}",
+            config.template_id,
             context.execution_time.format("%Y-%m-%d %H:%M:%S UTC")
         );
 
@@ -62,16 +63,16 @@ impl JobHandler for CaptureJobHandler {
 
         // For now, simulate capture work
         let duration = config.duration.unwrap_or(60); // Default 60 seconds
-        
+
         // In a real implementation, this would:
         // 1. Look up the template configuration
         // 2. Create the appropriate capture source
         // 3. Start recording for the specified duration
         // 4. Save the result to storage
-        
+
         let result = format!(
-            "Capture job completed for template {} (duration: {}s) at {}", 
-            config.template_id, 
+            "Capture job completed for template {} (duration: {}s) at {}",
+            config.template_id,
             duration,
             context.execution_time.format("%Y-%m-%d %H:%M:%S UTC")
         );
@@ -106,7 +107,7 @@ impl JobHandler for CleanupJobHandler {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let result = format!(
-            "Cleanup job completed at {}", 
+            "Cleanup job completed at {}",
             context.execution_time.format("%Y-%m-%d %H:%M:%S UTC")
         );
 
@@ -135,7 +136,7 @@ impl JobHandler for HealthCheckJobHandler {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let result = format!(
-            "Health check completed at {}", 
+            "Health check completed at {}",
             context.execution_time.format("%Y-%m-%d %H:%M:%S UTC")
         );
 
@@ -161,9 +162,9 @@ pub fn create_default_handlers() -> Vec<std::sync::Arc<dyn JobHandler>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{JobKind, ScheduledJob};
     use chrono::Utc;
-    use crate::{ScheduledJob, JobKind};
-    
+
     async fn create_test_context(kind: JobKind, config: serde_json::Value) -> JobContext {
         let scheduled_job = ScheduledJob::new(
             "test_job".to_string(),
@@ -173,90 +174,90 @@ mod tests {
             Some("test_template".to_string()),
             config,
         );
-        
+
         // Create a mock database pool for testing
-        let db_pool = crate::SqlitePool::connect(":memory:")
-            .expect("Failed to create mock database pool");
-            
+        let db_pool =
+            crate::SqlitePool::connect(":memory:").expect("Failed to create mock database pool");
+
         JobContext {
             scheduled_job,
             db_pool,
             execution_time: Utc::now(),
         }
     }
-    
+
     #[tokio::test]
     async fn test_snapshot_job_handler() {
         let handler = SnapshotJobHandler;
         assert_eq!(handler.supported_kinds(), vec![JobKind::Snapshot]);
-        
+
         let config = serde_json::json!({
             "template_id": "test_template",
             "format": "jpeg",
             "quality": 85
         });
-        
+
         let context = create_test_context(JobKind::Snapshot, config).await;
         let result = handler.execute(context).await.unwrap();
-        
+
         assert!(result.contains("Snapshot job completed"));
         assert!(result.contains("test_template"));
     }
-    
+
     #[tokio::test]
     async fn test_capture_job_handler() {
         let handler = CaptureJobHandler;
         assert_eq!(handler.supported_kinds(), vec![JobKind::Capture]);
-        
+
         let config = serde_json::json!({
             "template_id": "test_template",
             "duration": 30,
             "max_size": 1000000
         });
-        
+
         let context = create_test_context(JobKind::Capture, config).await;
         let result = handler.execute(context).await.unwrap();
-        
+
         assert!(result.contains("Capture job completed"));
         assert!(result.contains("test_template"));
         assert!(result.contains("30s"));
     }
-    
+
     #[tokio::test]
     async fn test_cleanup_job_handler() {
         let handler = CleanupJobHandler;
         assert_eq!(handler.supported_kinds(), vec![JobKind::Cleanup]);
-        
+
         let config = serde_json::json!({});
         let context = create_test_context(JobKind::Cleanup, config).await;
         let result = handler.execute(context).await.unwrap();
-        
+
         assert!(result.contains("Cleanup job completed"));
     }
-    
+
     #[tokio::test]
     async fn test_health_check_job_handler() {
         let handler = HealthCheckJobHandler;
         assert_eq!(handler.supported_kinds(), vec![JobKind::HealthCheck]);
-        
+
         let config = serde_json::json!({});
         let context = create_test_context(JobKind::HealthCheck, config).await;
         let result = handler.execute(context).await.unwrap();
-        
+
         assert!(result.contains("Health check completed"));
     }
-    
+
     #[tokio::test]
     async fn test_create_default_handlers() {
         let handlers = create_default_handlers();
         assert_eq!(handlers.len(), 4);
-        
+
         // Test that each handler supports the expected job kinds
         let mut supported_kinds = Vec::new();
         for handler in &handlers {
             supported_kinds.extend(handler.supported_kinds());
         }
-        
+
         assert!(supported_kinds.contains(&JobKind::Snapshot));
         assert!(supported_kinds.contains(&JobKind::Capture));
         assert!(supported_kinds.contains(&JobKind::Cleanup));

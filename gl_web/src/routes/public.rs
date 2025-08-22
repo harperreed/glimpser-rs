@@ -23,10 +23,7 @@ use tracing::{debug, warn};
     )
 )]
 #[get("/me")]
-pub async fn me(
-    state: web::Data<AppState>,
-    req: HttpRequest,
-) -> Result<HttpResponse> {
+pub async fn me(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse> {
     // Get authenticated user from middleware
     let auth_user = match get_http_auth_user(&req) {
         Some(user) => user,
@@ -34,15 +31,15 @@ pub async fn me(
             warn!("Authenticated user not found in request");
             return Ok(HttpResponse::Unauthorized().json(ErrorResponse::new(
                 "authentication_required",
-                "Authentication required"
+                "Authentication required",
             )));
         }
     };
-    
+
     debug!("Getting user info for: {}", auth_user.id);
-    
+
     let user_repo = UserRepository::new(state.db.pool());
-    
+
     // Fetch fresh user data from database
     match user_repo.find_by_id(&auth_user.id).await {
         Ok(Some(user)) => {
@@ -50,10 +47,10 @@ pub async fn me(
                 warn!("Inactive user attempted to access /me: {}", user.id);
                 return Ok(HttpResponse::Unauthorized().json(ErrorResponse::new(
                     "account_disabled",
-                    "Account is disabled"
+                    "Account is disabled",
                 )));
             }
-            
+
             let user_info = UserInfo {
                 id: user.id,
                 username: user.username,
@@ -62,22 +59,20 @@ pub async fn me(
                 is_active: user.is_active,
                 created_at: user.created_at,
             };
-            
+
             debug!("User info retrieved successfully for: {}", user_info.id);
             Ok(HttpResponse::Ok().json(user_info))
         }
         Ok(None) => {
             warn!("User not found in database: {}", auth_user.id);
-            Ok(HttpResponse::NotFound().json(ErrorResponse::new(
-                "user_not_found",
-                "User not found"
-            )))
+            Ok(HttpResponse::NotFound()
+                .json(ErrorResponse::new("user_not_found", "User not found")))
         }
         Err(e) => {
             warn!("Database error getting user info: {}", e);
             Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
                 "database_error",
-                "Error retrieving user information"
+                "Error retrieving user information",
             )))
         }
     }

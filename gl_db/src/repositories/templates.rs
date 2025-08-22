@@ -1,7 +1,7 @@
 //! ABOUTME: Template repository for managing capture configuration templates
 //! ABOUTME: Provides compile-time checked queries for template CRUD operations
 
-use gl_core::{Result, Error, time::now_iso8601, Id};
+use gl_core::{time::now_iso8601, Error, Id, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
@@ -51,7 +51,7 @@ impl<'a> TemplateRepository<'a> {
     pub async fn create(&self, request: CreateTemplateRequest) -> Result<Template> {
         let id = Id::new().to_string();
         let now = now_iso8601();
-        
+
         let template = sqlx::query_as!(
             Template,
             r#"
@@ -71,26 +71,26 @@ impl<'a> TemplateRepository<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to create template: {}", e)))?;
-        
+
         Ok(template)
     }
 
     /// Find template by ID
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Template>> {
-        let template = sqlx::query_as!(
-            Template,
-            "SELECT * FROM templates WHERE id = ?1",
-            id
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to find template: {}", e)))?;
-        
+        let template = sqlx::query_as!(Template, "SELECT * FROM templates WHERE id = ?1", id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to find template: {}", e)))?;
+
         Ok(template)
     }
 
     /// Update template
-    pub async fn update(&self, id: &str, request: UpdateTemplateRequest) -> Result<Option<Template>> {
+    pub async fn update(
+        &self,
+        id: &str,
+        request: UpdateTemplateRequest,
+    ) -> Result<Option<Template>> {
         let now = now_iso8601();
 
         // Build dynamic query based on provided fields
@@ -107,7 +107,7 @@ impl<'a> TemplateRepository<'a> {
         let template = sqlx::query_as!(
             Template,
             r#"
-            UPDATE templates 
+            UPDATE templates
             SET name = ?1, description = ?2, config = ?3, is_default = ?4, updated_at = ?5
             WHERE id = ?6
             RETURNING *
@@ -128,19 +128,21 @@ impl<'a> TemplateRepository<'a> {
 
     /// Delete template
     pub async fn delete(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query!(
-            "DELETE FROM templates WHERE id = ?1",
-            id
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to delete template: {}", e)))?;
+        let result = sqlx::query!("DELETE FROM templates WHERE id = ?1", id)
+            .execute(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to delete template: {}", e)))?;
 
         Ok(result.rows_affected() > 0)
     }
 
     /// List templates with pagination and filtering
-    pub async fn list(&self, user_id: Option<&str>, offset: i64, limit: i64) -> Result<Vec<Template>> {
+    pub async fn list(
+        &self,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Template>> {
         let templates = if let Some(uid) = user_id {
             sqlx::query_as!(
                 Template,
@@ -168,25 +170,25 @@ impl<'a> TemplateRepository<'a> {
     /// Count templates for pagination
     pub async fn count(&self, user_id: Option<&str>) -> Result<i64> {
         let count = if let Some(uid) = user_id {
-            sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM templates WHERE user_id = ?1",
-                uid
-            )
-            .fetch_one(self.pool)
-            .await
+            sqlx::query_scalar!("SELECT COUNT(*) FROM templates WHERE user_id = ?1", uid)
+                .fetch_one(self.pool)
+                .await
         } else {
-            sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM templates"
-            )
-            .fetch_one(self.pool)
-            .await
+            sqlx::query_scalar!("SELECT COUNT(*) FROM templates")
+                .fetch_one(self.pool)
+                .await
         };
 
         count.map_err(|e| Error::Database(format!("Failed to count templates: {}", e)))
     }
 
     /// Find templates by name (search)
-    pub async fn search_by_name(&self, name_pattern: &str, offset: i64, limit: i64) -> Result<Vec<Template>> {
+    pub async fn search_by_name(
+        &self,
+        name_pattern: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Template>> {
         let pattern = format!("%{}%", name_pattern);
         let templates = sqlx::query_as!(
             Template,
@@ -207,22 +209,27 @@ impl<'a> TemplateRepository<'a> {
 mod tests {
     use super::*;
     use crate::tests::create_test_db;
-    use crate::{UserRepository, CreateUserRequest};
+    use crate::{CreateUserRequest, UserRepository};
     use gl_core::Id;
 
     #[tokio::test]
     async fn test_template_crud_operations() {
-        let db = create_test_db().await.expect("Failed to create test database");
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
         let repo = TemplateRepository::new(db.pool());
 
         // Create a test user first (templates have foreign key constraint)
         let user_repo = UserRepository::new(db.pool());
-        let test_user = user_repo.create(CreateUserRequest {
-            username: "testuser".to_string(),
-            email: "test@example.com".to_string(),
-            password_hash: "hashed_password".to_string(),
-            role: "admin".to_string(),
-        }).await.expect("Failed to create test user");
+        let test_user = user_repo
+            .create(CreateUserRequest {
+                username: "testuser".to_string(),
+                email: "test@example.com".to_string(),
+                password_hash: "hashed_password".to_string(),
+                role: "admin".to_string(),
+            })
+            .await
+            .expect("Failed to create test user");
 
         // Create a test template
         let create_request = CreateTemplateRequest {

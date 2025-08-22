@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{DateTime, Utc, Datelike};
-use gl_core::{Result, Id};
+use chrono::{DateTime, Datelike, Utc};
+use gl_core::{Id, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -14,18 +14,18 @@ pub mod processors;
 pub mod rule_engine;
 
 pub use pipeline::AnalysisPipeline;
-pub use processors::{MotionProcessor, AiDescriptionProcessor, SummaryProcessor};
-pub use rule_engine::{RuleEngine, Rule, RuleSet, Condition, Action};
+pub use processors::{AiDescriptionProcessor, MotionProcessor, SummaryProcessor};
+pub use rule_engine::{Action, Condition, Rule, RuleEngine, RuleSet};
 
 /// Core trait for analysis processors
 #[async_trait]
 pub trait Processor: Send + Sync {
     /// Process input data and return analysis events
     async fn process(&mut self, input: ProcessorInput) -> Result<Vec<AnalysisEvent>>;
-    
+
     /// Get processor name for debugging and configuration
     fn name(&self) -> &'static str;
-    
+
     /// Reset processor state if needed
     async fn reset(&mut self) -> Result<()> {
         Ok(())
@@ -71,12 +71,12 @@ impl ProcessorContext {
             metadata: HashMap::new(),
         }
     }
-    
+
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
         self.metadata.insert(key, value);
         self
     }
-    
+
     pub fn with_config(mut self, config: HashMap<String, serde_json::Value>) -> Self {
         self.template_config = config;
         self
@@ -126,7 +126,7 @@ impl EventSeverity {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Info => "info",
-            Self::Low => "low", 
+            Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
             Self::Critical => "critical",
@@ -160,19 +160,19 @@ impl AnalysisEvent {
             suggested_actions: Vec::new(),
         }
     }
-    
+
     /// Add metadata to the event
     pub fn with_metadata(mut self, key: String, value: serde_json::Value) -> Self {
         self.metadata.insert(key, value);
         self
     }
-    
+
     /// Add suggested actions
     pub fn with_actions(mut self, actions: Vec<String>) -> Self {
         self.suggested_actions = actions;
         self
     }
-    
+
     /// Set notification flag
     pub fn with_notification(mut self, should_notify: bool) -> Self {
         self.should_notify = should_notify;
@@ -224,7 +224,7 @@ pub struct NotificationConfig {
 pub struct QuietHours {
     /// Start time (24-hour format, e.g. "22:00")
     pub start: String,
-    /// End time (24-hour format, e.g. "06:00") 
+    /// End time (24-hour format, e.g. "06:00")
     pub end: String,
     /// Days of week (0=Sunday, 6=Saturday)
     pub days: Vec<u8>,
@@ -270,54 +270,57 @@ impl AnalysisService {
             config.enabled_processors.clone(),
             config.processor_configs.clone(),
         )?;
-        
-        info!("Created analysis service with {} processors", config.enabled_processors.len());
-        
+
+        info!(
+            "Created analysis service with {} processors",
+            config.enabled_processors.len()
+        );
+
         Ok(Self {
             pipeline,
             rule_engine,
             config,
         })
     }
-    
+
     /// Process input through the analysis pipeline
     pub async fn analyze(&mut self, input: ProcessorInput) -> Result<Vec<AnalysisEvent>> {
         debug!("Starting analysis for template: {}", input.template_id);
-        
+
         // Run through processor pipeline
         let mut events = self.pipeline.process(input.clone()).await?;
-        
+
         // Apply rule engine to filter/modify events
         events = self.rule_engine.apply_rules(&input, events).await?;
-        
+
         // Apply configuration filters
         events = self.apply_config_filters(events);
-        
+
         // Store events if configured
         if self.config.storage.store_events {
             self.store_events(&events).await?;
         }
-        
+
         // Enqueue notifications
         if self.config.notifications.enabled {
             self.enqueue_notifications(&events).await?;
         }
-        
+
         info!("Analysis completed: {} events generated", events.len());
         Ok(events)
     }
-    
+
     /// Apply configuration-based filters
     fn apply_config_filters(&self, mut events: Vec<AnalysisEvent>) -> Vec<AnalysisEvent> {
         // Filter by minimum severity
         let min_severity = &self.config.notifications.min_severity;
         events.retain(|event| event.severity >= *min_severity);
-        
+
         // Apply quiet hours
         if let Some(quiet_hours) = &self.config.notifications.quiet_hours {
             let now = Utc::now();
             let is_quiet_time = self.is_quiet_time(&now, quiet_hours);
-            
+
             if is_quiet_time {
                 debug!("Suppressing notifications during quiet hours");
                 for event in &mut events {
@@ -325,20 +328,20 @@ impl AnalysisService {
                 }
             }
         }
-        
+
         events
     }
-    
+
     /// Check if current time is within quiet hours
     fn is_quiet_time(&self, now: &DateTime<Utc>, quiet_hours: &QuietHours) -> bool {
         let weekday = now.weekday().num_days_from_sunday() as u8;
-        
+
         if !quiet_hours.days.contains(&weekday) {
             return false;
         }
-        
+
         let current_time = now.format("%H:%M").to_string();
-        
+
         // Handle same-day quiet hours
         if quiet_hours.start <= quiet_hours.end {
             current_time >= quiet_hours.start && current_time <= quiet_hours.end
@@ -347,55 +350,55 @@ impl AnalysisService {
             current_time >= quiet_hours.start || current_time <= quiet_hours.end
         }
     }
-    
+
     /// Store events in the database
     async fn store_events(&self, events: &[AnalysisEvent]) -> Result<()> {
         debug!("Storing {} events to database", events.len());
-        
+
         // TODO: Implement database storage
         // This would use gl_db to store events in the events table
-        
+
         Ok(())
     }
-    
+
     /// Enqueue notifications for events
     async fn enqueue_notifications(&self, events: &[AnalysisEvent]) -> Result<()> {
         let notify_events: Vec<_> = events.iter().filter(|e| e.should_notify).collect();
-        
+
         if notify_events.is_empty() {
             return Ok(());
         }
-        
+
         debug!("Enqueueing {} notifications", notify_events.len());
-        
+
         // TODO: Implement notification enqueueing
         // This would use gl_notify to send alerts
-        
+
         Ok(())
     }
-    
+
     /// Update configuration
     pub async fn update_config(&mut self, config: AnalysisConfig) -> Result<()> {
         info!("Updating analysis service configuration");
-        
+
         // Recreate pipeline with new config
         self.pipeline = AnalysisPipeline::new(
             config.enabled_processors.clone(),
             config.processor_configs.clone(),
         )?;
-        
+
         // Update rule engine
         self.rule_engine = RuleEngine::new(config.rules.clone());
-        
+
         self.config = config;
         Ok(())
     }
-    
+
     /// Get current configuration
     pub fn config(&self) -> &AnalysisConfig {
         &self.config
     }
-    
+
     /// Reset all processor states
     pub async fn reset(&mut self) -> Result<()> {
         info!("Resetting analysis service");
@@ -406,7 +409,7 @@ impl AnalysisService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_analysis_event_creation() {
         let event = AnalysisEvent::new(
@@ -418,7 +421,7 @@ mod tests {
             "motion_processor".to_string(),
             "camera_01".to_string(),
         );
-        
+
         assert_eq!(event.template_id, "template_123");
         assert_eq!(event.event_type, "motion_detected");
         assert_eq!(event.severity, EventSeverity::Medium);
@@ -426,7 +429,7 @@ mod tests {
         assert!(event.should_notify);
         assert!(!event.id.is_empty());
     }
-    
+
     #[test]
     fn test_event_severity_ordering() {
         assert!(EventSeverity::Critical > EventSeverity::High);
@@ -434,20 +437,23 @@ mod tests {
         assert!(EventSeverity::Medium > EventSeverity::Low);
         assert!(EventSeverity::Low > EventSeverity::Info);
     }
-    
+
     #[test]
     fn test_processor_context() {
         let context = ProcessorContext::new("camera_01".to_string())
             .with_metadata("location".to_string(), "entrance".to_string());
-        
+
         assert_eq!(context.source_id, "camera_01");
-        assert_eq!(context.metadata.get("location"), Some(&"entrance".to_string()));
+        assert_eq!(
+            context.metadata.get("location"),
+            Some(&"entrance".to_string())
+        );
     }
-    
+
     #[test]
     fn test_analysis_config_default() {
         let config = AnalysisConfig::default();
-        
+
         assert_eq!(config.enabled_processors.len(), 3);
         assert!(config.enabled_processors.contains(&"motion".to_string()));
         assert!(config.storage.store_events);

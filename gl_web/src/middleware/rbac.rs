@@ -4,13 +4,11 @@
 use crate::{middleware::auth::AuthUser, models::Role};
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    Error, HttpMessage, 
     error::{ErrorForbidden, ErrorUnauthorized},
+    Error, HttpMessage,
 };
-use futures_util::future::{LocalBoxFuture, Ready, ready};
-use std::{
-    rc::Rc,
-};
+use futures_util::future::{ready, LocalBoxFuture, Ready};
+use std::rc::Rc;
 use tracing::{debug, warn};
 
 /// RBAC middleware that requires specific roles
@@ -24,17 +22,17 @@ impl RequireRole {
             required_roles: roles,
         }
     }
-    
+
     /// Require admin role
     pub fn admin() -> Self {
         Self::new(vec![Role::Admin])
     }
-    
+
     /// Require admin or operator role
     pub fn operator() -> Self {
         Self::new(vec![Role::Admin, Role::Operator])
     }
-    
+
     /// Require any authenticated role (admin, operator, or viewer)
     pub fn viewer() -> Self {
         Self::new(vec![Role::Admin, Role::Operator, Role::Viewer])
@@ -88,18 +86,23 @@ where
                 let extensions = req.extensions();
                 extensions.get::<AuthUser>().cloned()
             };
-            
+
             match auth_user {
                 Some(auth_user) => {
                     // Parse user's role
                     if let Some(user_role) = Role::from_str(&auth_user.role) {
                         // Check if user has any of the required roles
                         if required_roles.contains(&user_role) {
-                            debug!("RBAC check passed for user {} with role {}", auth_user.id, auth_user.role);
+                            debug!(
+                                "RBAC check passed for user {} with role {}",
+                                auth_user.id, auth_user.role
+                            );
                             service.call(req).await
                         } else {
-                            warn!("RBAC check failed for user {} with role {}. Required roles: {:?}", 
-                                  auth_user.id, auth_user.role, required_roles);
+                            warn!(
+                                "RBAC check failed for user {} with role {}. Required roles: {:?}",
+                                auth_user.id, auth_user.role, required_roles
+                            );
                             return Err(ErrorForbidden("Insufficient permissions"));
                         }
                     } else {
@@ -124,11 +127,17 @@ mod tests {
     fn test_role_requirements() {
         let admin_only = RequireRole::admin();
         assert_eq!(admin_only.required_roles, vec![Role::Admin]);
-        
+
         let operator_plus = RequireRole::operator();
-        assert_eq!(operator_plus.required_roles, vec![Role::Admin, Role::Operator]);
-        
+        assert_eq!(
+            operator_plus.required_roles,
+            vec![Role::Admin, Role::Operator]
+        );
+
         let viewer_plus = RequireRole::viewer();
-        assert_eq!(viewer_plus.required_roles, vec![Role::Admin, Role::Operator, Role::Viewer]);
+        assert_eq!(
+            viewer_plus.required_roles,
+            vec![Role::Admin, Role::Operator, Role::Viewer]
+        );
     }
 }

@@ -23,7 +23,10 @@ impl Db {
 
         // Create database if it doesn't exist
         let database_url = format!("sqlite://{}", db_path);
-        if !Sqlite::database_exists(&database_url).await.unwrap_or(false) {
+        if !Sqlite::database_exists(&database_url)
+            .await
+            .unwrap_or(false)
+        {
             info!("Creating database: {}", database_url);
             Sqlite::create_database(&database_url)
                 .await
@@ -61,12 +64,12 @@ impl Db {
     #[instrument(skip(self))]
     pub async fn migrate(&self) -> Result<()> {
         info!("Running database migrations");
-        
+
         sqlx::migrate!("./migrations")
             .run(&self.pool)
             .await
             .map_err(|e| Error::Database(format!("Migration failed: {}", e)))?;
-        
+
         info!("Database migrations completed successfully");
         Ok(())
     }
@@ -80,12 +83,12 @@ impl Db {
     #[instrument(skip(self))]
     pub async fn health_check(&self) -> Result<()> {
         debug!("Performing database health check");
-        
+
         sqlx::query("SELECT 1")
             .fetch_one(&self.pool)
             .await
             .map_err(|e| Error::Database(format!("Health check failed: {}", e)))?;
-        
+
         debug!("Database health check passed");
         Ok(())
     }
@@ -94,25 +97,32 @@ impl Db {
     #[instrument(skip(self))]
     pub async fn stats(&self) -> Result<DatabaseStats> {
         debug!("Gathering database statistics");
-        
+
         let tables = vec![
-            "users", "api_keys", "templates", "captures", 
-            "jobs", "alerts", "events"
+            "users",
+            "api_keys",
+            "templates",
+            "captures",
+            "jobs",
+            "alerts",
+            "events",
         ];
-        
+
         let mut table_counts = std::collections::HashMap::new();
-        
+
         for table in &tables {
             let query = format!("SELECT COUNT(*) as count FROM {}", table);
             let row = sqlx::query(&query)
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| Error::Database(format!("Failed to get count for {}: {}", table, e)))?;
-            
+                .map_err(|e| {
+                    Error::Database(format!("Failed to get count for {}: {}", table, e))
+                })?;
+
             let count: i64 = row.get("count");
             table_counts.insert(table.to_string(), count);
         }
-        
+
         debug!("Database statistics gathered successfully");
         Ok(DatabaseStats { table_counts })
     }
@@ -129,13 +139,13 @@ pub mod repositories;
 
 // Re-export common types and repositories
 pub use repositories::{
-    users::{User, UserRepository, CreateUserRequest, UpdateUserRequest},
-    api_keys::{ApiKey, ApiKeyRepository, CreateApiKeyRequest},
-    templates::{Template, TemplateRepository, CreateTemplateRequest, UpdateTemplateRequest},
-    captures::{Capture, CaptureRepository, CreateCaptureRequest, UpdateCaptureRequest},
-    jobs::{Job, JobRepository, CreateJobRequest, UpdateJobRequest},
     alerts::{Alert, AlertRepository, CreateAlertRequest},
-    events::{Event, EventRepository, CreateEventRequest},
+    api_keys::{ApiKey, ApiKeyRepository, CreateApiKeyRequest},
+    captures::{Capture, CaptureRepository, CreateCaptureRequest, UpdateCaptureRequest},
+    events::{CreateEventRequest, Event, EventRepository},
+    jobs::{CreateJobRequest, Job, JobRepository, UpdateJobRequest},
+    templates::{CreateTemplateRequest, Template, TemplateRepository, UpdateTemplateRequest},
+    users::{CreateUserRequest, UpdateUserRequest, User, UserRepository},
 };
 
 #[cfg(test)]
@@ -148,10 +158,10 @@ mod tests {
     pub async fn create_test_db() -> Result<Db> {
         let test_id = Id::new().to_string();
         let db_path = format!("test_glimpser_{}.db", test_id);
-        
+
         // Clean up any existing test database
         let _ = fs::remove_file(&db_path).await;
-        
+
         let db = Db::new(&db_path).await?;
         Ok(db)
     }
@@ -165,11 +175,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_database_initialization() {
-        let db = create_test_db().await.expect("Failed to create test database");
-        
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+
         // Test health check
         db.health_check().await.expect("Health check should pass");
-        
+
         // Test stats
         let stats = db.stats().await.expect("Stats should be available");
         assert!(stats.table_counts.contains_key("users"));
@@ -178,9 +190,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_user_repository_create_and_find() {
-        let db = create_test_db().await.expect("Failed to create test database");
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
         let repo = UserRepository::new(db.pool());
-        
+
         // Create a user
         let create_request = CreateUserRequest {
             username: "testuser".to_string(),
@@ -188,47 +202,58 @@ mod tests {
             password_hash: "hashed_password".to_string(),
             role: "user".to_string(),
         };
-        
-        let user = repo.create(create_request).await.expect("Failed to create user");
-        
+
+        let user = repo
+            .create(create_request)
+            .await
+            .expect("Failed to create user");
+
         assert!(!user.id.is_empty());
         assert_eq!(user.username, "testuser");
         assert_eq!(user.email, "test@example.com");
         assert_eq!(user.role, "user");
         assert!(user.is_active);
-        
+
         // Find by ID
-        let found_user = repo.find_by_id(&user.id).await
+        let found_user = repo
+            .find_by_id(&user.id)
+            .await
             .expect("Failed to find user")
             .expect("User should exist");
-        
+
         assert_eq!(found_user.id, user.id);
         assert_eq!(found_user.username, user.username);
-        
+
         // Find by username
-        let found_by_username = repo.find_by_username("testuser").await
+        let found_by_username = repo
+            .find_by_username("testuser")
+            .await
             .expect("Failed to find user by username")
             .expect("User should exist");
-        
+
         assert_eq!(found_by_username.id, user.id);
-        
+
         // Find by email
-        let found_by_email = repo.find_by_email("test@example.com").await
+        let found_by_email = repo
+            .find_by_email("test@example.com")
+            .await
             .expect("Failed to find user by email")
             .expect("User should exist");
-        
+
         assert_eq!(found_by_email.id, user.id);
     }
 
     #[tokio::test]
     async fn test_user_repository_list_active() {
-        let db = create_test_db().await.expect("Failed to create test database");
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
         let repo = UserRepository::new(db.pool());
-        
+
         // Initially no users
         let users = repo.list_active().await.expect("Failed to list users");
         assert_eq!(users.len(), 0);
-        
+
         // Create a user
         let create_request = CreateUserRequest {
             username: "activeuser".to_string(),
@@ -236,9 +261,12 @@ mod tests {
             password_hash: "hashed_password".to_string(),
             role: "user".to_string(),
         };
-        
-        let _user = repo.create(create_request).await.expect("Failed to create user");
-        
+
+        let _user = repo
+            .create(create_request)
+            .await
+            .expect("Failed to create user");
+
         // Now should have one active user
         let users = repo.list_active().await.expect("Failed to list users");
         assert_eq!(users.len(), 1);
@@ -247,10 +275,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_key_repository_create_and_find() {
-        let db = create_test_db().await.expect("Failed to create test database");
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
         let user_repo = UserRepository::new(db.pool());
         let api_key_repo = ApiKeyRepository::new(db.pool());
-        
+
         // First create a user
         let user_request = CreateUserRequest {
             username: "keyuser".to_string(),
@@ -258,8 +288,11 @@ mod tests {
             password_hash: "hashed_password".to_string(),
             role: "user".to_string(),
         };
-        let user = user_repo.create(user_request).await.expect("Failed to create user");
-        
+        let user = user_repo
+            .create(user_request)
+            .await
+            .expect("Failed to create user");
+
         // Create API key
         let api_key_request = CreateApiKeyRequest {
             user_id: user.id.clone(),
@@ -268,42 +301,65 @@ mod tests {
             permissions: "[\"read\", \"write\"]".to_string(),
             expires_at: None,
         };
-        
-        let api_key = api_key_repo.create(api_key_request).await.expect("Failed to create API key");
-        
+
+        let api_key = api_key_repo
+            .create(api_key_request)
+            .await
+            .expect("Failed to create API key");
+
         assert!(!api_key.id.is_empty());
         assert_eq!(api_key.user_id, user.id);
         assert_eq!(api_key.name, "Test API Key");
         assert!(api_key.is_active);
-        
+
         // Find by hash
-        let found_key = api_key_repo.find_by_hash("hashed_key").await
+        let found_key = api_key_repo
+            .find_by_hash("hashed_key")
+            .await
             .expect("Failed to find API key")
             .expect("API key should exist");
-        
+
         assert_eq!(found_key.id, api_key.id);
-        
+
         // List by user
-        let user_keys = api_key_repo.list_by_user(&user.id).await
+        let user_keys = api_key_repo
+            .list_by_user(&user.id)
+            .await
             .expect("Failed to list user API keys");
-        
+
         assert_eq!(user_keys.len(), 1);
         assert_eq!(user_keys[0].id, api_key.id);
     }
 
     #[tokio::test]
     async fn test_database_migrations_run_successfully() {
-        let db = create_test_db().await.expect("Failed to create test database");
-        
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+
         // Run migrations again - should be idempotent
-        db.migrate().await.expect("Migrations should run successfully");
-        
+        db.migrate()
+            .await
+            .expect("Migrations should run successfully");
+
         // Verify all tables exist by checking stats
         let stats = db.stats().await.expect("Stats should be available");
-        
-        let expected_tables = vec!["users", "api_keys", "templates", "captures", "jobs", "alerts", "events"];
+
+        let expected_tables = vec![
+            "users",
+            "api_keys",
+            "templates",
+            "captures",
+            "jobs",
+            "alerts",
+            "events",
+        ];
         for table in expected_tables {
-            assert!(stats.table_counts.contains_key(table), "Table {} should exist", table);
+            assert!(
+                stats.table_counts.contains_key(table),
+                "Table {} should exist",
+                table
+            );
         }
     }
 }

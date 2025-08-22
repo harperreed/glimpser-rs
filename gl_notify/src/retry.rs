@@ -6,7 +6,7 @@ use tracing::{debug, warn};
 
 use crate::{Notification, NotificationError, Notifier, Result};
 
-/// Simple retry configuration  
+/// Simple retry configuration
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
     pub max_retries: u32,
@@ -53,10 +53,7 @@ impl<T: Notifier> RetryWrapper<T> {
 
     /// Create retry wrapper with custom configuration
     pub fn with_config(inner: T, config: RetryConfig) -> Self {
-        Self {
-            inner,
-            config,
-        }
+        Self { inner, config }
     }
 
     /// Get the underlying adapter
@@ -85,7 +82,7 @@ impl<T: Notifier> Notifier for RetryWrapper<T> {
                 }
                 Err(e) => {
                     attempt += 1;
-                    
+
                     if attempt >= self.config.max_retries {
                         warn!(
                             notification_id = %msg.id,
@@ -106,9 +103,12 @@ impl<T: Notifier> Notifier for RetryWrapper<T> {
                     let should_retry = match &e {
                         NotificationError::HttpError(http_err) => {
                             // Retry on network errors, 5xx status codes, and timeouts
-                            http_err.is_timeout() || 
-                            http_err.is_connect() ||
-                            http_err.status().map(|s| s.is_server_error()).unwrap_or(false)
+                            http_err.is_timeout()
+                                || http_err.is_connect()
+                                || http_err
+                                    .status()
+                                    .map(|s| s.is_server_error())
+                                    .unwrap_or(false)
                         }
                         NotificationError::CircuitBreakerOpen(_) => false, // Don't retry if circuit breaker is open
                         _ => true, // Retry other errors like serialization, etc.
@@ -133,7 +133,7 @@ impl<T: Notifier> Notifier for RetryWrapper<T> {
                         error = %e,
                         "Notification failed, retrying after delay"
                     );
-                    
+
                     tokio::time::sleep(delay).await;
                 }
             }

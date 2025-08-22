@@ -3,17 +3,20 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use gl_core::{Error, Result, Id};
+use gl_core::{Error, Id, Result};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     str::FromStr,
-    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::sync::{Mutex, RwLock};
-use tokio_cron_scheduler::{JobScheduler, Job as CronJob};
-use tracing::{debug, error, info, warn, instrument};
+use tokio_cron_scheduler::{Job as CronJob, JobScheduler};
+use tracing::{debug, error, info, instrument, warn};
 
 // Optional database support
 #[cfg(feature = "database")]
@@ -32,12 +35,12 @@ impl SqlitePool {
 }
 
 pub mod job;
-pub mod runner;
 pub mod models;
+pub mod runner;
 
 pub use job::*;
-pub use runner::*;
 pub use models::*;
+pub use runner::*;
 
 /// Scheduled job configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,12 +102,18 @@ impl ScheduledJob {
 
     /// Calculate next run time from a cron expression
     pub fn calculate_next_run(&self, _from: DateTime<Utc>) -> Result<DateTime<Utc>> {
-        let schedule = cron::Schedule::from_str(&self.schedule)
-            .map_err(|e| Error::Config(format!("Invalid cron expression '{}': {}", self.schedule, e)))?;
-        
-        let next = schedule.upcoming(Utc).next()
+        let schedule = cron::Schedule::from_str(&self.schedule).map_err(|e| {
+            Error::Config(format!(
+                "Invalid cron expression '{}': {}",
+                self.schedule, e
+            ))
+        })?;
+
+        let next = schedule
+            .upcoming(Utc)
+            .next()
             .ok_or_else(|| Error::Config("No upcoming schedule found".to_string()))?;
-        
+
         // Add jitter if configured
         if self.jitter_ms > 0 {
             let jitter = rand::thread_rng().gen_range(0..=self.jitter_ms) as i64;
@@ -162,7 +171,7 @@ impl Scheduler {
         let cron_scheduler = JobScheduler::new()
             .await
             .map_err(|e| Error::Config(format!("Failed to create cron scheduler: {}", e)))?;
-        
+
         Ok(Self {
             cron_scheduler: Arc::new(Mutex::new(cron_scheduler)),
             scheduled_jobs: Arc::new(RwLock::new(HashMap::new())),
@@ -195,7 +204,10 @@ impl Scheduler {
 
         // Store in memory
         let job_id = job.id.clone();
-        self.scheduled_jobs.write().await.insert(job_id, job.clone());
+        self.scheduled_jobs
+            .write()
+            .await
+            .insert(job_id, job.clone());
 
         // Add to cron scheduler if enabled
         if job.enabled {
@@ -208,13 +220,13 @@ impl Scheduler {
     /// Remove a scheduled job
     pub async fn remove_scheduled_job(&self, job_id: &Id) -> Result<()> {
         info!(job_id = %job_id, "Removing scheduled job");
-        
+
         // Remove from memory
         self.scheduled_jobs.write().await.remove(job_id);
-        
+
         // Note: tokio-cron-scheduler doesn't provide direct job removal by external ID
         // In a production system, we'd need to track the internal job IDs and remove them
-        
+
         Ok(())
     }
 
@@ -235,32 +247,34 @@ impl Scheduler {
         }
 
         info!("Starting scheduler");
-        
+
         let mut scheduler = self.cron_scheduler.lock().await;
-        scheduler.start()
+        scheduler
+            .start()
             .await
             .map_err(|e| Error::Config(format!("Failed to start scheduler: {}", e)))?;
-        
+
         self.running.store(true, Ordering::Relaxed);
-        
+
         Ok(())
     }
 
-    /// Stop the scheduler  
+    /// Stop the scheduler
     pub async fn stop(&self) -> Result<()> {
         if !self.running.load(Ordering::Relaxed) {
             return Ok(());
         }
 
         info!("Stopping scheduler");
-        
+
         let mut scheduler = self.cron_scheduler.lock().await;
-        scheduler.shutdown()
+        scheduler
+            .shutdown()
             .await
             .map_err(|e| Error::Config(format!("Failed to stop scheduler: {}", e)))?;
-        
+
         self.running.store(false, Ordering::Relaxed);
-        
+
         Ok(())
     }
 
@@ -272,9 +286,11 @@ impl Scheduler {
     /// Trigger a job now (outside of its schedule)
     #[instrument(skip(self))]
     pub async fn trigger_job_now(&self, job_id: &Id) -> Result<String> {
-        let job = self.get_scheduled_job(job_id).await
+        let job = self
+            .get_scheduled_job(job_id)
+            .await
             .ok_or_else(|| Error::NotFound(format!("Scheduled job {} not found", job_id)))?;
-        
+
         info!(
             job_id = %job_id,
             name = %job.name,
@@ -287,15 +303,16 @@ impl Scheduler {
     /// Pause/resume a scheduled job
     pub async fn set_job_enabled(&self, job_id: &Id, enabled: bool) -> Result<()> {
         let mut jobs = self.scheduled_jobs.write().await;
-        let job = jobs.get_mut(job_id)
+        let job = jobs
+            .get_mut(job_id)
             .ok_or_else(|| Error::NotFound(format!("Scheduled job {} not found", job_id)))?;
-        
+
         if job.enabled == enabled {
             return Ok(()); // No change needed
         }
 
         job.enabled = enabled;
-        
+
         if enabled {
             info!(job_id = %job_id, "Enabling scheduled job");
             // Re-schedule the job
@@ -323,7 +340,7 @@ impl Scheduler {
 
             Box::pin(async move {
                 debug!(job_id = %job.id, "Executing scheduled job");
-                
+
                 // Check if job is still enabled and exists
                 let current_job = {
                     let jobs = scheduled_jobs.read().await;
@@ -353,7 +370,8 @@ impl Scheduler {
         .map_err(|e| Error::Config(format!("Failed to create cron job: {}", e)))?;
 
         let mut scheduler = self.cron_scheduler.lock().await;
-        scheduler.add(cron_job)
+        scheduler
+            .add(cron_job)
             .await
             .map_err(|e| Error::Config(format!("Failed to add cron job: {}", e)))?;
 
@@ -378,8 +396,10 @@ async fn execute_job_with_idempotency(
     // This implements idempotency - don't run if already running
     let existing_job = check_for_running_job(&job).await?;
     if existing_job.is_some() {
-        let msg = format!("Job of type {:?} already running for template {:?}, skipping", 
-            job.kind, job.template_id);
+        let msg = format!(
+            "Job of type {:?} already running for template {:?}, skipping",
+            job.kind, job.template_id
+        );
         warn!(job_id = %job.id, "{}", msg);
         return Ok(msg);
     }
@@ -412,7 +432,7 @@ async fn execute_job_with_idempotency(
 
     // Execute the job
     let result = handler.execute(context).await;
-    
+
     match result {
         Ok(success_msg) => {
             info!(job_id = %job.id, "Job executed successfully: {}", success_msg);

@@ -50,25 +50,25 @@ async fn main() {
 
     // Initialize observability state
     let obs_state = ObsState::new();
-    
+
     // Initialize web application state
     let web_app_state = AppState {
         db: db.clone(),
         jwt_secret: config.security.jwt_secret.clone(),
     };
-    
+
     // Start observability server
     let obs_bind_addr = format!("0.0.0.0:{}", config.server.obs_port);
     tracing::info!("Starting observability server on {}", obs_bind_addr);
-    
+
     // Start web server
     let web_bind_addr = format!("{}:{}", config.server.host, config.server.port);
     tracing::info!("Starting web server on {}", web_bind_addr);
-    
+
     // Run both servers concurrently
     let obs_future = gl_obs::start_server(&obs_bind_addr, obs_state);
     let web_future = gl_web::start_server(&web_bind_addr, web_app_state);
-    
+
     // Use select to run both concurrently - either succeeding means the app runs
     let result = tokio::select! {
         obs_result = obs_future => {
@@ -80,7 +80,7 @@ async fn main() {
             web_result
         }
     };
-    
+
     if let Err(e) = result {
         tracing::error!("Server error: {}", e);
         process::exit(1);

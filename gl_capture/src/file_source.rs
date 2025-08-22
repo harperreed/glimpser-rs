@@ -1,7 +1,7 @@
 //! ABOUTME: File-based capture source for reading video files
 //! ABOUTME: Implements CaptureSource trait for MP4 and other video file formats
 
-use crate::{CaptureSource, CaptureHandle, SnapshotConfig, generate_snapshot_with_ffmpeg};
+use crate::{generate_snapshot_with_ffmpeg, CaptureHandle, CaptureSource, SnapshotConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
@@ -117,7 +117,7 @@ impl CaptureSource for FileSource {
     #[instrument(skip(self))]
     async fn stop(&self) -> Result<()> {
         debug!(path = %self.file_path.display(), "Stopping file capture source");
-        
+
         // For file sources, there's no background process to stop
         // This is a no-op but maintains the interface contract
         Ok(())
@@ -169,7 +169,10 @@ mod tests {
         let result = source.validate().await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("File does not exist"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("File does not exist"));
     }
 
     #[tokio::test]
@@ -182,7 +185,10 @@ mod tests {
         let result = source.validate().await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Path is not a file"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Path is not a file"));
     }
 
     #[tokio::test]
@@ -228,7 +234,7 @@ mod tests {
         let result = source.start().await;
 
         assert!(result.is_ok());
-        
+
         // Test that we can stop the handle
         let handle = result.unwrap();
         let stop_result = handle.stop().await;
@@ -251,7 +257,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_capture_handle_drop_cleanup() {
         let test_id = create_test_id();
         let temp_dir = std::env::temp_dir().join(format!("gl_capture_test_{}", test_id));
@@ -276,16 +282,16 @@ mod tests {
     async fn test_file_source_snapshot_integration() {
         // This test would require a real video file and ffmpeg installed
         // For now, we'll skip it in regular test runs
-        
+
         // To run this test manually:
         // 1. Create a test.mp4 file in /tmp
         // 2. Run: cargo test test_file_source_snapshot_integration -- --ignored
-        
+
         let video_path = PathBuf::from("/tmp/test.mp4");
         if video_path.exists() {
             let source = FileSource::new(&video_path);
             let handle = source.start().await.unwrap();
-            
+
             match handle.snapshot().await {
                 Ok(jpeg_bytes) => {
                     assert!(!jpeg_bytes.is_empty());

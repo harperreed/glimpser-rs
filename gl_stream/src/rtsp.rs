@@ -1,8 +1,8 @@
 //! ABOUTME: RTSP streaming implementation using GStreamer RTSP server
 //! ABOUTME: Provides real-time streaming protocol support for video streams
 
-use crate::{StreamSession, RtspConfig};
-use gl_core::{Result, Id};
+use crate::{RtspConfig, StreamSession};
+use gl_core::{Id, Result};
 use gstreamer as gst;
 use gstreamer_rtsp_server as gst_rtsp;
 use gstreamer_rtsp_server::prelude::*;
@@ -35,7 +35,7 @@ impl RtspServer {
         server.set_service(&config.port.to_string());
 
         let mounts = server.mount_points().unwrap();
-        
+
         info!(
             address = %config.address,
             port = config.port,
@@ -59,10 +59,8 @@ impl RtspServer {
         );
 
         let _server_id = self.server.attach(None);
-        
-        info!(
-            "RTSP server started successfully"
-        );
+
+        info!("RTSP server started successfully");
 
         Ok(())
     }
@@ -70,7 +68,7 @@ impl RtspServer {
     /// Add a stream endpoint for a template
     pub async fn add_stream(&self, template_id: Id, session: Arc<StreamSession>) -> Result<()> {
         let path = format!("/{}", template_id);
-        
+
         debug!(
             template_id = %template_id,
             path = %path,
@@ -79,11 +77,11 @@ impl RtspServer {
 
         // Create a simple media factory for this stream
         let factory = gst_rtsp::RTSPMediaFactory::new();
-        
+
         // Build a test pipeline for JPEG streaming
         // Note: This is a simplified pipeline for proof of concept
         let pipeline_str = "( videotestsrc is-live=true ! videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency ! rtph264pay name=pay0 pt=96 )";
-        
+
         factory.set_launch(pipeline_str);
         factory.set_shared(true);
 
@@ -108,7 +106,7 @@ impl RtspServer {
     /// Remove a stream endpoint
     pub async fn remove_stream(&self, template_id: &Id) -> Result<()> {
         let path = format!("/{}", template_id);
-        
+
         debug!(
             template_id = %template_id,
             path = %path,
@@ -134,13 +132,16 @@ impl RtspServer {
 
     /// Get the server URL for a template
     pub fn get_stream_url(&self, template_id: &Id) -> String {
-        format!("rtsp://{}:{}/{}", self.config.address, self.config.port, template_id)
+        format!(
+            "rtsp://{}:{}/{}",
+            self.config.address, self.config.port, template_id
+        )
     }
 
     /// Stop the RTSP server
     pub async fn stop(&self) -> Result<()> {
         info!("Stopping RTSP server");
-        
+
         // Clear all mounts
         {
             let sessions = self.sessions.read().unwrap();
@@ -207,7 +208,9 @@ impl RtspStreamManager {
 
     /// Get stream URL if RTSP is enabled
     pub fn get_stream_url(&self, template_id: &Id) -> Option<String> {
-        self.server.as_ref().map(|server| server.get_stream_url(template_id))
+        self.server
+            .as_ref()
+            .map(|server| server.get_stream_url(template_id))
     }
 
     /// Stop the RTSP server
@@ -267,20 +270,20 @@ mod tests {
         match manager {
             Ok(manager) => {
                 assert!(!manager.is_enabled());
-                
+
                 // Test with enabled config
                 let enabled_config = Some(RtspConfig {
                     enabled: true,
                     port: 18556,
                     address: "127.0.0.1".to_string(),
                 });
-                
+
                 match RtspStreamManager::new(enabled_config) {
                     Ok(enabled_manager) => {
                         if enabled_manager.is_enabled() {
                             // Start server
                             let _ = enabled_manager.start().await;
-                            
+
                             // Stop server
                             let _ = enabled_manager.stop().await;
                         }
@@ -299,7 +302,7 @@ mod tests {
     #[tokio::test]
     async fn test_rtsp_config_defaults() {
         let config = RtspConfig::default();
-        
+
         assert!(!config.enabled);
         assert_eq!(config.port, 8554);
         assert_eq!(config.address, "0.0.0.0");

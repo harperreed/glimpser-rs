@@ -1,7 +1,7 @@
-//! ABOUTME: Capture repository for managing capture metadata and results  
+//! ABOUTME: Capture repository for managing capture metadata and results
 //! ABOUTME: Provides compile-time checked queries for capture CRUD operations
 
-use gl_core::{Result, Error, time::now_iso8601, Id};
+use gl_core::{time::now_iso8601, Error, Id, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
@@ -15,7 +15,7 @@ pub struct Capture {
     pub description: Option<String>,
     pub source_url: String,
     pub status: String,
-    pub config: String, // JSON
+    pub config: String,           // JSON
     pub metadata: Option<String>, // JSON
     pub file_path: Option<String>,
     pub file_size: Option<i64>,
@@ -63,7 +63,7 @@ impl<'a> CaptureRepository<'a> {
     pub async fn create(&self, request: CreateCaptureRequest) -> Result<Capture> {
         let id = Id::new().to_string();
         let now = now_iso8601();
-        
+
         let capture = sqlx::query_as!(
             Capture,
             r#"
@@ -84,21 +84,17 @@ impl<'a> CaptureRepository<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to create capture: {}", e)))?;
-        
+
         Ok(capture)
     }
 
     /// Find capture by ID
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Capture>> {
-        let capture = sqlx::query_as!(
-            Capture,
-            "SELECT * FROM captures WHERE id = ?1",
-            id
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to find capture: {}", e)))?;
-        
+        let capture = sqlx::query_as!(Capture, "SELECT * FROM captures WHERE id = ?1", id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to find capture: {}", e)))?;
+
         Ok(capture)
     }
 }

@@ -2,13 +2,11 @@
 //! ABOUTME: Provides endpoints for testing and managing notification systems
 
 use actix_web::{web, HttpResponse, Result as ActixResult};
-use gl_notify::{
-    adapters::pushover::PushoverAdapter,
-    circuit_breaker::CircuitBreakerWrapper,
-    retry::RetryWrapper,
-    Notification, NotificationChannel, NotificationKind, NotificationManager,
-};
 use gl_cap::profiles::AlertProfiles;
+use gl_notify::{
+    adapters::pushover::PushoverAdapter, circuit_breaker::CircuitBreakerWrapper,
+    retry::RetryWrapper, Notification, NotificationChannel, NotificationKind, NotificationManager,
+};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -120,13 +118,13 @@ pub async fn test_notification(
     // Add Pushover channel if user key provided
     if let Some(user_key) = &payload.pushover_user_key {
         // TODO: Get app token from configuration
-        let app_token = std::env::var("PUSHOVER_APP_TOKEN")
-            .unwrap_or_else(|_| "test_app_token".to_string());
-        
+        let app_token =
+            std::env::var("PUSHOVER_APP_TOKEN").unwrap_or_else(|_| "test_app_token".to_string());
+
         let pushover_adapter = PushoverAdapter::new(app_token);
         let wrapped_adapter = CircuitBreakerWrapper::new(RetryWrapper::new(pushover_adapter));
         manager.register_adapter("pushover".to_string(), Box::new(wrapped_adapter));
-        
+
         channels.push(NotificationChannel::Pushover {
             user_key: user_key.clone(),
             device: None,
@@ -155,7 +153,8 @@ pub async fn test_notification(
 
     if channels.is_empty() {
         return Ok(HttpResponse::BadRequest().json(ApiResponse::<()>::error(
-            "No notification channels provided. Include pushover_user_key or webhook_url.".to_string(),
+            "No notification channels provided. Include pushover_user_key or webhook_url."
+                .to_string(),
         )));
     }
 
@@ -214,9 +213,7 @@ pub async fn test_notification(
 }
 
 /// Preview CAP XML for a given template/event
-pub async fn cap_preview(
-    payload: web::Json<CapPreviewRequest>,
-) -> ActixResult<HttpResponse> {
+pub async fn cap_preview(payload: web::Json<CapPreviewRequest>) -> ActixResult<HttpResponse> {
     info!(
         profile = ?payload.profile,
         sender = %payload.sender,
@@ -237,7 +234,8 @@ pub async fn cap_preview(
         CapProfile::SecurityAlert => AlertProfiles::security_alert(&payload.sender),
         CapProfile::TestAlert => AlertProfiles::test_alert(&payload.sender),
         CapProfile::AllClear => AlertProfiles::all_clear(&payload.sender),
-    }.build();
+    }
+    .build();
 
     // Apply custom overrides if provided
     if let Some(ref custom_title) = payload.custom_title {
@@ -245,13 +243,13 @@ pub async fn cap_preview(
             info.headline = Some(custom_title.clone());
         }
     }
-    
+
     if let Some(ref custom_description) = payload.custom_description {
         if let Some(info) = alert.info.first_mut() {
             info.description = Some(custom_description.clone());
         }
     }
-    
+
     if let Some(ref custom_instruction) = payload.custom_instruction {
         if let Some(info) = alert.info.first_mut() {
             info.instruction = Some(custom_instruction.clone());
@@ -263,9 +261,12 @@ pub async fn cap_preview(
         Ok(xml) => xml,
         Err(e) => {
             warn!(error = %e, "Failed to generate CAP XML");
-            return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(
-                format!("Failed to generate CAP XML: {}", e),
-            )));
+            return Ok(
+                HttpResponse::InternalServerError().json(ApiResponse::<()>::error(format!(
+                    "Failed to generate CAP XML: {}",
+                    e
+                ))),
+            );
         }
     };
 
@@ -276,7 +277,11 @@ pub async fn cap_preview(
             severity: format!("{:?}", info.severity),
             certainty: format!("{:?}", info.certainty),
             categories: info.category.iter().map(|c| format!("{:?}", c)).collect(),
-            response_types: info.response_type.iter().map(|r| format!("{:?}", r)).collect(),
+            response_types: info
+                .response_type
+                .iter()
+                .map(|r| format!("{:?}", r))
+                .collect(),
         }
     } else {
         CapMetadata {
@@ -317,7 +322,7 @@ pub async fn notification_health() -> ActixResult<HttpResponse> {
         },
         "cap_profiles": [
             "severe_weather",
-            "extreme_weather", 
+            "extreme_weather",
             "fire_alert",
             "public_safety",
             "health_alert",
@@ -347,9 +352,7 @@ pub fn configure_alert_routes(cfg: &mut web::ServiceConfig) {
             )
             .route(
                 "/cap/preview",
-                web::post()
-                    .to(cap_preview)
-                    .wrap(RequireRole::operator()), // Require admin or operator role
+                web::post().to(cap_preview).wrap(RequireRole::operator()), // Require admin or operator role
             ),
     );
 }

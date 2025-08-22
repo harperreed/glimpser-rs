@@ -55,7 +55,7 @@ impl std::fmt::Display for JobStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             JobStatus::Pending => write!(f, "pending"),
-            JobStatus::Running => write!(f, "running"), 
+            JobStatus::Running => write!(f, "running"),
             JobStatus::Completed => write!(f, "completed"),
             JobStatus::Failed => write!(f, "failed"),
             JobStatus::Cancelled => write!(f, "cancelled"),
@@ -75,7 +75,7 @@ pub struct SnapshotJobConfig {
 }
 
 /// Configuration for a capture job
-#[derive(Debug, Clone, Serialize, Deserialize)]  
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureJobConfig {
     /// Template ID to capture from
     pub template_id: String,
@@ -122,7 +122,7 @@ impl CronPresets {
 mod tests {
     use super::*;
     use std::str::FromStr;
-    
+
     #[test]
     fn test_job_kind_display() {
         assert_eq!(JobKind::Snapshot.to_string(), "snapshot");
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(JobKind::Notify.to_string(), "notify");
         assert_eq!(JobKind::HealthCheck.to_string(), "health_check");
     }
-    
+
     #[test]
     fn test_job_status_display() {
         assert_eq!(JobStatus::Pending.to_string(), "pending");
@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(JobStatus::Failed.to_string(), "failed");
         assert_eq!(JobStatus::Cancelled.to_string(), "cancelled");
     }
-    
+
     #[test]
     fn test_cron_presets() {
         // Test that the presets are valid cron expressions
@@ -156,9 +156,13 @@ mod tests {
             CronPresets::WEEKLY,
             CronPresets::MONTHLY,
         ];
-        
+
         for preset in &presets {
-            assert!(cron::Schedule::from_str(preset).is_ok(), "Invalid cron preset: {}", preset);
+            assert!(
+                cron::Schedule::from_str(preset).is_ok(),
+                "Invalid cron preset: {}",
+                preset
+            );
         }
     }
 }

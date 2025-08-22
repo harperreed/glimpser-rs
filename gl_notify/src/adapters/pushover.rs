@@ -30,7 +30,14 @@ impl PushoverAdapter {
     }
 
     /// Build the Pushover API payload
-    fn build_payload(&self, msg: &Notification, user_key: &str, device: Option<&str>, priority: Option<i8>, sound: Option<&str>) -> Value {
+    fn build_payload(
+        &self,
+        msg: &Notification,
+        user_key: &str,
+        device: Option<&str>,
+        priority: Option<i8>,
+        sound: Option<&str>,
+    ) -> Value {
         let mut payload = json!({
             "token": self.app_token,
             "user": user_key,
@@ -53,11 +60,11 @@ impl PushoverAdapter {
         // Add notification kind as a prefix to help with categorization
         let kind_prefix = match msg.kind {
             crate::NotificationKind::Info => "ℹ️",
-            crate::NotificationKind::Warning => "⚠️", 
+            crate::NotificationKind::Warning => "⚠️",
             crate::NotificationKind::Error => "❌",
             crate::NotificationKind::Success => "✅",
         };
-        
+
         payload["title"] = json!(format!("{} {}", kind_prefix, msg.title));
 
         payload
@@ -68,7 +75,13 @@ impl PushoverAdapter {
 impl Notifier for PushoverAdapter {
     async fn send(&self, msg: &Notification) -> Result<()> {
         for channel in &msg.channels {
-            if let NotificationChannel::Pushover { user_key, device, priority, sound } = channel {
+            if let NotificationChannel::Pushover {
+                user_key,
+                device,
+                priority,
+                sound,
+            } = channel
+            {
                 debug!(
                     notification_id = %msg.id,
                     user_key = %user_key,
@@ -100,7 +113,10 @@ impl Notifier for PushoverAdapter {
                             );
                         } else {
                             let status = response.status();
-                            let body = response.text().await.unwrap_or_else(|_| "Unable to read response".to_string());
+                            let body = response
+                                .text()
+                                .await
+                                .unwrap_or_else(|_| "Unable to read response".to_string());
                             warn!(
                                 notification_id = %msg.id,
                                 user_key = %user_key,
@@ -108,7 +124,10 @@ impl Notifier for PushoverAdapter {
                                 body = %body,
                                 "Pushover API returned error"
                             );
-                            return Err(NotificationError::PushoverError(format!("API error {}: {}", status, body)));
+                            return Err(NotificationError::PushoverError(format!(
+                                "API error {}: {}",
+                                status, body
+                            )));
                         }
                     }
                     Err(e) => {
@@ -123,7 +142,7 @@ impl Notifier for PushoverAdapter {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -131,10 +150,10 @@ impl Notifier for PushoverAdapter {
         // Simple health check by validating the app token format
         if self.app_token.is_empty() || self.app_token.len() != 30 {
             return Err(NotificationError::PushoverError(
-                "Invalid Pushover app token format".to_string()
+                "Invalid Pushover app token format".to_string(),
             ));
         }
-        
+
         // TODO: Could make a test API call to validate token
         Ok(())
     }

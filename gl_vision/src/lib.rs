@@ -10,9 +10,9 @@ use tracing::{debug, info, warn};
 pub mod opencv_detector;
 pub mod pixel_detector;
 
-pub use pixel_detector::PixelDiffDetector;
 #[cfg(feature = "heavy_opencv")]
 pub use opencv_detector::OpenCvDetector;
+pub use pixel_detector::PixelDiffDetector;
 
 // Re-export image types for benchmarks
 pub use image;
@@ -107,11 +107,16 @@ impl MotionResult {
 /// Trait for motion detection algorithms
 pub trait MotionDetector: Send + Sync {
     /// Detect motion between two frames
-    fn detect_motion(&mut self, current_frame: &[u8], frame_width: u32, frame_height: u32) -> Result<MotionResult>;
-    
+    fn detect_motion(
+        &mut self,
+        current_frame: &[u8],
+        frame_width: u32,
+        frame_height: u32,
+    ) -> Result<MotionResult>;
+
     /// Reset the detector state
     fn reset(&mut self) -> Result<()>;
-    
+
     /// Get algorithm name
     fn algorithm_name(&self) -> &'static str;
 }
@@ -129,7 +134,7 @@ impl MotionDetectionService {
             MotionAlgorithm::PixelDiff => {
                 info!("Creating PixelDiff motion detector");
                 Box::new(PixelDiffDetector::new(config.clone())?)
-            },
+            }
             MotionAlgorithm::Mog2 => {
                 #[cfg(feature = "heavy_opencv")]
                 {
@@ -141,109 +146,128 @@ impl MotionDetectionService {
                     warn!("MOG2 requested but heavy_opencv feature not enabled, falling back to PixelDiff");
                     Box::new(PixelDiffDetector::new(config.clone())?)
                 }
-            },
+            }
         };
-        
-        Ok(Self {
-            config,
-            detector,
-        })
+
+        Ok(Self { config, detector })
     }
-    
+
     /// Detect motion in a frame (JPEG/PNG bytes)
     pub fn detect_motion_from_bytes(&mut self, image_data: &[u8]) -> Result<MotionResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Decode image
         let img = image::load_from_memory(image_data)
             .map_err(|e| gl_core::Error::Validation(format!("Failed to decode image: {}", e)))?;
-        
+
         // Convert to grayscale
         let gray_img = img.to_luma8();
-        
+
         // Downscale if needed
         let processed_img = self.downscale_image(&gray_img)?;
-        
+
         let mut result = self.detector.detect_motion(
             &processed_img.as_raw(),
             processed_img.width(),
             processed_img.height(),
         )?;
-        
+
         result.processing_time_ms = start_time.elapsed().as_millis() as u64;
-        
-        debug!("Motion detection completed: {} in {}ms", 
-               if result.motion_detected { "MOTION" } else { "NO_MOTION" },
-               result.processing_time_ms);
-        
+
+        debug!(
+            "Motion detection completed: {} in {}ms",
+            if result.motion_detected {
+                "MOTION"
+            } else {
+                "NO_MOTION"
+            },
+            result.processing_time_ms
+        );
+
         Ok(result)
     }
-    
+
     /// Detect motion from raw grayscale frame data
-    pub fn detect_motion_from_frame(&mut self, frame_data: &[u8], width: u32, height: u32) -> Result<MotionResult> {
+    pub fn detect_motion_from_frame(
+        &mut self,
+        frame_data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<MotionResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Create grayscale image from raw data
-        let gray_img = GrayImage::from_raw(width, height, frame_data.to_vec())
-            .ok_or_else(|| gl_core::Error::Validation("Invalid frame data dimensions".to_string()))?;
-        
+        let gray_img =
+            GrayImage::from_raw(width, height, frame_data.to_vec()).ok_or_else(|| {
+                gl_core::Error::Validation("Invalid frame data dimensions".to_string())
+            })?;
+
         // Downscale if needed
         let processed_img = self.downscale_image(&gray_img)?;
-        
+
         let mut result = self.detector.detect_motion(
             &processed_img.as_raw(),
             processed_img.width(),
             processed_img.height(),
         )?;
-        
+
         result.processing_time_ms = start_time.elapsed().as_millis() as u64;
-        
-        debug!("Motion detection completed: {} in {}ms", 
-               if result.motion_detected { "MOTION" } else { "NO_MOTION" },
-               result.processing_time_ms);
-        
+
+        debug!(
+            "Motion detection completed: {} in {}ms",
+            if result.motion_detected {
+                "MOTION"
+            } else {
+                "NO_MOTION"
+            },
+            result.processing_time_ms
+        );
+
         Ok(result)
     }
-    
+
     /// Reset detector state
     pub fn reset(&mut self) -> Result<()> {
         self.detector.reset()
     }
-    
+
     /// Get current configuration
     pub fn config(&self) -> &MotionConfig {
         &self.config
     }
-    
+
     /// Update configuration (creates new detector)
     pub fn update_config(&mut self, config: MotionConfig) -> Result<()> {
         let new_service = Self::new(config)?;
         *self = new_service;
         Ok(())
     }
-    
+
     /// Downscale image according to configuration
     fn downscale_image(&self, img: &GrayImage) -> Result<GrayImage> {
         let (orig_width, orig_height) = img.dimensions();
-        
+
         // Calculate target dimensions
         let target_width = (orig_width / self.config.downscale_factor).min(self.config.max_width);
-        let target_height = (orig_height / self.config.downscale_factor).min(self.config.max_height);
-        
+        let target_height =
+            (orig_height / self.config.downscale_factor).min(self.config.max_height);
+
         if target_width == orig_width && target_height == orig_height {
             return Ok(img.clone());
         }
-        
-        debug!("Downscaling image from {}x{} to {}x{}", 
-               orig_width, orig_height, target_width, target_height);
-        
+
+        debug!(
+            "Downscaling image from {}x{} to {}x{}",
+            orig_width, orig_height, target_width, target_height
+        );
+
         let resized = image::imageops::resize(
             img,
             target_width,
             target_height,
             image::imageops::FilterType::Nearest,
         );
-        
+
         Ok(resized)
     }
 }
@@ -251,7 +275,7 @@ impl MotionDetectionService {
 /// Utility functions for image processing
 pub mod utils {
     use super::*;
-    
+
     /// Create a synthetic frame with motion in specified region
     pub fn create_test_frame_with_motion(
         width: u32,
@@ -263,29 +287,33 @@ pub mod utils {
         intensity: u8,
     ) -> GrayImage {
         let mut img = ImageBuffer::from_pixel(width, height, Luma([64u8])); // Dark gray background
-        
+
         // Add motion region
         for y in motion_y..(motion_y + motion_height).min(height) {
             for x in motion_x..(motion_x + motion_width).min(width) {
                 img.put_pixel(x, y, Luma([intensity]));
             }
         }
-        
+
         img
     }
-    
+
     /// Create a synthetic frame pair for testing
     pub fn create_test_frame_pair(width: u32, height: u32) -> (GrayImage, GrayImage) {
         let frame1 = ImageBuffer::from_pixel(width, height, Luma([64u8]));
         let frame2 = create_test_frame_with_motion(width, height, 10, 10, 50, 50, 200);
         (frame1, frame2)
     }
-    
+
     /// Convert image to JPEG bytes for testing
     pub fn image_to_jpeg_bytes(img: &GrayImage) -> Result<Vec<u8>> {
         let mut buffer = Vec::new();
         let rgb_img = image::DynamicImage::ImageLuma8(img.clone()).to_rgb8();
-        rgb_img.write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Jpeg)
+        rgb_img
+            .write_to(
+                &mut std::io::Cursor::new(&mut buffer),
+                image::ImageFormat::Jpeg,
+            )
             .map_err(|e| gl_core::Error::Validation(format!("Failed to encode JPEG: {}", e)))?;
         Ok(buffer)
     }
@@ -293,9 +321,9 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::utils::*;
-    
+    use super::*;
+
     #[test]
     fn test_motion_config_default() {
         let config = MotionConfig::default();
@@ -305,7 +333,7 @@ mod tests {
         assert_eq!(config.max_height, 240);
         assert!(matches!(config.algorithm, MotionAlgorithm::PixelDiff));
     }
-    
+
     #[test]
     fn test_motion_config_serialization() {
         let config = MotionConfig::default();
@@ -314,48 +342,48 @@ mod tests {
         assert_eq!(config.threshold, deserialized.threshold);
         assert_eq!(config.downscale_factor, deserialized.downscale_factor);
     }
-    
+
     #[tokio::test]
     async fn test_motion_detection_service_creation() {
         let config = MotionConfig::default();
         let service = MotionDetectionService::new(config);
         assert!(service.is_ok());
-        
+
         let service = service.unwrap();
         assert_eq!(service.config().threshold, 0.1);
     }
-    
+
     #[test]
     fn test_create_test_frame_with_motion() {
         let frame = create_test_frame_with_motion(100, 100, 10, 10, 20, 20, 200);
         assert_eq!(frame.dimensions(), (100, 100));
-        
+
         // Check background pixel
         assert_eq!(frame.get_pixel(5, 5).0[0], 64);
-        
+
         // Check motion region pixel
         assert_eq!(frame.get_pixel(15, 15).0[0], 200);
     }
-    
+
     #[test]
     fn test_create_test_frame_pair() {
         let (frame1, frame2) = create_test_frame_pair(100, 100);
         assert_eq!(frame1.dimensions(), (100, 100));
         assert_eq!(frame2.dimensions(), (100, 100));
-        
+
         // Frame1 should be uniform
         assert_eq!(frame1.get_pixel(50, 50).0[0], 64);
-        
+
         // Frame2 should have motion region
         assert_eq!(frame2.get_pixel(20, 20).0[0], 200);
     }
-    
+
     #[test]
     fn test_image_to_jpeg_bytes() {
         let frame = create_test_frame_with_motion(50, 50, 5, 5, 10, 10, 200);
         let jpeg_bytes = image_to_jpeg_bytes(&frame);
         assert!(jpeg_bytes.is_ok());
-        
+
         let bytes = jpeg_bytes.unwrap();
         assert!(!bytes.is_empty());
         assert!(bytes.len() > 100); // JPEG should have some reasonable size

@@ -7,13 +7,13 @@ use gl_core::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-pub mod stub;
 #[cfg(feature = "ai_online")]
 pub mod openai;
+pub mod stub;
 
-pub use stub::StubClient;
 #[cfg(feature = "ai_online")]
 pub use openai::OpenAiClient;
+pub use stub::StubClient;
 
 /// Classification result for events
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -79,9 +79,9 @@ pub struct SummarizeResponse {
 pub struct DescribeFrameRequest {
     #[serde(skip_serializing, skip_deserializing)]
     pub image_data: Bytes,
-    pub image_format: String, // "jpeg", "png"
+    pub image_format: String,         // "jpeg", "png"
     pub detail_level: Option<String>, // "low", "high", "auto"
-    pub focus: Option<String>, // "objects", "activity", "scene"
+    pub focus: Option<String>,        // "objects", "activity", "scene"
 }
 
 /// Response from frame description
@@ -101,7 +101,7 @@ pub struct ClassifyEventRequest {
     pub threshold: Option<f64>, // Minimum confidence threshold
 }
 
-/// Response from event classification  
+/// Response from event classification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClassifyEventResponse {
     pub classification: EventClassification,
@@ -145,13 +145,13 @@ impl Default for AiConfig {
 pub trait AiClient: Send + Sync {
     /// Summarize the given text
     async fn summarize(&self, request: SummarizeRequest) -> Result<SummarizeResponse>;
-    
+
     /// Describe the contents of a frame/image
     async fn describe_frame(&self, request: DescribeFrameRequest) -> Result<DescribeFrameResponse>;
-    
+
     /// Classify an event based on provided data
     async fn classify_event(&self, request: ClassifyEventRequest) -> Result<ClassifyEventResponse>;
-    
+
     /// Health check for the AI service
     async fn health_check(&self) -> Result<()>;
 }
@@ -178,7 +178,7 @@ pub fn create_client(config: AiConfig) -> Box<dyn AiClient> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_event_classification_serialization() {
         let classifications = vec![
@@ -191,14 +191,14 @@ mod tests {
             EventClassification::Normal,
             EventClassification::Unknown,
         ];
-        
+
         for classification in classifications {
             let json = serde_json::to_string(&classification).unwrap();
             let deserialized: EventClassification = serde_json::from_str(&json).unwrap();
             assert_eq!(classification, deserialized);
         }
     }
-    
+
     #[test]
     fn test_ai_config_default() {
         let config = AiConfig::default();
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert!(config.api_key.is_none());
     }
-    
+
     #[test]
     fn test_event_data_creation() {
         let event = EventData {
@@ -218,12 +218,12 @@ mod tests {
             timestamp: "2023-12-01T10:00:00Z".to_string(),
             source_id: "camera_01".to_string(),
         };
-        
+
         assert_eq!(event.event_type, "motion_detected");
         assert_eq!(event.confidence, 0.85);
         assert_eq!(event.source_id, "camera_01");
     }
-    
+
     #[test]
     fn test_summarize_request_creation() {
         let request = SummarizeRequest {
@@ -231,12 +231,12 @@ mod tests {
             max_length: Some(50),
             style: Some("brief".to_string()),
         };
-        
+
         assert!(request.text.len() > 50);
         assert_eq!(request.max_length, Some(50));
         assert_eq!(request.style, Some("brief".to_string()));
     }
-    
+
     #[test]
     fn test_describe_frame_request_creation() {
         let request = DescribeFrameRequest {
@@ -245,38 +245,38 @@ mod tests {
             detail_level: Some("high".to_string()),
             focus: Some("objects".to_string()),
         };
-        
+
         assert_eq!(request.image_format, "jpeg");
         assert_eq!(request.detail_level, Some("high".to_string()));
         assert_eq!(request.focus, Some("objects".to_string()));
     }
-    
+
     #[tokio::test]
     async fn test_create_client_stub_default() {
         let config = AiConfig::default(); // use_online = false by default
         let client = create_client(config);
-        
+
         // Should create stub client successfully
         let health_result = client.health_check().await;
         assert!(health_result.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_create_client_online_behavior() {
         let config = AiConfig {
             use_online: true,
             ..Default::default()
         };
-        
+
         let client = create_client(config);
-        
+
         #[cfg(feature = "ai_online")]
         {
             // With ai_online feature, should create OpenAI client that requires API key
             let health_result = client.health_check().await;
             assert!(health_result.is_err()); // Should fail without API key
         }
-        
+
         #[cfg(not(feature = "ai_online"))]
         {
             // Without ai_online feature, should fall back to stub

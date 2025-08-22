@@ -15,12 +15,12 @@ use crate::{CaptureHandle, CaptureSource};
 pub struct WebsiteConfig {
     /// URL to capture
     pub url: String,
-    /// Run in headless mode (default: true)  
+    /// Run in headless mode (default: true)
     #[serde(default = "default_headless")]
     pub headless: bool,
     /// Basic auth username
     pub basic_auth_username: Option<String>,
-    /// Basic auth password 
+    /// Basic auth password
     pub basic_auth_password: Option<String>,
     /// CSS selector for element-specific screenshot
     pub element_selector: Option<String>,
@@ -38,10 +38,18 @@ pub struct WebsiteConfig {
     pub height: u32,
 }
 
-fn default_headless() -> bool { true }
-fn default_timeout() -> Duration { Duration::from_secs(30) }
-fn default_width() -> u32 { 1920 }
-fn default_height() -> u32 { 1080 }
+fn default_headless() -> bool {
+    true
+}
+fn default_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_width() -> u32 {
+    1920
+}
+fn default_height() -> u32 {
+    1080
+}
 
 impl Default for WebsiteConfig {
     fn default() -> Self {
@@ -78,7 +86,10 @@ impl WebsiteSource {
     }
 
     #[cfg(feature = "website")]
-    pub async fn new_with_webdriver(config: WebsiteConfig, webdriver_url: Option<String>) -> Result<Self> {
+    pub async fn new_with_webdriver(
+        config: WebsiteConfig,
+        webdriver_url: Option<String>,
+    ) -> Result<Self> {
         let client = Box::new(ThirtyfourClient::new(webdriver_url).await?);
         Ok(Self { config, client })
     }
@@ -118,14 +129,13 @@ impl MockWebDriverClient {
     pub fn new() -> Self {
         // Minimal valid PNG (1x1 transparent pixel)
         let png_data = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-            0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-            0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-            0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-            0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ];
-        
+
         Self {
             synthetic_png: Bytes::from(png_data),
         }
@@ -164,21 +174,26 @@ pub struct ThirtyfourClient {
 #[cfg(feature = "website")]
 impl ThirtyfourClient {
     pub async fn new(webdriver_url: Option<String>) -> Result<Self> {
-        use thirtyfour::{DesiredCapabilities, WebDriver, ChromiumLikeCapabilities};
-        
+        use thirtyfour::{ChromiumLikeCapabilities, DesiredCapabilities, WebDriver};
+
         let webdriver_url = webdriver_url.unwrap_or_else(|| "http://localhost:9515".to_string());
-        
+
         let mut caps = DesiredCapabilities::chrome();
-        caps.set_headless().map_err(|e| Error::Config(format!("Failed to set headless: {}", e)))?;
-        caps.set_disable_gpu().map_err(|e| Error::Config(format!("Failed to set disable GPU: {}", e)))?;
-        caps.set_no_sandbox().map_err(|e| Error::Config(format!("Failed to set no sandbox: {}", e)))?;
-        caps.set_disable_dev_shm_usage().map_err(|e| Error::Config(format!("Failed to set disable dev shm: {}", e)))?;
-        
-        let driver = WebDriver::new(&webdriver_url, caps).await
+        caps.set_headless()
+            .map_err(|e| Error::Config(format!("Failed to set headless: {}", e)))?;
+        caps.set_disable_gpu()
+            .map_err(|e| Error::Config(format!("Failed to set disable GPU: {}", e)))?;
+        caps.set_no_sandbox()
+            .map_err(|e| Error::Config(format!("Failed to set no sandbox: {}", e)))?;
+        caps.set_disable_dev_shm_usage()
+            .map_err(|e| Error::Config(format!("Failed to set disable dev shm: {}", e)))?;
+
+        let driver = WebDriver::new(&webdriver_url, caps)
+            .await
             .map_err(|e| Error::Config(format!("Failed to create WebDriver: {}", e)))?;
-        
-        Ok(Self { 
-            driver: std::sync::Arc::new(tokio::sync::Mutex::new(Some(driver)))
+
+        Ok(Self {
+            driver: std::sync::Arc::new(tokio::sync::Mutex::new(Some(driver))),
         })
     }
 }
@@ -189,51 +204,65 @@ impl WebDriverClient for ThirtyfourClient {
     #[instrument(skip(self))]
     async fn screenshot(&self, config: &WebsiteConfig) -> Result<Bytes> {
         use thirtyfour::By;
-        
+
         info!(url = %config.url, "Taking real screenshot with WebDriver");
-        
+
         let driver_guard = self.driver.lock().await;
-        let driver = driver_guard.as_ref()
+        let driver = driver_guard
+            .as_ref()
             .ok_or_else(|| Error::Config("WebDriver has been closed".to_string()))?;
-        
+
         // Set window size
-        driver.set_window_rect(0, 0, config.width, config.height).await
+        driver
+            .set_window_rect(0, 0, config.width, config.height)
+            .await
             .map_err(|e| Error::Config(format!("Failed to set window size: {}", e)))?;
-        
+
         // Navigate to URL
-        driver.goto(&config.url).await
+        driver
+            .goto(&config.url)
+            .await
             .map_err(|e| Error::Config(format!("Failed to navigate to {}: {}", config.url, e)))?;
-        
+
         // Handle basic auth if provided
-        if let (Some(_username), Some(_password)) = (&config.basic_auth_username, &config.basic_auth_password) {
+        if let (Some(_username), Some(_password)) =
+            (&config.basic_auth_username, &config.basic_auth_password)
+        {
             // Basic auth is typically handled via URL: https://username:password@example.com
             warn!("Basic auth should be handled via URL format for security");
         }
-        
+
         // Wait for page to load (simple approach)
         tokio::time::sleep(Duration::from_millis(1000)).await;
-        
+
         // Take screenshot (element-specific or full page)
-        let screenshot_data = if let Some(selector) = &config.element_selector {
-            debug!(selector = %selector, "Taking element-specific screenshot");
-            let element = driver.find(By::Css(selector)).await
-                .map_err(|e| Error::Config(format!("Element not found '{}': {}", selector, e)))?;
-            element.screenshot_as_png().await
-                .map_err(|e| Error::Config(format!("Failed to take element screenshot: {}", e)))?
-        } else {
-            debug!("Taking full page screenshot");
-            driver.screenshot_as_png().await
-                .map_err(|e| Error::Config(format!("Failed to take screenshot: {}", e)))?
-        };
-        
+        let screenshot_data =
+            if let Some(selector) = &config.element_selector {
+                debug!(selector = %selector, "Taking element-specific screenshot");
+                let element = driver.find(By::Css(selector)).await.map_err(|e| {
+                    Error::Config(format!("Element not found '{}': {}", selector, e))
+                })?;
+                element.screenshot_as_png().await.map_err(|e| {
+                    Error::Config(format!("Failed to take element screenshot: {}", e))
+                })?
+            } else {
+                debug!("Taking full page screenshot");
+                driver
+                    .screenshot_as_png()
+                    .await
+                    .map_err(|e| Error::Config(format!("Failed to take screenshot: {}", e)))?
+            };
+
         Ok(Bytes::from(screenshot_data))
     }
-    
+
     async fn close(&self) -> Result<()> {
         debug!("Closing WebDriver session");
         let mut driver_guard = self.driver.lock().await;
         if let Some(driver) = driver_guard.take() {
-            driver.quit().await
+            driver
+                .quit()
+                .await
                 .map_err(|e| Error::Config(format!("Failed to close WebDriver: {}", e)))?;
         }
         Ok(())
@@ -243,7 +272,7 @@ impl WebDriverClient for ThirtyfourClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_website_config_defaults() {
         let config = WebsiteConfig::default();
@@ -255,7 +284,7 @@ mod tests {
         assert!(config.basic_auth_username.is_none());
         assert!(config.element_selector.is_none());
     }
-    
+
     #[tokio::test]
     async fn test_website_config_serialization() {
         let config = WebsiteConfig {
@@ -269,48 +298,48 @@ mod tests {
             width: 1280,
             height: 720,
         };
-        
+
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: WebsiteConfig = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.url, config.url);
         assert_eq!(deserialized.headless, config.headless);
         assert_eq!(deserialized.stealth, config.stealth);
         assert_eq!(deserialized.width, config.width);
     }
-    
-    #[tokio::test] 
+
+    #[tokio::test]
     async fn test_mock_webdriver_client() {
         let client = MockWebDriverClient::new();
         let config = WebsiteConfig {
             url: "https://example.com".to_string(),
             ..Default::default()
         };
-        
+
         let screenshot = client.screenshot(&config).await.unwrap();
         assert!(!screenshot.is_empty());
         assert!(screenshot.starts_with(b"\x89PNG")); // PNG magic number
-        
+
         client.close().await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_website_source_lifecycle() {
         let config = WebsiteConfig {
             url: "https://example.com".to_string(),
             ..Default::default()
         };
-        
+
         let client = MockWebDriverClient::new_boxed();
         let source = WebsiteSource::new(config, client);
-        
+
         // Test start
         let handle = source.start().await.unwrap();
-        
+
         // Test snapshot
         let screenshot = handle.snapshot().await.unwrap();
         assert!(!screenshot.is_empty());
-        
+
         // Test stop
         handle.stop().await.unwrap();
     }
@@ -324,7 +353,7 @@ mod tests {
             url: "https://httpbin.org/html".to_string(),
             ..Default::default()
         };
-        
+
         if let Ok(source) = WebsiteSource::new_with_webdriver(config, None).await {
             let handle = source.start().await.unwrap();
             let screenshot = handle.snapshot().await.unwrap();

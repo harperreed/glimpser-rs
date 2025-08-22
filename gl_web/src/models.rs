@@ -10,7 +10,7 @@ use validator::Validate;
 pub struct LoginRequest {
     #[validate(email)]
     pub email: String,
-    
+
     #[validate(length(min = 1))]
     pub password: String,
 }
@@ -65,7 +65,7 @@ impl<T> ApiResponse<T> {
             error: None,
         }
     }
-    
+
     pub fn error(error: String) -> Self {
         Self {
             success: false,
@@ -92,8 +92,12 @@ impl ErrorResponse {
             details: None,
         }
     }
-    
-    pub fn with_details(error: impl Into<String>, message: impl Into<String>, details: serde_json::Value) -> Self {
+
+    pub fn with_details(
+        error: impl Into<String>,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
         Self {
             error: error.into(),
             message: message.into(),
@@ -105,11 +109,11 @@ impl ErrorResponse {
 /// JWT claims structure
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,      // user ID
+    pub sub: String, // user ID
     pub email: String,
     pub role: String,
-    pub exp: usize,       // expiration timestamp
-    pub iat: usize,       // issued at timestamp
+    pub exp: usize, // expiration timestamp
+    pub iat: usize, // issued at timestamp
 }
 
 /// User roles enumeration
@@ -129,11 +133,11 @@ impl Role {
             _ => None,
         }
     }
-    
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Role::Admin => "admin",
-            Role::Operator => "operator", 
+            Role::Operator => "operator",
             Role::Viewer => "viewer",
         }
     }

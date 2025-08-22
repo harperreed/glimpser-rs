@@ -1,4 +1,4 @@
-//! ABOUTME: OpenAI client implementation with authentication and retry logic  
+//! ABOUTME: OpenAI client implementation with authentication and retry logic
 //! ABOUTME: Provides online AI services via OpenAI API with proper error handling
 
 use async_trait::async_trait;
@@ -8,11 +8,11 @@ use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{debug, warn, error};
+use tracing::{debug, error, warn};
 
 use crate::{
-    AiClient, AiConfig, ClassifyEventRequest, ClassifyEventResponse, DescribeFrameRequest, 
-    DescribeFrameResponse, EventClassification, SummarizeRequest, SummarizeResponse
+    AiClient, AiConfig, ClassifyEventRequest, ClassifyEventResponse, DescribeFrameRequest,
+    DescribeFrameResponse, EventClassification, SummarizeRequest, SummarizeResponse,
 };
 
 /// OpenAI API client with authentication and retry logic
@@ -102,42 +102,45 @@ impl OpenAiClient {
             .timeout(Duration::from_secs(config.timeout_seconds))
             .build()
             .expect("Failed to create HTTP client");
-        
-        let base_url = config.base_url
+
+        let base_url = config
+            .base_url
             .clone()
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-        
+
         debug!("Created OpenAI client with base URL: {}", base_url);
-        
+
         Self {
             client,
             config,
             base_url,
         }
     }
-    
+
     /// Execute a request with retry logic
     async fn execute_with_retry<T>(&self, request_builder: RequestBuilder) -> Result<T>
     where
         T: for<'de> Deserialize<'de>,
     {
         let mut last_error = None;
-        
+
         for attempt in 0..=self.config.max_retries {
             if attempt > 0 {
                 let delay = Duration::from_millis(100 * (1 << attempt.min(5))); // Exponential backoff
                 debug!("Retrying request in {:?} (attempt {})", delay, attempt + 1);
                 sleep(delay).await;
             }
-            
+
             let request = match request_builder.try_clone() {
                 Some(req) => req,
                 None => {
                     error!("Failed to clone request for retry");
-                    return Err(Error::Config("Unable to retry request - body not cloneable".to_string()));
+                    return Err(Error::Config(
+                        "Unable to retry request - body not cloneable".to_string(),
+                    ));
                 }
             };
-            
+
             match self.execute_request::<T>(request).await {
                 Ok(response) => return Ok(response),
                 Err(e) => {
@@ -146,45 +149,65 @@ impl OpenAiClient {
                 }
             }
         }
-        
-        Err(last_error.unwrap_or_else(|| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "All retry attempts failed"))))
+
+        Err(last_error.unwrap_or_else(|| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "All retry attempts failed",
+            ))
+        }))
     }
-    
+
     /// Execute a single HTTP request
     async fn execute_request<T>(&self, request: RequestBuilder) -> Result<T>
     where
         T: for<'de> Deserialize<'de>,
     {
-        let response = request.send().await
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("HTTP request failed: {}", e))))?;
-        
+        let response = request.send().await.map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("HTTP request failed: {}", e),
+            ))
+        })?;
+
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(Error::Database(format!("OpenAI API error ({}): {}", status, error_text)));
+            return Err(Error::Database(format!(
+                "OpenAI API error ({}): {}",
+                status, error_text
+            )));
         }
-        
-        let response_text = response.text().await
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read response: {}", e))))?;
-        
+
+        let response_text = response.text().await.map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to read response: {}", e),
+            ))
+        })?;
+
         serde_json::from_str::<T>(&response_text)
             .map_err(|e| Error::Database(format!("Failed to parse OpenAI response: {}", e)))
     }
-    
+
     /// Create authenticated request builder
     fn create_request(&self, endpoint: &str) -> RequestBuilder {
         let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
-        let mut builder = self.client.post(&url)
+        let mut builder = self
+            .client
+            .post(&url)
             .header("Content-Type", "application/json");
-        
+
         if let Some(api_key) = &self.config.api_key {
             builder = builder.header("Authorization", format!("Bearer {}", api_key));
         }
-        
+
         builder
     }
-    
+
     /// Convert image bytes to data URL
     fn image_to_data_url(&self, image_data: &Bytes, format: &str) -> Result<String> {
         let mime_type = match format.to_lowercase().as_str() {
@@ -192,20 +215,26 @@ impl OpenAiClient {
             "png" => "image/png",
             "gif" => "image/gif",
             "webp" => "image/webp",
-            _ => return Err(Error::Validation(format!("Unsupported image format: {}", format))),
+            _ => {
+                return Err(Error::Validation(format!(
+                    "Unsupported image format: {}",
+                    format
+                )))
+            }
         };
-        
+
         use base64::Engine;
         let base64_data = base64::engine::general_purpose::STANDARD.encode(image_data);
         Ok(format!("data:{};base64,{}", mime_type, base64_data))
     }
-    
+
     /// Parse event classification from AI response
     fn parse_classification(&self, response: &str) -> (EventClassification, f64, Vec<String>) {
         let lower_response = response.to_lowercase();
-        
+
         // Extract classification
-        let classification = if lower_response.contains("fire") || lower_response.contains("smoke") {
+        let classification = if lower_response.contains("fire") || lower_response.contains("smoke")
+        {
             EventClassification::Fire
         } else if lower_response.contains("person") || lower_response.contains("human") {
             EventClassification::Person
@@ -222,7 +251,7 @@ impl OpenAiClient {
         } else {
             EventClassification::Unknown
         };
-        
+
         // Extract confidence (look for percentages or decimal values)
         let confidence = if let Some(pct_match) = response.match_indices('%').next() {
             // Look for number before %
@@ -238,7 +267,7 @@ impl OpenAiClient {
         } else {
             0.7 // Default confidence
         };
-        
+
         // Generate suggested actions based on classification
         let suggested_actions = match classification {
             EventClassification::Fire => vec![
@@ -257,19 +286,26 @@ impl OpenAiClient {
             ],
             _ => vec!["Continue monitoring".to_string()],
         };
-        
-        (classification, confidence.clamp(0.0, 1.0), suggested_actions)
+
+        (
+            classification,
+            confidence.clamp(0.0, 1.0),
+            suggested_actions,
+        )
     }
 }
 
 #[async_trait]
 impl AiClient for OpenAiClient {
     async fn summarize(&self, request: SummarizeRequest) -> Result<SummarizeResponse> {
-        debug!("OpenAI client summarizing {} characters", request.text.len());
-        
+        debug!(
+            "OpenAI client summarizing {} characters",
+            request.text.len()
+        );
+
         let max_tokens = request.max_length.map(|len| (len as f32 * 1.3) as u32);
         let style_instruction = request.style.as_deref().unwrap_or("brief");
-        
+
         let prompt = format!(
             "Summarize the following text in a {} style{}:\n\n{}",
             style_instruction,
@@ -280,7 +316,7 @@ impl AiClient for OpenAiClient {
             },
             request.text
         );
-        
+
         let openai_request = OpenAiSummarizeRequest {
             model: self.config.model.clone(),
             messages: vec![OpenAiMessage {
@@ -290,19 +326,25 @@ impl AiClient for OpenAiClient {
             max_tokens,
             temperature: 0.3,
         };
-        
-        let request_builder = self.create_request("/chat/completions")
+
+        let request_builder = self
+            .create_request("/chat/completions")
             .json(&openai_request);
-        
+
         let response: OpenAiResponse = self.execute_with_retry(request_builder).await?;
-        
-        let summary = response.choices
+
+        let summary = response
+            .choices
             .first()
             .map(|choice| choice.message.content.trim().to_string())
             .unwrap_or_else(|| "No summary generated".to_string());
-        
-        let confidence = if summary.len() < request.text.len() / 2 { 0.9 } else { 0.8 };
-        
+
+        let confidence = if summary.len() < request.text.len() / 2 {
+            0.9
+        } else {
+            0.8
+        };
+
         Ok(SummarizeResponse {
             original_length: request.text.len(),
             summary_length: summary.len(),
@@ -310,19 +352,22 @@ impl AiClient for OpenAiClient {
             confidence: Some(confidence),
         })
     }
-    
+
     async fn describe_frame(&self, request: DescribeFrameRequest) -> Result<DescribeFrameResponse> {
-        debug!("OpenAI client describing {} byte image", request.image_data.len());
-        
+        debug!(
+            "OpenAI client describing {} byte image",
+            request.image_data.len()
+        );
+
         let data_url = self.image_to_data_url(&request.image_data, &request.image_format)?;
         let detail_level = request.detail_level.as_deref().unwrap_or("high");
         let focus = request.focus.as_deref().unwrap_or("objects");
-        
+
         let prompt = format!(
             "Analyze this image with {} detail, focusing on {}. Provide a concise description and list any objects or people you can identify.",
             detail_level, focus
         );
-        
+
         let openai_request = OpenAiVisionRequest {
             model: if self.config.model.starts_with("gpt-4") {
                 "gpt-4-vision-preview".to_string()
@@ -333,27 +378,29 @@ impl AiClient for OpenAiClient {
                 role: "user".to_string(),
                 content: vec![
                     OpenAiContent::Text { text: prompt },
-                    OpenAiContent::ImageUrl { 
-                        image_url: OpenAiImageUrl { url: data_url }
+                    OpenAiContent::ImageUrl {
+                        image_url: OpenAiImageUrl { url: data_url },
                     },
                 ],
             }],
             max_tokens: Some(500),
             temperature: 0.2,
         };
-        
+
         let start_time = std::time::Instant::now();
-        let request_builder = self.create_request("/chat/completions")
+        let request_builder = self
+            .create_request("/chat/completions")
             .json(&openai_request);
-        
+
         let response: OpenAiResponse = self.execute_with_retry(request_builder).await?;
         let processing_time = start_time.elapsed().as_millis() as u64;
-        
-        let description = response.choices
+
+        let description = response
+            .choices
             .first()
             .map(|choice| choice.message.content.trim().to_string())
             .unwrap_or_else(|| "No description generated".to_string());
-        
+
         // Extract objects from description (simple heuristic)
         let objects_detected: Vec<String> = description
             .split(&[',', ';', '.', '\n'][..])
@@ -372,7 +419,7 @@ impl AiClient for OpenAiClient {
                 }
             })
             .collect();
-        
+
         Ok(DescribeFrameResponse {
             description,
             objects_detected,
@@ -380,13 +427,16 @@ impl AiClient for OpenAiClient {
             processing_time_ms: Some(processing_time),
         })
     }
-    
+
     async fn classify_event(&self, request: ClassifyEventRequest) -> Result<ClassifyEventResponse> {
-        debug!("OpenAI client classifying event: {}", request.event_data.event_type);
-        
+        debug!(
+            "OpenAI client classifying event: {}",
+            request.event_data.event_type
+        );
+
         let context_str = request.context.as_deref().unwrap_or("security monitoring");
         let threshold = request.threshold.unwrap_or(0.7);
-        
+
         let prompt = format!(
             "Classify this security event for {} context:\n\
             Event Type: {}\n\
@@ -404,7 +454,7 @@ impl AiClient for OpenAiClient {
             request.event_data.source_id,
             threshold
         );
-        
+
         let openai_request = OpenAiSummarizeRequest {
             model: self.config.model.clone(),
             messages: vec![OpenAiMessage {
@@ -414,19 +464,22 @@ impl AiClient for OpenAiClient {
             max_tokens: Some(300),
             temperature: 0.1,
         };
-        
-        let request_builder = self.create_request("/chat/completions")
+
+        let request_builder = self
+            .create_request("/chat/completions")
             .json(&openai_request);
-        
+
         let response: OpenAiResponse = self.execute_with_retry(request_builder).await?;
-        
-        let response_text = response.choices
+
+        let response_text = response
+            .choices
             .first()
             .map(|choice| choice.message.content.trim().to_string())
             .unwrap_or_else(|| "Unable to classify event".to_string());
-        
-        let (classification, confidence, suggested_actions) = self.parse_classification(&response_text);
-        
+
+        let (classification, confidence, suggested_actions) =
+            self.parse_classification(&response_text);
+
         Ok(ClassifyEventResponse {
             classification,
             confidence,
@@ -434,14 +487,14 @@ impl AiClient for OpenAiClient {
             suggested_actions,
         })
     }
-    
+
     async fn health_check(&self) -> Result<()> {
         debug!("OpenAI client health check");
-        
+
         if self.config.api_key.is_none() {
             return Err(Error::Config("OpenAI API key not configured".to_string()));
         }
-        
+
         // Simple test request to verify connectivity
         let test_request = OpenAiSummarizeRequest {
             model: self.config.model.clone(),
@@ -452,12 +505,11 @@ impl AiClient for OpenAiClient {
             max_tokens: Some(1),
             temperature: 0.0,
         };
-        
-        let request_builder = self.create_request("/chat/completions")
-            .json(&test_request);
-        
+
+        let request_builder = self.create_request("/chat/completions").json(&test_request);
+
         let _: OpenAiResponse = self.execute_request(request_builder).await?;
-        
+
         debug!("OpenAI client health check passed");
         Ok(())
     }
@@ -467,7 +519,7 @@ impl AiClient for OpenAiClient {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    
+
     fn create_test_config() -> AiConfig {
         AiConfig {
             api_key: Some("test-key".to_string()),
@@ -478,73 +530,74 @@ mod tests {
             use_online: true,
         }
     }
-    
+
     #[test]
     fn test_openai_client_creation() {
         let config = create_test_config();
         let client = OpenAiClient::new(config);
-        
+
         assert_eq!(client.base_url, "https://api.openai.com/v1");
         assert_eq!(client.config.model, "gpt-3.5-turbo");
         assert_eq!(client.config.max_retries, 3);
     }
-    
+
     #[test]
     fn test_image_to_data_url() {
         let config = create_test_config();
         let client = OpenAiClient::new(config);
         let image_data = Bytes::from("fake_jpeg_data");
-        
+
         let result = client.image_to_data_url(&image_data, "jpeg");
         assert!(result.is_ok());
-        
+
         let data_url = result.unwrap();
         assert!(data_url.starts_with("data:image/jpeg;base64,"));
     }
-    
+
     #[test]
     fn test_parse_classification_fire() {
         let config = create_test_config();
         let client = OpenAiClient::new(config);
-        
-        let response = "This appears to be a fire event with 95% confidence. Immediate action required.";
+
+        let response =
+            "This appears to be a fire event with 95% confidence. Immediate action required.";
         let (classification, confidence, actions) = client.parse_classification(response);
-        
+
         assert_eq!(classification, EventClassification::Fire);
         assert!(confidence > 0.9);
         assert!(actions.contains(&"Immediately alert fire department".to_string()));
     }
-    
+
     #[test]
     fn test_parse_classification_person() {
         let config = create_test_config();
         let client = OpenAiClient::new(config);
-        
+
         let response = "A person is detected in the frame with high confidence level of 85%.";
         let (classification, confidence, _) = client.parse_classification(response);
-        
+
         assert_eq!(classification, EventClassification::Person);
         assert!((confidence - 0.85).abs() < 0.01);
     }
-    
+
     #[test]
     fn test_parse_classification_unknown() {
         let config = create_test_config();
         let client = OpenAiClient::new(config);
-        
+
         let response = "Unable to determine the nature of this event clearly.";
         let (classification, _, _) = client.parse_classification(response);
-        
+
         assert_eq!(classification, EventClassification::Unknown);
     }
-    
+
     #[test]
     fn test_default_base_url() {
         let config = AiConfig {
             base_url: None,
             ..create_test_config()
         };
-        
+
         let client = OpenAiClient::new(config);
         assert_eq!(client.base_url, "https://api.openai.com/v1");
     }

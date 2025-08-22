@@ -21,25 +21,26 @@ pub fn utc_now() -> SystemTime {
 /// ```
 /// use gl_core::to_rfc3339;
 /// use std::time::{SystemTime, UNIX_EPOCH, Duration};
-/// 
+///
 /// let time = UNIX_EPOCH + Duration::from_secs(1_609_459_200); // 2021-01-01
 /// let timestamp = to_rfc3339(time);
 /// assert!(timestamp.contains("1609459200"));
 /// ```
 pub fn to_rfc3339(time: SystemTime) -> String {
-    let duration_since_epoch = time.duration_since(UNIX_EPOCH)
+    let duration_since_epoch = time
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0));
-    
+
     let secs = duration_since_epoch.as_secs();
     let nanos = duration_since_epoch.subsec_nanos();
-    
+
     // Simple timestamp format: seconds.nanoseconds since epoch
     // TODO: Replace with proper RFC3339 implementation when chrono is added
     format!("{}.{:09}", secs, nanos)
 }
 
 /// Get current time as ISO 8601 formatted string (simplified)
-/// 
+///
 /// # Examples
 ///
 /// ```
@@ -59,7 +60,7 @@ pub fn now_iso8601() -> String {
 /// use gl_core::MonotonicTimer;
 /// use std::thread;
 /// use std::time::Duration;
-/// 
+///
 /// let timer = MonotonicTimer::new();
 /// thread::sleep(Duration::from_millis(1));
 /// let elapsed = timer.elapsed();

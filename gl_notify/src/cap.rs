@@ -1,17 +1,14 @@
 //! ABOUTME: CAP (Common Alerting Protocol) integration for notifications
 //! ABOUTME: Converts CAP alerts to notifications with XML attachments or body content
 
-use gl_cap::{Alert, profiles::AlertProfiles};
 use crate::{Notification, NotificationChannel, NotificationKind, Result};
+use gl_cap::{profiles::AlertProfiles, Alert};
 use url::Url;
 
 /// Extension trait for creating notifications from CAP alerts
 pub trait CapNotification {
     /// Create a notification from a CAP alert with XML as body content
-    fn to_notification_with_body(
-        self,
-        channels: Vec<NotificationChannel>,
-    ) -> Result<Notification>;
+    fn to_notification_with_body(self, channels: Vec<NotificationChannel>) -> Result<Notification>;
 
     /// Create a notification from a CAP alert with XML as attachment
     fn to_notification_with_attachment(
@@ -22,19 +19,20 @@ pub trait CapNotification {
 }
 
 impl CapNotification for Alert {
-    fn to_notification_with_body(
-        self,
-        channels: Vec<NotificationChannel>,
-    ) -> Result<Notification> {
+    fn to_notification_with_body(self, channels: Vec<NotificationChannel>) -> Result<Notification> {
         // Extract title and body from the first info block
         let (title, body) = if let Some(info) = self.info.first() {
-            let title = info.headline.clone()
+            let title = info
+                .headline
+                .clone()
                 .unwrap_or_else(|| format!("CAP Alert: {}", info.event));
-            
-            let body_text = info.description.clone()
+
+            let body_text = info
+                .description
+                .clone()
                 .or_else(|| info.instruction.clone())
                 .unwrap_or_else(|| "Emergency alert - see CAP XML for details".to_string());
-            
+
             (title, body_text)
         } else {
             ("CAP Alert".to_string(), "Emergency alert".to_string())
@@ -54,21 +52,28 @@ impl CapNotification for Alert {
         };
 
         // Generate CAP XML
-        let cap_xml = self.to_xml()
-            .map_err(|e| crate::NotificationError::SerializationError(
-                serde_json::Error::io(std::io::Error::new(
+        let cap_xml = self.to_xml().map_err(|e| {
+            crate::NotificationError::SerializationError(serde_json::Error::io(
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("CAP XML error: {}", e)
-                ))
-            ))?;
+                    format!("CAP XML error: {}", e),
+                ),
+            ))
+        })?;
 
         let mut notification = Notification::new(kind, title, body, channels);
 
         // Add CAP XML to metadata
         notification.metadata.insert("cap_xml".to_string(), cap_xml);
-        notification.metadata.insert("cap_identifier".to_string(), self.identifier.clone());
-        notification.metadata.insert("cap_sender".to_string(), self.sender.clone());
-        notification.metadata.insert("cap_status".to_string(), format!("{:?}", self.status));
+        notification
+            .metadata
+            .insert("cap_identifier".to_string(), self.identifier.clone());
+        notification
+            .metadata
+            .insert("cap_sender".to_string(), self.sender.clone());
+        notification
+            .metadata
+            .insert("cap_status".to_string(), format!("{:?}", self.status));
 
         Ok(notification)
     }
@@ -177,7 +182,10 @@ mod tests {
         assert_eq!(notification.body, "This is a test emergency alert");
         assert_eq!(notification.kind, NotificationKind::Error);
         assert!(notification.metadata.contains_key("cap_xml"));
-        assert_eq!(notification.metadata.get("cap_sender"), Some(&"emergency.example.org".to_string()));
+        assert_eq!(
+            notification.metadata.get("cap_sender"),
+            Some(&"emergency.example.org".to_string())
+        );
     }
 
     #[test]
@@ -188,19 +196,24 @@ mod tests {
             method: None,
         }];
 
-        let notification = CapNotificationBuilder::severe_weather("weather.example.org", channels).unwrap();
+        let notification =
+            CapNotificationBuilder::severe_weather("weather.example.org", channels).unwrap();
 
         assert_eq!(notification.title, "Severe Weather Warning");
         assert_eq!(notification.kind, NotificationKind::Warning);
         assert!(notification.metadata.contains_key("cap_xml"));
-        assert!(notification.metadata.get("cap_xml").unwrap().contains("Severe Weather Alert"));
+        assert!(notification
+            .metadata
+            .get("cap_xml")
+            .unwrap()
+            .contains("Severe Weather Alert"));
     }
 
     #[test]
     fn test_cap_alert_with_attachment() {
         let alert = AlertProfiles::test_alert("test.example.org").build();
         let attachment_url: Url = "https://example.com/cap/alert.xml".parse().unwrap();
-        
+
         let channels = vec![NotificationChannel::Pushover {
             user_key: "test_user".to_string(),
             device: None,
@@ -208,7 +221,9 @@ mod tests {
             sound: None,
         }];
 
-        let notification = alert.to_notification_with_attachment(attachment_url.clone(), channels).unwrap();
+        let notification = alert
+            .to_notification_with_attachment(attachment_url.clone(), channels)
+            .unwrap();
 
         assert_eq!(notification.attachments.len(), 1);
         assert_eq!(notification.attachments[0], attachment_url);

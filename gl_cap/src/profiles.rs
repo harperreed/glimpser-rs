@@ -1,12 +1,9 @@
-//! ABOUTME: Common CAP alert profiles for typical emergency scenarios  
+//! ABOUTME: Common CAP alert profiles for typical emergency scenarios
 //! ABOUTME: Provides pre-configured templates for weather, safety, and other alert types
 
 use chrono::Duration;
 
-use crate::{
-    builder::AlertBuilder,
-    Category, Certainty, ResponseType, Severity, Status, Urgency,
-};
+use crate::{builder::AlertBuilder, Category, Certainty, ResponseType, Severity, Status, Urgency};
 
 /// Common alert profile templates
 pub struct AlertProfiles;
@@ -224,7 +221,9 @@ impl AlertProfiles {
                     .certainty(Certainty::Unknown)
                     .add_response_type(ResponseType::None)
                     .headline("TEST ALERT - NO ACTION REQUIRED")
-                    .description("This is a test of the emergency alert system. No action is required.")
+                    .description(
+                        "This is a test of the emergency alert system. No action is required.",
+                    )
                     .instruction("This is only a test. Please disregard this message.")
                     .effective_now()
                     .expires_in(Duration::minutes(15))
@@ -246,7 +245,9 @@ impl AlertProfiles {
                     .add_response_type(ResponseType::AllClear)
                     .headline("All Clear - Emergency Has Ended")
                     .description("The emergency situation has ended. Normal activities may resume.")
-                    .instruction("You may now resume normal activities. Stay alert for further updates.")
+                    .instruction(
+                        "You may now resume normal activities. Stay alert for further updates.",
+                    )
                     .effective_now()
                     .expires_in(Duration::hours(1))
                     .sender_name("Emergency Management")
@@ -258,7 +259,11 @@ impl AlertProfiles {
 /// Profile customization helpers
 impl AlertBuilder {
     /// Apply common area templates
-    pub fn add_county_area(mut self, county_name: impl Into<String>, fips_code: impl Into<String>) -> Self {
+    pub fn add_county_area(
+        mut self,
+        county_name: impl Into<String>,
+        fips_code: impl Into<String>,
+    ) -> Self {
         if let Some(info) = self.alert.info.last_mut() {
             info.area.push(crate::Area {
                 area_desc: format!("{} County", county_name.into()),
@@ -278,10 +283,10 @@ impl AlertBuilder {
     /// Add a circular area around a point
     pub fn add_circular_area(
         mut self,
-        area_desc: impl Into<String>, 
-        latitude: f64, 
-        longitude: f64, 
-        radius_km: f64
+        area_desc: impl Into<String>,
+        latitude: f64,
+        longitude: f64,
+        radius_km: f64,
     ) -> Self {
         if let Some(info) = self.alert.info.last_mut() {
             info.area.push(crate::Area {
@@ -304,7 +309,7 @@ impl AlertBuilder {
         self
     }
 
-    /// Add web resource URL to the most recent info block  
+    /// Add web resource URL to the most recent info block
     pub fn with_web_resource(mut self, url: impl AsRef<str>) -> Self {
         if let Some(info) = self.alert.info.last_mut() {
             if let Ok(parsed_url) = url.as_ref().parse() {
@@ -328,7 +333,7 @@ mod tests {
 
         assert_eq!(alert.status, Status::Actual);
         assert_eq!(alert.info.len(), 1);
-        
+
         let info = &alert.info[0];
         assert_eq!(info.event, "Severe Weather Alert");
         assert!(info.category.contains(&Category::Met));
@@ -336,14 +341,13 @@ mod tests {
         assert_eq!(info.severity, Severity::Severe);
         assert_eq!(info.certainty, Certainty::Likely);
         assert!(info.response_type.contains(&ResponseType::Prepare));
-        
+
         assert!(alert.validate().is_ok());
     }
 
     #[test]
     fn test_extreme_weather_profile() {
-        let alert = AlertProfiles::extreme_weather("emergency.example.org")
-            .build();
+        let alert = AlertProfiles::extreme_weather("emergency.example.org").build();
 
         assert_eq!(alert.info[0].urgency, Urgency::Immediate);
         assert_eq!(alert.info[0].severity, Severity::Extreme);
@@ -353,8 +357,7 @@ mod tests {
 
     #[test]
     fn test_test_alert_profile() {
-        let alert = AlertProfiles::test_alert("test.example.org")
-            .build();
+        let alert = AlertProfiles::test_alert("test.example.org").build();
 
         assert_eq!(alert.status, Status::Test);
         assert_eq!(alert.info[0].event, "Test Alert");
@@ -364,11 +367,12 @@ mod tests {
 
     #[test]
     fn test_all_clear_profile() {
-        let alert = AlertProfiles::all_clear("emergency.example.org")
-            .build();
+        let alert = AlertProfiles::all_clear("emergency.example.org").build();
 
         assert_eq!(alert.info[0].event, "All Clear");
-        assert!(alert.info[0].response_type.contains(&ResponseType::AllClear));
+        assert!(alert.info[0]
+            .response_type
+            .contains(&ResponseType::AllClear));
         assert!(alert.validate().is_ok());
     }
 
@@ -414,7 +418,11 @@ mod tests {
 
         for profile in profiles {
             let alert = profile.build();
-            assert!(alert.validate().is_ok(), "Profile validation failed: {:?}", alert.info[0].event);
+            assert!(
+                alert.validate().is_ok(),
+                "Profile validation failed: {:?}",
+                alert.info[0].event
+            );
         }
     }
 }

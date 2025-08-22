@@ -1,7 +1,7 @@
 //! ABOUTME: Circuit breaker pattern for notification adapters
 //! ABOUTME: Prevents cascade failures by temporarily disabling failing adapters
 
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, info, warn};
@@ -11,9 +11,9 @@ use crate::{Notification, NotificationError, Notifier, Result};
 /// Simple circuit breaker state
 #[derive(Debug)]
 enum CircuitState {
-    Closed,    // Normal operation
-    Open,      // Circuit open due to failures
-    HalfOpen,  // Testing if service is recovered
+    Closed,   // Normal operation
+    Open,     // Circuit open due to failures
+    HalfOpen, // Testing if service is recovered
 }
 
 /// Simple circuit breaker configuration
@@ -80,7 +80,7 @@ impl SimpleCircuitBreaker {
     pub fn record_success(&self) {
         self.failure_count.store(0, Ordering::Relaxed);
         let successes = self.success_count.fetch_add(1, Ordering::Relaxed) + 1;
-        
+
         // If we have enough successes in half-open state, close the circuit
         if successes >= self.config.success_threshold {
             self.is_open.store(false, Ordering::Relaxed);
@@ -90,7 +90,7 @@ impl SimpleCircuitBreaker {
 
     pub fn record_failure(&self) {
         let failures = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
-        
+
         if failures >= self.config.failure_threshold {
             self.is_open.store(true, Ordering::Relaxed);
             if let Ok(mut last_failure) = self.last_failure_time.lock() {
@@ -145,7 +145,7 @@ impl<T: Notifier> Notifier for CircuitBreakerWrapper<T> {
                 "Circuit breaker is open, skipping notification"
             );
             return Err(NotificationError::CircuitBreakerOpen(
-                self.inner.name().to_string()
+                self.inner.name().to_string(),
             ));
         }
 
@@ -154,13 +154,13 @@ impl<T: Notifier> Notifier for CircuitBreakerWrapper<T> {
             Ok(()) => {
                 // Record success
                 self.circuit_breaker.record_success();
-                
+
                 debug!(
                     notification_id = %msg.id,
                     adapter = self.inner.name(),
                     "Notification sent successfully"
                 );
-                
+
                 Ok(())
             }
             Err(e) => {
@@ -168,9 +168,12 @@ impl<T: Notifier> Notifier for CircuitBreakerWrapper<T> {
                 let should_record_failure = match &e {
                     NotificationError::HttpError(http_err) => {
                         // Record failures for server errors and network issues
-                        http_err.is_timeout() || 
-                        http_err.is_connect() ||
-                        http_err.status().map(|s| s.is_server_error()).unwrap_or(true)
+                        http_err.is_timeout()
+                            || http_err.is_connect()
+                            || http_err
+                                .status()
+                                .map(|s| s.is_server_error())
+                                .unwrap_or(true)
                     }
                     NotificationError::CircuitBreakerOpen(_) => false, // Don't compound circuit breaker errors
                     NotificationError::RetryExhausted(_) => true, // This indicates persistent failures
@@ -179,7 +182,7 @@ impl<T: Notifier> Notifier for CircuitBreakerWrapper<T> {
 
                 if should_record_failure {
                     self.circuit_breaker.record_failure();
-                    
+
                     if self.circuit_breaker.is_open() {
                         info!(
                             adapter = self.inner.name(),

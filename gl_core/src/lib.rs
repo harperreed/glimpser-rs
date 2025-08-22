@@ -8,7 +8,7 @@ pub mod time;
 
 pub use error::{Error, Result};
 pub use id::Id;
-pub use time::{utc_now, to_rfc3339, MonotonicTimer};
+pub use time::{to_rfc3339, utc_now, MonotonicTimer};
 
 #[cfg(test)]
 mod tests {

@@ -1,11 +1,11 @@
-//! ABOUTME: yt-dlp capture source for YouTube and other video platforms  
+//! ABOUTME: yt-dlp capture source for YouTube and other video platforms
 //! ABOUTME: Implements CaptureSource trait with live and VOD support
 
-use crate::{CaptureSource, CaptureHandle, SnapshotConfig, generate_snapshot_with_ffmpeg};
+use crate::{generate_snapshot_with_ffmpeg, CaptureHandle, CaptureSource, SnapshotConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
-use gl_proc::{CommandSpec, run};
+use gl_proc::{run, CommandSpec};
 use metrics::{counter, histogram};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -14,7 +14,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::Mutex, fs};
+use tokio::{fs, sync::Mutex};
 use tracing::{debug, info, instrument};
 
 /// Output format for yt-dlp
@@ -22,7 +22,7 @@ use tracing::{debug, info, instrument};
 pub enum OutputFormat {
     /// Best available quality
     Best,
-    /// Worst available quality  
+    /// Worst available quality
     Worst,
     /// Specific format ID
     FormatId(String),
@@ -94,7 +94,7 @@ impl YtDlpSource {
 
         if !result.success() {
             return Err(Error::Config(
-                "yt-dlp not found. Please install yt-dlp and ensure it's in PATH".to_string()
+                "yt-dlp not found. Please install yt-dlp and ensure it's in PATH".to_string(),
             ));
         }
 
@@ -108,7 +108,7 @@ impl YtDlpSource {
             "--no-playlist".to_string(),
             "--print".to_string(),
             "%(title)s".to_string(),
-            "--print".to_string(), 
+            "--print".to_string(),
             "%(duration)s".to_string(),
             "--print".to_string(),
             "%(is_live)s".to_string(),
@@ -138,9 +138,7 @@ impl YtDlpSource {
 
         args.push(self.config.url.clone());
 
-        let timeout = Duration::from_secs(
-            self.config.timeout.unwrap_or(60) as u64
-        );
+        let timeout = Duration::from_secs(self.config.timeout.unwrap_or(60) as u64);
 
         CommandSpec::new("yt-dlp".into())
             .args(args)
@@ -150,13 +148,15 @@ impl YtDlpSource {
     /// Build yt-dlp command for downloading
     async fn build_download_command(&self) -> Result<CommandSpec> {
         let mut temp_guard = self.temp_file.lock().await;
-        
+
         // Create temp file for download
         let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join(format!("yt_dlp_{}_{}.%(ext)s", 
-            gl_core::Id::new(), 
-            chrono::Utc::now().timestamp()));
-        
+        let temp_file = temp_dir.join(format!(
+            "yt_dlp_{}_{}.%(ext)s",
+            gl_core::Id::new(),
+            chrono::Utc::now().timestamp()
+        ));
+
         let mut args = vec![
             "--no-playlist".to_string(),
             "--output".to_string(),
@@ -199,7 +199,7 @@ impl YtDlpSource {
         *temp_guard = Some(temp_file.clone());
 
         let timeout = Duration::from_secs(
-            self.config.timeout.unwrap_or(300) as u64 // Longer timeout for downloads
+            self.config.timeout.unwrap_or(300) as u64, // Longer timeout for downloads
         );
 
         Ok(CommandSpec::new("yt-dlp".into())
@@ -210,15 +210,16 @@ impl YtDlpSource {
     /// Find the actual downloaded file (yt-dlp resolves %(ext)s)
     async fn find_downloaded_file(&self) -> Result<PathBuf> {
         let temp_guard = self.temp_file.lock().await;
-        let template_path = temp_guard.as_ref()
+        let template_path = temp_guard
+            .as_ref()
             .ok_or_else(|| Error::Config("No temp file set".to_string()))?;
-        
+
         let template_str = template_path.to_string_lossy();
         let base_path = template_str.replace(".%(ext)s", "");
-        
+
         // Common video extensions to check
         let extensions = ["mp4", "mkv", "webm", "m4v", "mov", "avi", "flv"];
-        
+
         for ext in &extensions {
             let candidate = PathBuf::from(format!("{}.{}", base_path, ext));
             if candidate.exists() {
@@ -226,7 +227,7 @@ impl YtDlpSource {
                 return Ok(candidate);
             }
         }
-        
+
         Err(Error::Config("Could not find downloaded file".to_string()))
     }
 }
@@ -253,12 +254,12 @@ impl CaptureSource for YtDlpSource {
         // Get video info first
         let info_spec = self.build_info_command();
         debug!(command = ?info_spec, "Getting video info");
-        
+
         let info_result = run(info_spec).await?;
         if !info_result.success() {
             counter!("yt_dlp_failures_total").increment(1);
             return Err(Error::Config(format!(
-                "yt-dlp info command failed: {}", 
+                "yt-dlp info command failed: {}",
                 info_result.stderr
             )));
         }
@@ -267,7 +268,7 @@ impl CaptureSource for YtDlpSource {
         if info_lines.len() >= 3 {
             info!(
                 title = info_lines.get(0).unwrap_or(&"Unknown"),
-                duration = info_lines.get(1).unwrap_or(&"Unknown"), 
+                duration = info_lines.get(1).unwrap_or(&"Unknown"),
                 is_live = info_lines.get(2).unwrap_or(&"Unknown"),
                 "Video info retrieved"
             );
@@ -277,12 +278,12 @@ impl CaptureSource for YtDlpSource {
         if !self.config.is_live {
             let download_spec = self.build_download_command().await?;
             debug!(command = ?download_spec, "Starting download");
-            
+
             let download_result = run(download_spec).await?;
             if !download_result.success() {
                 counter!("yt_dlp_failures_total").increment(1);
                 return Err(Error::Config(format!(
-                    "yt-dlp download failed: {}", 
+                    "yt-dlp download failed: {}",
                     download_result.stderr
                 )));
             }
@@ -290,8 +291,10 @@ impl CaptureSource for YtDlpSource {
 
         counter!("yt_dlp_starts_total").increment(1);
         histogram!("yt_dlp_start_duration_seconds").record(start_time.elapsed().as_secs_f64());
-        
-        Ok(CaptureHandle::new(Arc::new(YtDlpSource::new(self.config.clone()))))
+
+        Ok(CaptureHandle::new(Arc::new(YtDlpSource::new(
+            self.config.clone(),
+        ))))
     }
 
     #[instrument(skip(self))]
@@ -313,7 +316,7 @@ impl CaptureSource for YtDlpSource {
             let url_result = run(get_url_spec).await?;
             if !url_result.success() {
                 return Err(Error::Config(format!(
-                    "Failed to get stream URL: {}", 
+                    "Failed to get stream URL: {}",
                     url_result.stderr
                 )));
             }
@@ -322,8 +325,9 @@ impl CaptureSource for YtDlpSource {
             debug!(stream_url = %stream_url, "Got live stream URL");
 
             // Use ffmpeg to capture from the live stream
-            let temp_path = std::env::temp_dir().join(format!("yt_live_snapshot_{}.jpg", gl_core::Id::new()));
-            
+            let temp_path =
+                std::env::temp_dir().join(format!("yt_live_snapshot_{}.jpg", gl_core::Id::new()));
+
             let ffmpeg_args = vec![
                 "-i".to_string(),
                 stream_url.to_string(),
@@ -344,18 +348,19 @@ impl CaptureSource for YtDlpSource {
             let ffmpeg_result = run(ffmpeg_spec).await?;
             if !ffmpeg_result.success() {
                 return Err(Error::Config(format!(
-                    "FFmpeg snapshot failed: {}", 
+                    "FFmpeg snapshot failed: {}",
                     ffmpeg_result.stderr
                 )));
             }
 
             // Read the generated image
-            let image_data = fs::read(&temp_path).await
+            let image_data = fs::read(&temp_path)
+                .await
                 .map_err(|e| Error::Config(format!("Failed to read snapshot: {}", e)))?;
-            
+
             // Clean up temp file
             let _ = fs::remove_file(&temp_path).await;
-            
+
             Ok(Bytes::from(image_data))
         } else {
             // For VOD, use the downloaded file
@@ -414,12 +419,14 @@ mod tests {
         for format in formats {
             let json = serde_json::to_string(&format).unwrap();
             let deserialized: OutputFormat = serde_json::from_str(&json).unwrap();
-            
+
             match (&format, &deserialized) {
-                (OutputFormat::Best, OutputFormat::Best) => {},
-                (OutputFormat::Worst, OutputFormat::Worst) => {},
+                (OutputFormat::Best, OutputFormat::Best) => {}
+                (OutputFormat::Worst, OutputFormat::Worst) => {}
                 (OutputFormat::FormatId(a), OutputFormat::FormatId(b)) => assert_eq!(a, b),
-                (OutputFormat::BestWithHeight(a), OutputFormat::BestWithHeight(b)) => assert_eq!(a, b),
+                (OutputFormat::BestWithHeight(a), OutputFormat::BestWithHeight(b)) => {
+                    assert_eq!(a, b)
+                }
                 _ => panic!("Format mismatch after serialization"),
             }
         }
@@ -431,7 +438,7 @@ mod tests {
             url: "https://example.com/video".to_string(),
             ..Default::default()
         };
-        
+
         let source = YtDlpSource::new(config.clone());
         assert_eq!(source.config.url, config.url);
     }
@@ -443,15 +450,17 @@ mod tests {
             format: OutputFormat::Best,
             ..Default::default()
         };
-        
+
         let source = YtDlpSource::new(config);
         let spec = source.build_info_command();
-        
+
         assert_eq!(spec.program.to_string_lossy(), "yt-dlp");
         assert!(spec.args.contains(&"--no-playlist".to_string()));
         assert!(spec.args.contains(&"--format".to_string()));
         assert!(spec.args.contains(&"best".to_string()));
-        assert!(spec.args.contains(&"https://youtube.com/watch?v=test".to_string()));
+        assert!(spec
+            .args
+            .contains(&"https://youtube.com/watch?v=test".to_string()));
     }
 
     #[test]
@@ -461,10 +470,10 @@ mod tests {
             format: OutputFormat::FormatId("137+140".to_string()),
             ..Default::default()
         };
-        
+
         let source = YtDlpSource::new(config);
         let spec = source.build_info_command();
-        
+
         assert!(spec.args.contains(&"--format".to_string()));
         assert!(spec.args.contains(&"137+140".to_string()));
     }
@@ -475,13 +484,17 @@ mod tests {
             url: "https://youtube.com/watch?v=test".to_string(),
             ..Default::default()
         };
-        
-        config.options.insert("cookies".to_string(), "/path/to/cookies.txt".to_string());
-        config.options.insert("user-agent".to_string(), "Custom Agent".to_string());
-        
+
+        config
+            .options
+            .insert("cookies".to_string(), "/path/to/cookies.txt".to_string());
+        config
+            .options
+            .insert("user-agent".to_string(), "Custom Agent".to_string());
+
         let source = YtDlpSource::new(config);
         let spec = source.build_info_command();
-        
+
         assert!(spec.args.contains(&"--cookies".to_string()));
         assert!(spec.args.contains(&"/path/to/cookies.txt".to_string()));
         assert!(spec.args.contains(&"--user-agent".to_string()));
@@ -508,9 +521,9 @@ mod tests {
             url: "https://example.com/test".to_string(),
             ..Default::default()
         };
-        
+
         let source = YtDlpSource::new(config);
-        
+
         // Test that we can create a handle (even though it will likely fail without yt-dlp)
         match source.start().await {
             Ok(_handle) => {
@@ -528,10 +541,10 @@ mod tests {
             url: "".to_string(), // Empty URL should fail
             ..Default::default()
         };
-        
+
         let source = YtDlpSource::new(config);
         let result = source.start().await;
-        
+
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("cannot be empty"));
@@ -542,7 +555,7 @@ mod tests {
     async fn test_restart_count_initialization() {
         let config = YtDlpConfig::default();
         let source = YtDlpSource::new(config);
-        
+
         let count = *source.restart_count.lock().await;
         assert_eq!(count, 0);
     }

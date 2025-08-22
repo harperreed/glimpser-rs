@@ -17,10 +17,13 @@ pub async fn list_templates(
     _req: HttpRequest,
 ) -> Result<HttpResponse> {
     debug!("Listing templates for admin user");
-    
+
     // For now, return empty list - this is just to test the structure
     let templates: Vec<TemplateInfo> = vec![];
-    
-    debug!("Templates retrieved successfully, count: {}", templates.len());
+
+    debug!(
+        "Templates retrieved successfully, count: {}",
+        templates.len()
+    );
     Ok(HttpResponse::Ok().json(templates))
 }

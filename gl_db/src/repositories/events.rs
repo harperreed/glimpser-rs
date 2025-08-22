@@ -1,7 +1,7 @@
 //! ABOUTME: Event repository for audit logging and system event tracking
 //! ABOUTME: Provides compile-time checked queries for event logging operations
 
-use gl_core::{Result, Error, time::now_iso8601, Id};
+use gl_core::{time::now_iso8601, Error, Id, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
@@ -45,7 +45,7 @@ impl<'a> EventRepository<'a> {
     pub async fn create(&self, request: CreateEventRequest) -> Result<Event> {
         let id = Id::new().to_string();
         let now = now_iso8601();
-        
+
         let event = sqlx::query_as!(
             Event,
             r#"
@@ -66,21 +66,17 @@ impl<'a> EventRepository<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to create event: {}", e)))?;
-        
+
         Ok(event)
     }
 
     /// Find event by ID
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Event>> {
-        let event = sqlx::query_as!(
-            Event,
-            "SELECT * FROM events WHERE id = ?1",
-            id
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to find event: {}", e)))?;
-        
+        let event = sqlx::query_as!(Event, "SELECT * FROM events WHERE id = ?1", id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to find event: {}", e)))?;
+
         Ok(event)
     }
 }

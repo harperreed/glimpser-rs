@@ -37,7 +37,12 @@ impl Default for WebhookAdapter {
 impl Notifier for WebhookAdapter {
     async fn send(&self, msg: &Notification) -> Result<()> {
         for channel in &msg.channels {
-            if let NotificationChannel::Webhook { url, headers: _, method: _ } = channel {
+            if let NotificationChannel::Webhook {
+                url,
+                headers: _,
+                method: _,
+            } = channel
+            {
                 debug!(
                     notification_id = %msg.id,
                     webhook_url = %url,
@@ -55,7 +60,7 @@ impl Notifier for WebhookAdapter {
                 );
             }
         }
-        
+
         Ok(())
     }
 

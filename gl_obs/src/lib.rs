@@ -2,9 +2,9 @@
 //! ABOUTME: Provides monitoring endpoints for operational visibility
 
 use actix_web::{
-    web, App, HttpResponse, HttpServer, Result as ActixResult,
-    middleware::Logger,
     dev::{ServiceRequest, ServiceResponse},
+    middleware::Logger,
+    web, App, HttpResponse, HttpServer, Result as ActixResult,
 };
 use gl_core::Result;
 use prometheus_client::{
@@ -57,22 +57,21 @@ pub struct Metrics {
 impl Metrics {
     pub fn new() -> Self {
         let mut registry = Registry::default();
-        
-        let http_requests_total = Counter::default();
-        registry
-            .register(
-                "http_requests_total",
-                "Total number of HTTP requests",
-                http_requests_total.clone(),
-            );
 
-        let http_request_duration_seconds = Histogram::new([0.1, 0.5, 1.0, 2.5, 5.0, 10.0].into_iter());
-        registry
-            .register(
-                "http_request_duration_seconds", 
-                "HTTP request duration in seconds",
-                http_request_duration_seconds.clone(),
-            );
+        let http_requests_total = Counter::default();
+        registry.register(
+            "http_requests_total",
+            "Total number of HTTP requests",
+            http_requests_total.clone(),
+        );
+
+        let http_request_duration_seconds =
+            Histogram::new([0.1, 0.5, 1.0, 2.5, 5.0, 10.0].into_iter());
+        registry.register(
+            "http_request_duration_seconds",
+            "HTTP request duration in seconds",
+            http_request_duration_seconds.clone(),
+        );
 
         Self {
             registry: Arc::new(Mutex::new(registry)),
@@ -93,12 +92,11 @@ impl Metrics {
         let registry = self.registry.lock().map_err(|e| {
             gl_core::Error::Config(format!("Failed to lock metrics registry: {}", e))
         })?;
-        
+
         let mut buffer = String::new();
-        encode(&mut buffer, &registry).map_err(|e| {
-            gl_core::Error::Config(format!("Failed to encode metrics: {}", e))
-        })?;
-        
+        encode(&mut buffer, &registry)
+            .map_err(|e| gl_core::Error::Config(format!("Failed to encode metrics: {}", e)))?;
+
         Ok(buffer)
     }
 }
@@ -143,7 +141,7 @@ async fn health() -> ActixResult<HttpResponse> {
 async fn readiness(state: web::Data<ObsState>) -> ActixResult<HttpResponse> {
     let is_ready = state.readiness.is_ready();
     tracing::info!("Readiness check requested, ready: {}", is_ready);
-    
+
     if is_ready {
         Ok(HttpResponse::Ok().json(json!({
             "status": "ready"
@@ -158,9 +156,9 @@ async fn readiness(state: web::Data<ObsState>) -> ActixResult<HttpResponse> {
 /// Metrics endpoint handler
 async fn metrics(state: web::Data<ObsState>) -> ActixResult<HttpResponse> {
     tracing::debug!("Metrics scrape requested");
-    
+
     // Don't increment metrics counter for metrics endpoint to avoid feedback loop
-    
+
     match state.metrics.encode() {
         Ok(metrics_text) => {
             tracing::debug!("Metrics encoded successfully, {} bytes", metrics_text.len());
@@ -177,9 +175,10 @@ async fn metrics(state: web::Data<ObsState>) -> ActixResult<HttpResponse> {
     }
 }
 
-
 /// Create observability service factory
-pub fn create_service(state: ObsState) -> App<
+pub fn create_service(
+    state: ObsState,
+) -> App<
     impl actix_web::dev::ServiceFactory<
         ServiceRequest,
         Config = (),
@@ -202,14 +201,14 @@ pub fn create_service(state: ObsState) -> App<
 /// Start observability server
 pub async fn start_server(bind_addr: &str, state: ObsState) -> Result<()> {
     tracing::info!("Starting observability server on {}", bind_addr);
-    
+
     HttpServer::new(move || create_service(state.clone()))
         .bind(bind_addr)
         .map_err(|e| gl_core::Error::Config(format!("Failed to bind server: {}", e)))?
         .run()
         .await
         .map_err(|e| gl_core::Error::Config(format!("Server error: {}", e)))?;
-    
+
     Ok(())
 }
 
@@ -222,13 +221,16 @@ mod tests {
     async fn test_health_endpoint() {
         let state = ObsState::new();
         let app = test::init_service(create_service(state)).await;
-        
+
         let req = test::TestRequest::get().uri("/healthz").to_request();
         let resp = test::call_service(&app, req).await;
-        
+
         assert!(resp.status().is_success());
-        assert_eq!(resp.headers().get("content-type").unwrap(), "application/json");
-        
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["status"], "ok");
     }
@@ -237,15 +239,18 @@ mod tests {
     async fn test_readiness_endpoint_ready() {
         let state = ObsState::new();
         state.readiness.set_ready(true);
-        
+
         let app = test::init_service(create_service(state)).await;
-        
+
         let req = test::TestRequest::get().uri("/readyz").to_request();
         let resp = test::call_service(&app, req).await;
-        
+
         assert!(resp.status().is_success());
-        assert_eq!(resp.headers().get("content-type").unwrap(), "application/json");
-        
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["status"], "ready");
     }
@@ -254,15 +259,18 @@ mod tests {
     async fn test_readiness_endpoint_not_ready() {
         let state = ObsState::new();
         state.readiness.set_ready(false);
-        
+
         let app = test::init_service(create_service(state)).await;
-        
+
         let req = test::TestRequest::get().uri("/readyz").to_request();
         let resp = test::call_service(&app, req).await;
-        
+
         assert_eq!(resp.status(), 503);
-        assert_eq!(resp.headers().get("content-type").unwrap(), "application/json");
-        
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["status"], "not ready");
     }
@@ -270,25 +278,25 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_endpoint() {
         let state = ObsState::new();
-        
+
         // Record some metrics (but not from the metrics endpoint itself)
         state.metrics.inc_requests();
         state.metrics.observe_duration(0.5);
-        
+
         let app = test::init_service(create_service(state)).await;
-        
+
         let req = test::TestRequest::get().uri("/metrics").to_request();
         let resp = test::call_service(&app, req).await;
-        
+
         assert!(resp.status().is_success());
         assert_eq!(
             resp.headers().get("content-type").unwrap(),
             "text/plain; version=0.0.4; charset=utf-8"
         );
-        
+
         let body = test::read_body(resp).await;
         let body_str = std::str::from_utf8(&body).unwrap();
-        
+
         // Verify that metrics are present
         assert!(body_str.contains("http_requests_total"));
         assert!(body_str.contains("http_request_duration_seconds"));
@@ -297,14 +305,14 @@ mod tests {
     #[tokio::test]
     async fn test_readiness_gate_toggle() {
         let gate = ReadinessGate::new();
-        
+
         // Should start ready
         assert!(gate.is_ready());
-        
+
         // Set not ready
         gate.set_ready(false);
         assert!(!gate.is_ready());
-        
+
         // Set ready again
         gate.set_ready(true);
         assert!(gate.is_ready());
@@ -313,18 +321,18 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_functionality() {
         let metrics = Metrics::new();
-        
+
         // Increment requests
         metrics.inc_requests();
         metrics.inc_requests();
-        
+
         // Observe durations
         metrics.observe_duration(0.1);
         metrics.observe_duration(1.5);
-        
+
         // Encode metrics
         let encoded = metrics.encode().expect("Should encode successfully");
-        
+
         // Verify content
         assert!(encoded.contains("http_requests_total"));
         assert!(encoded.contains("http_request_duration_seconds"));

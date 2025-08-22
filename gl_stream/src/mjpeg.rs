@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
-use crate::{StreamSession, StreamMetrics};
+use crate::{StreamMetrics, StreamSession};
 
 /// Manager for active streaming sessions
 pub struct StreamManager {
@@ -84,7 +84,7 @@ impl MjpegStream {
     ) -> Self {
         let boundary = format!("mjpeg_boundary_{}", Uuid::new_v4());
         let connection_id = Uuid::new_v4();
-        
+
         Self {
             frame_receiver,
             boundary,
@@ -122,7 +122,7 @@ impl Stream for MjpegStream {
                 boundary = %self.boundary,
                 "Starting MJPEG stream"
             );
-            
+
             // Return the first boundary marker
             let initial_boundary = format!("--{}\r\n", self.boundary);
             return Poll::Ready(Some(Ok(Bytes::from(initial_boundary))));
@@ -161,7 +161,7 @@ impl Stream for MjpegStream {
                     "Stream lagged behind, frames dropped"
                 );
                 self.metrics.frames_dropped.inc_by(skipped);
-                
+
                 // Continue polling for the next frame
                 cx.waker().wake_by_ref();
                 Poll::Pending
@@ -182,7 +182,7 @@ impl Drop for MjpegStream {
             session_id = %self.session.id,
             "MJPEG stream connection dropped"
         );
-        
+
         self.session.unsubscribe();
         self.metrics.disconnections_total.inc();
     }
@@ -196,7 +196,7 @@ pub async fn mjpeg_stream_handler(
     _req: HttpRequest,
 ) -> ActixResult<HttpResponse> {
     let template_id_str = path.into_inner();
-    
+
     // Parse template ID
     let template_id = match template_id_str.parse::<Id>() {
         Ok(id) => id,
@@ -256,14 +256,17 @@ pub async fn mjpeg_stream_handler(
 
 /// Configure MJPEG streaming routes
 pub fn configure_mjpeg_routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/api/stream/{template_id}/mjpeg", web::get().to(mjpeg_stream_handler));
+    cfg.route(
+        "/api/stream/{template_id}/mjpeg",
+        web::get().to(mjpeg_stream_handler),
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use actix_web::{test, web, App};
-    use gl_capture::{FileSource, CaptureSource};
+    use gl_capture::{CaptureSource, FileSource};
     use gl_core::Id;
     use test_support::create_test_id;
 
@@ -271,12 +274,12 @@ mod tests {
     async fn test_mjpeg_stream_handler_invalid_template_id() {
         let metrics = StreamMetrics::new();
         let stream_manager = web::Data::new(StreamManager::new(metrics));
-        
-        let app = test::init_service(
-            App::new()
-                .app_data(stream_manager.clone())
-                .route("/api/stream/{template_id}/mjpeg", web::get().to(mjpeg_stream_handler))
-        ).await;
+
+        let app = test::init_service(App::new().app_data(stream_manager.clone()).route(
+            "/api/stream/{template_id}/mjpeg",
+            web::get().to(mjpeg_stream_handler),
+        ))
+        .await;
 
         let req = test::TestRequest::get()
             .uri("/api/stream/invalid-id/mjpeg")
@@ -290,12 +293,12 @@ mod tests {
     async fn test_mjpeg_stream_handler_no_session() {
         let metrics = StreamMetrics::new();
         let stream_manager = web::Data::new(StreamManager::new(metrics));
-        
-        let app = test::init_service(
-            App::new()
-                .app_data(stream_manager.clone())
-                .route("/api/stream/{template_id}/mjpeg", web::get().to(mjpeg_stream_handler))
-        ).await;
+
+        let app = test::init_service(App::new().app_data(stream_manager.clone()).route(
+            "/api/stream/{template_id}/mjpeg",
+            web::get().to(mjpeg_stream_handler),
+        ))
+        .await;
 
         let template_id = Id::new();
         let req = test::TestRequest::get()
@@ -312,23 +315,30 @@ mod tests {
         let template_id = Id::new();
         let temp_dir = std::env::temp_dir().join(format!("gl_stream_test_{}", test_id));
         let video_path = temp_dir.join("test.mp4");
-        
+
         // Create temp directory and dummy video file
         std::fs::create_dir_all(&temp_dir).unwrap();
         std::fs::write(&video_path, b"fake video data").unwrap();
-        
+
         let source = FileSource::new(video_path);
         let config = crate::StreamConfig::default();
         let metrics = StreamMetrics::new();
-        
+
         // This will fail without real ffmpeg/video, but tests the structure
         if let Ok(capture) = source.start().await {
-            let session = Arc::new(StreamSession::new(template_id, capture, config, metrics.clone()));
+            let session = Arc::new(StreamSession::new(
+                template_id,
+                capture,
+                config,
+                metrics.clone(),
+            ));
             let frame_receiver = session.subscribe();
             let mjpeg_stream = MjpegStream::new(session, frame_receiver, metrics);
-            
+
             assert!(mjpeg_stream.boundary.contains("mjpeg_boundary_"));
-            assert!(mjpeg_stream.content_type().contains("multipart/x-mixed-replace"));
+            assert!(mjpeg_stream
+                .content_type()
+                .contains("multipart/x-mixed-replace"));
         }
     }
 }

@@ -17,10 +17,11 @@ impl XsdValidator {
             // TODO: Implement actual XSD validation with a suitable XML schema library
             // For now, return an error indicating the feature is not fully implemented
             Err(CapError::ValidationError(
-                "XSD validation not fully implemented yet. Use basic validation instead.".to_string()
+                "XSD validation not fully implemented yet. Use basic validation instead."
+                    .to_string(),
             ))
         }
-        
+
         #[cfg(not(feature = "xsd-validation"))]
         {
             Err(CapError::ValidationError(
@@ -32,14 +33,16 @@ impl XsdValidator {
     /// Validate a CAP alert against the XSD schema (placeholder)
     pub fn validate_alert(&self, _alert: &Alert) -> Result<()> {
         Err(CapError::ValidationError(
-            "XSD validation not implemented. Use the Validate trait for basic validation.".to_string()
+            "XSD validation not implemented. Use the Validate trait for basic validation."
+                .to_string(),
         ))
     }
 
     /// Validate XML string against the XSD schema (placeholder)
     pub fn validate_xml(&self, _xml: &str) -> Result<()> {
         Err(CapError::ValidationError(
-            "XSD validation not implemented. Use the Validate trait for basic validation.".to_string()
+            "XSD validation not implemented. Use the Validate trait for basic validation."
+                .to_string(),
         ))
     }
 }
@@ -52,20 +55,22 @@ mod tests {
     #[test]
     fn test_xsd_validator_placeholder() {
         let validator = XsdValidator::new();
-        assert!(validator.is_err(), "XSD validator should return error for placeholder implementation");
+        assert!(
+            validator.is_err(),
+            "XSD validator should return error for placeholder implementation"
+        );
     }
 
     #[test]
     fn test_xsd_validation_not_implemented() {
         // Test that the placeholder methods return appropriate errors
         let validator = XsdValidator;
-        
-        let alert = crate::profiles::AlertProfiles::test_alert("test.example.org")
-            .build();
-        
+
+        let alert = crate::profiles::AlertProfiles::test_alert("test.example.org").build();
+
         let result = validator.validate_alert(&alert);
         assert!(result.is_err());
-        
+
         let xml_result = validator.validate_xml("<test/>");
         assert!(xml_result.is_err());
     }

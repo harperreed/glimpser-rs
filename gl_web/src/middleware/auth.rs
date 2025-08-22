@@ -4,14 +4,12 @@
 use crate::{auth::JwtAuth, models::Claims, AppState};
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    Error, HttpMessage, 
     error::ErrorUnauthorized,
+    Error, HttpMessage,
 };
-use futures_util::future::{LocalBoxFuture, Ready, ready};
+use futures_util::future::{ready, LocalBoxFuture, Ready};
 use gl_db::{ApiKeyRepository, UserRepository};
-use std::{
-    rc::Rc,
-};
+use std::rc::Rc;
 use tracing::{debug, warn};
 
 /// Authentication middleware that extracts JWT or API key
@@ -67,11 +65,14 @@ where
                 if let Ok(auth_str) = auth_header.to_str() {
                     if auth_str.starts_with("Bearer ") {
                         let token = &auth_str[7..];
-                        
+
                         if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
                             match JwtAuth::verify_token(token, &app_state.jwt_secret) {
                                 Ok(claims) => {
-                                    debug!("JWT authentication successful for user: {}", claims.sub);
+                                    debug!(
+                                        "JWT authentication successful for user: {}",
+                                        claims.sub
+                                    );
                                     req.extensions_mut().insert(AuthUser::from_jwt(claims));
                                     return service.call(req).await;
                                 }
@@ -91,7 +92,7 @@ where
                     if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
                         let api_key_repo = ApiKeyRepository::new(app_state.db.pool());
                         let user_repo = UserRepository::new(app_state.db.pool());
-                        
+
                         match api_key_repo.find_by_hash(api_key_str).await {
                             Ok(Some(api_key)) => {
                                 if api_key.is_active {
@@ -99,12 +100,16 @@ where
                                         Ok(Some(user)) => {
                                             if user.is_active {
                                                 debug!("API key authentication successful for user: {}", user.id);
-                                                req.extensions_mut().insert(AuthUser::from_api_key(user));
+                                                req.extensions_mut()
+                                                    .insert(AuthUser::from_api_key(user));
                                                 return service.call(req).await;
                                             }
                                         }
                                         Ok(None) => {
-                                            warn!("API key references non-existent user: {}", api_key.user_id);
+                                            warn!(
+                                                "API key references non-existent user: {}",
+                                                api_key.user_id
+                                            );
                                         }
                                         Err(e) => {
                                             warn!("Database error looking up user: {}", e);
@@ -156,7 +161,7 @@ impl AuthUser {
             auth_type: AuthType::Jwt,
         }
     }
-    
+
     fn from_api_key(user: gl_db::User) -> Self {
         Self {
             id: user.id,

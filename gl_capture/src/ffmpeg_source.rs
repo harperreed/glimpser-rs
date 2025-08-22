@@ -1,11 +1,11 @@
-//! ABOUTME: FFmpeg-based capture source for live streams and RTSP feeds  
+//! ABOUTME: FFmpeg-based capture source for live streams and RTSP feeds
 //! ABOUTME: Implements CaptureSource trait with hardware acceleration support
 
-use crate::{CaptureSource, CaptureHandle, SnapshotConfig};
+use crate::{CaptureHandle, CaptureSource, SnapshotConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
-use gl_proc::{CommandSpec, run};
+use gl_proc::{run, CommandSpec};
 use metrics::{counter, histogram};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn, instrument};
+use tracing::{debug, info, instrument, warn};
 
 /// FFmpeg hardware acceleration types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,7 +145,7 @@ impl FfmpegSource {
             args.extend(["-timeout".to_string(), timeout.to_string()]);
         }
 
-        // Add buffer size if specified  
+        // Add buffer size if specified
         if let Some(buffer_size) = &self.config.buffer_size {
             args.extend(["-buffer_size".to_string(), buffer_size.clone()]);
         }
@@ -167,7 +167,8 @@ impl FfmpegSource {
         ]);
 
         // Quality settings for JPEG
-        let quality_scale = ((31 * (100 - self.config.snapshot_config.quality as u32)) / 100 + 2).to_string();
+        let quality_scale =
+            ((31 * (100 - self.config.snapshot_config.quality as u32)) / 100 + 2).to_string();
         args.extend(["-q:v".to_string(), quality_scale]);
 
         // Scaling if specified
@@ -177,7 +178,10 @@ impl FfmpegSource {
         ) {
             args.extend([
                 "-vf".to_string(),
-                format!("scale={}:{}:force_original_aspect_ratio=decrease", width, height),
+                format!(
+                    "scale={}:{}:force_original_aspect_ratio=decrease",
+                    width, height
+                ),
             ]);
         }
 
@@ -271,7 +275,7 @@ impl CaptureSource for FfmpegSource {
     #[instrument(skip(self))]
     async fn snapshot(&self) -> Result<Bytes> {
         let start_time = Instant::now();
-        
+
         debug!(
             url = %self.config.input_url,
             quality = self.config.snapshot_config.quality,
@@ -283,7 +287,8 @@ impl CaptureSource for FfmpegSource {
             "ffmpeg_snapshot_attempts_total",
             "input_url" => self.config.input_url.clone(),
             "hardware_accel" => format!("{:?}", self.config.hardware_accel)
-        ).increment(1);
+        )
+        .increment(1);
 
         let command = self.build_snapshot_command();
         debug!(command = ?command, "Running FFmpeg snapshot command");
@@ -304,18 +309,20 @@ impl CaptureSource for FfmpegSource {
             {
                 let mut state = self.process_state.lock().await;
                 state.restart_count += 1;
-                
+
                 counter!(
                     "ffmpeg_process_restarts_total",
                     "input_url" => self.config.input_url.clone()
-                ).increment(1);
+                )
+                .increment(1);
             }
 
             counter!(
                 "ffmpeg_snapshot_failures_total",
                 "input_url" => self.config.input_url.clone(),
                 "error_type" => "process_failure"
-            ).increment(1);
+            )
+            .increment(1);
 
             return Err(Error::Config(format!(
                 "FFmpeg snapshot failed for {}: exit code {} - {}",
@@ -330,7 +337,8 @@ impl CaptureSource for FfmpegSource {
                 "ffmpeg_snapshot_failures_total",
                 "input_url" => self.config.input_url.clone(),
                 "error_type" => "empty_output"
-            ).increment(1);
+            )
+            .increment(1);
 
             return Err(Error::Config(format!(
                 "FFmpeg produced no output for {}",
@@ -344,12 +352,14 @@ impl CaptureSource for FfmpegSource {
             "ffmpeg_snapshot_duration_seconds",
             "input_url" => self.config.input_url.clone(),
             "hardware_accel" => format!("{:?}", self.config.hardware_accel)
-        ).record(duration.as_secs_f64());
+        )
+        .record(duration.as_secs_f64());
 
         counter!(
             "ffmpeg_snapshot_success_total",
             "input_url" => self.config.input_url.clone()
-        ).increment(1);
+        )
+        .increment(1);
 
         debug!(
             output_size = result.stdout.len(),
@@ -427,7 +437,7 @@ mod tests {
     fn test_ffmpeg_source_creation() {
         let config = create_test_config();
         let source = FfmpegSource::new(config.clone());
-        
+
         assert_eq!(source.config().input_url, config.input_url);
         assert_eq!(source.config().timeout, config.timeout);
     }
@@ -436,7 +446,7 @@ mod tests {
     async fn test_restart_count_initialization() {
         let config = create_test_config();
         let source = FfmpegSource::new(config);
-        
+
         assert_eq!(source.restart_count().await, 0);
     }
 
@@ -444,19 +454,19 @@ mod tests {
     fn test_command_building_basic() {
         let config = create_test_config();
         let source = FfmpegSource::new(config);
-        
+
         let command = source.build_snapshot_command();
         let args = &command.args;
-        
+
         // Should contain input URL
         assert!(args.iter().any(|arg| arg == "rtsp://example.com/stream"));
-        
+
         // Should contain basic options
         assert!(args.contains(&"-i".to_string()));
         assert!(args.contains(&"-vframes".to_string()));
         assert!(args.contains(&"1".to_string()));
         assert!(args.contains(&"pipe:1".to_string()));
-        
+
         // Should contain timeout
         assert!(args.contains(&"-timeout".to_string()));
         assert!(args.contains(&"10".to_string()));
@@ -466,11 +476,11 @@ mod tests {
     fn test_command_building_with_hardware_accel() {
         let mut config = create_test_config();
         config.hardware_accel = HardwareAccel::Cuda;
-        
+
         let source = FfmpegSource::new(config);
         let command = source.build_snapshot_command();
         let args = &command.args;
-        
+
         // Should contain hardware acceleration
         assert!(args.contains(&"-hwaccel".to_string()));
         assert!(args.contains(&"cuda".to_string()));
@@ -480,11 +490,11 @@ mod tests {
     fn test_command_building_with_codec() {
         let mut config = create_test_config();
         config.video_codec = Some("h264".to_string());
-        
+
         let source = FfmpegSource::new(config);
         let command = source.build_snapshot_command();
         let args = &command.args;
-        
+
         // Should contain video codec
         assert!(args.contains(&"-c:v".to_string()));
         assert!(args.contains(&"h264".to_string()));
@@ -495,11 +505,11 @@ mod tests {
         let mut config = create_test_config();
         config.snapshot_config.max_width = Some(1280);
         config.snapshot_config.max_height = Some(720);
-        
+
         let source = FfmpegSource::new(config);
         let command = source.build_snapshot_command();
         let args = &command.args;
-        
+
         // Should contain scaling filter
         assert!(args.contains(&"-vf".to_string()));
         assert!(args.iter().any(|arg| arg.contains("scale=1280:720")));
@@ -508,13 +518,17 @@ mod tests {
     #[test]
     fn test_command_building_with_input_options() {
         let mut config = create_test_config();
-        config.input_options.insert("rtsp_transport".to_string(), "tcp".to_string());
-        config.input_options.insert("stimeout".to_string(), "5000000".to_string());
-        
+        config
+            .input_options
+            .insert("rtsp_transport".to_string(), "tcp".to_string());
+        config
+            .input_options
+            .insert("stimeout".to_string(), "5000000".to_string());
+
         let source = FfmpegSource::new(config);
         let command = source.build_snapshot_command();
         let args = &command.args;
-        
+
         // Should contain input options
         assert!(args.contains(&"-rtsp_transport".to_string()));
         assert!(args.contains(&"tcp".to_string()));
@@ -526,14 +540,14 @@ mod tests {
     fn test_quality_conversion() {
         let mut config = create_test_config();
         config.snapshot_config.quality = 95; // High quality
-        
+
         let source = FfmpegSource::new(config);
         let command = source.build_snapshot_command();
         let args = &command.args;
-        
+
         // Should contain quality parameter
         assert!(args.contains(&"-q:v".to_string()));
-        
+
         // Find the quality value: (31 * (100 - 95)) / 100 + 2 = 3 (approximately)
         let quality_index = args.iter().position(|arg| arg == "-q:v").unwrap();
         let quality_value: u32 = args[quality_index + 1].parse().unwrap();
@@ -547,10 +561,12 @@ mod tests {
         // Test with a known-good test pattern generator
         let mut config = create_test_config();
         config.input_url = "testsrc=duration=1:size=320x240:rate=1".to_string();
-        config.input_options.insert("f".to_string(), "lavfi".to_string());
-        
+        config
+            .input_options
+            .insert("f".to_string(), "lavfi".to_string());
+
         let source = FfmpegSource::new(config);
-        
+
         // This should succeed if ffmpeg is available
         match source.validate().await {
             Ok(_) => {
@@ -558,7 +574,10 @@ mod tests {
             }
             Err(e) => {
                 // Expected if ffmpeg is not available
-                eprintln!("FFmpeg validation failed (expected if not installed): {}", e);
+                eprintln!(
+                    "FFmpeg validation failed (expected if not installed): {}",
+                    e
+                );
             }
         }
     }
@@ -569,11 +588,13 @@ mod tests {
         // Test with a synthetic test pattern
         let mut config = create_test_config();
         config.input_url = "testsrc=duration=1:size=640x480:rate=1".to_string();
-        config.input_options.insert("f".to_string(), "lavfi".to_string());
+        config
+            .input_options
+            .insert("f".to_string(), "lavfi".to_string());
         config.timeout = Some(5);
-        
+
         let source = FfmpegSource::new(config);
-        
+
         match source.start().await {
             Ok(handle) => {
                 match handle.snapshot().await {
@@ -584,12 +605,18 @@ mod tests {
                         assert_eq!(jpeg_bytes[1], 0xD8);
                     }
                     Err(e) => {
-                        eprintln!("Snapshot failed (expected if ffmpeg not fully functional): {}", e);
+                        eprintln!(
+                            "Snapshot failed (expected if ffmpeg not fully functional): {}",
+                            e
+                        );
                     }
                 }
             }
             Err(e) => {
-                eprintln!("FFmpeg start failed (expected if ffmpeg not available): {}", e);
+                eprintln!(
+                    "FFmpeg start failed (expected if ffmpeg not available): {}",
+                    e
+                );
             }
         }
     }
@@ -599,9 +626,9 @@ mod tests {
         let mut config = create_test_config();
         config.input_url = "invalid://nonexistent/stream".to_string();
         config.timeout = Some(2); // Short timeout
-        
+
         let source = FfmpegSource::new(config);
-        
+
         // This should fail due to invalid URL
         let result = source.validate().await;
         assert!(result.is_err());
@@ -611,12 +638,12 @@ mod tests {
     async fn test_ffmpeg_source_lifecycle() {
         let config = create_test_config();
         let source = FfmpegSource::new(config);
-        
+
         // Test basic lifecycle without actual ffmpeg execution
         // This tests the state management logic
         let initial_count = source.restart_count().await;
         assert_eq!(initial_count, 0);
-        
+
         // Stop should work even without starting
         let result = source.stop().await;
         assert!(result.is_ok());

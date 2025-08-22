@@ -5,23 +5,26 @@ use bytes::Bytes;
 use gl_capture::CaptureHandle;
 use gl_core::Id;
 use std::{
-    sync::{Arc, atomic::{AtomicU64, Ordering}},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::{
     sync::broadcast,
-    time::{interval, Instant, sleep},
+    time::{interval, sleep, Instant},
 };
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-mod mjpeg;
 mod metrics;
+mod mjpeg;
 #[cfg(feature = "rtsp")]
 mod rtsp;
 
-pub use mjpeg::*;
 pub use metrics::*;
+pub use mjpeg::*;
 #[cfg(feature = "rtsp")]
 pub use rtsp::*;
 
@@ -107,7 +110,7 @@ impl StreamSession {
         metrics: StreamMetrics,
     ) -> Self {
         let (frame_sender, _) = broadcast::channel(config.buffer_size);
-        
+
         Self {
             id: Uuid::new_v4(),
             template_id,
@@ -122,7 +125,7 @@ impl StreamSession {
     /// Start the streaming session (frame generation loop)
     pub async fn start(self: Arc<Self>) {
         let mut interval = interval(Duration::from_millis(1000 / self.config.max_fps as u64));
-        
+
         info!(
             session_id = %self.id,
             template_id = %self.template_id,
@@ -132,7 +135,7 @@ impl StreamSession {
 
         loop {
             interval.tick().await;
-            
+
             // Check if we have any subscribers
             if self.subscribers.load(Ordering::Relaxed) == 0 {
                 // No subscribers, sleep a bit longer and continue
@@ -146,7 +149,7 @@ impl StreamSession {
                 Ok(Ok(frame)) => {
                     self.metrics.frames_generated.inc();
                     let frame_duration = frame_start.elapsed();
-                    
+
                     debug!(
                         session_id = %self.id,
                         frame_size = frame.len(),
@@ -191,21 +194,24 @@ impl StreamSession {
     pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
         let subscriber_count = self.subscribers.fetch_add(1, Ordering::Relaxed) + 1;
         self.metrics.subscribers.set(subscriber_count as i64);
-        
+
         info!(
             session_id = %self.id,
             subscriber_count,
             "New subscriber joined"
         );
-        
+
         self.frame_sender.subscribe()
     }
 
     /// Remove a subscriber
     pub fn unsubscribe(&self) {
-        let subscriber_count = self.subscribers.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+        let subscriber_count = self
+            .subscribers
+            .fetch_sub(1, Ordering::Relaxed)
+            .saturating_sub(1);
         self.metrics.subscribers.set(subscriber_count as i64);
-        
+
         info!(
             session_id = %self.id,
             subscriber_count,
@@ -222,18 +228,18 @@ impl StreamSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gl_capture::{FileSource, CaptureSource};
+    use gl_capture::{CaptureSource, FileSource};
     use std::time::Duration;
     use test_support::create_test_id;
     use tokio::fs;
-    
+
     async fn create_test_video_file() -> (tempfile::TempDir, std::path::PathBuf) {
         let temp_dir = tempfile::tempdir().unwrap();
         let video_path = temp_dir.path().join("test.mp4");
-        
+
         // Create a minimal fake video file for testing
         fs::write(&video_path, b"fake video data").await.unwrap();
-        
+
         (temp_dir, video_path)
     }
 
@@ -241,12 +247,12 @@ mod tests {
     async fn test_stream_session_creation() {
         let _test_id = create_test_id();
         let (_temp_dir, video_path) = create_test_video_file().await;
-        
+
         let template_id = Id::new();
         let source = FileSource::new(video_path);
         let config = StreamConfig::default();
         let metrics = StreamMetrics::new();
-        
+
         // This will likely fail without actual video/ffmpeg, but tests basic structure
         match source.start().await {
             Ok(capture) => {
@@ -264,28 +270,28 @@ mod tests {
     async fn test_stream_session_subscription() {
         let _test_id = create_test_id();
         let (_temp_dir, video_path) = create_test_video_file().await;
-        
+
         let template_id = Id::new();
         let source = FileSource::new(video_path);
         let config = StreamConfig::default();
         let metrics = StreamMetrics::new();
-        
+
         // This will likely fail without actual video/ffmpeg, but tests subscription logic
         match source.start().await {
             Ok(capture) => {
                 let session = Arc::new(StreamSession::new(template_id, capture, config, metrics));
-                
+
                 // Test subscription
                 let _receiver1 = session.subscribe();
                 assert_eq!(session.subscriber_count(), 1);
-                
+
                 let _receiver2 = session.subscribe();
                 assert_eq!(session.subscriber_count(), 2);
-                
+
                 // Test unsubscription
                 session.unsubscribe();
                 assert_eq!(session.subscriber_count(), 1);
-                
+
                 session.unsubscribe();
                 assert_eq!(session.subscriber_count(), 0);
             }
@@ -299,25 +305,30 @@ mod tests {
     async fn test_stream_manager() {
         let metrics = StreamMetrics::new();
         let manager = StreamManager::new(metrics);
-        
+
         let template_id = Id::new();
-        
+
         // Initially no session
         assert!(manager.get_session(&template_id).await.is_none());
-        
+
         // We can't easily create a full session without ffmpeg, so this tests the structure
         let (_temp_dir, video_path) = create_test_video_file().await;
         let source = FileSource::new(video_path);
         let config = StreamConfig::default();
         let session_metrics = StreamMetrics::new();
-        
+
         if let Ok(capture) = source.start().await {
-            let session = Arc::new(StreamSession::new(template_id.clone(), capture, config, session_metrics));
-            
+            let session = Arc::new(StreamSession::new(
+                template_id.clone(),
+                capture,
+                config,
+                session_metrics,
+            ));
+
             // Add session
             manager.add_session(session.clone()).await;
             assert!(manager.get_session(&template_id).await.is_some());
-            
+
             // Remove session
             manager.remove_session(&template_id).await;
             assert!(manager.get_session(&template_id).await.is_none());
@@ -327,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn test_stream_config_defaults() {
         let config = StreamConfig::default();
-        
+
         assert_eq!(config.max_fps, 10);
         assert_eq!(config.buffer_size, 5);
         assert_eq!(config.frame_timeout, Duration::from_secs(5));
@@ -338,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_initialization() {
         let metrics = StreamMetrics::new();
-        
+
         // Test that metrics start at expected values
         // Note: Counter and Gauge don't expose their current values in a direct way
         // This mainly tests that they can be created without panicking
@@ -362,23 +373,23 @@ mod tests {
             ..Default::default()
         };
         let _metrics = StreamMetrics::new();
-        
+
         // Create a broadcast channel manually to test backpressure behavior
         let (sender, mut receiver1) = tokio::sync::broadcast::channel(config.buffer_size);
         let mut receiver2 = sender.subscribe();
-        
+
         // Send more frames than buffer can hold
         for i in 0..5 {
             let frame = Bytes::from(format!("frame_{}", i));
             let _ = sender.send(frame); // Some sends might fail due to buffer size
         }
-        
+
         // Fast receiver should get recent frames
         if let Ok(frame) = receiver1.try_recv() {
             // Should be able to receive something
             assert!(frame.len() > 0);
         }
-        
+
         // Slow receiver might lag
         match receiver2.try_recv() {
             Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {

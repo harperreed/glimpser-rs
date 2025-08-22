@@ -9,13 +9,13 @@ use thiserror::Error;
 use url::Url;
 
 pub mod adapters;
-pub mod retry;
-pub mod circuit_breaker;
 pub mod cap;
+pub mod circuit_breaker;
+pub mod retry;
 
-pub use retry::RetryWrapper;
-pub use circuit_breaker::CircuitBreakerWrapper;
 pub use cap::{CapNotification, CapNotificationBuilder};
+pub use circuit_breaker::CircuitBreakerWrapper;
+pub use retry::RetryWrapper;
 
 /// Result type for notification operations
 pub type Result<T> = std::result::Result<T, NotificationError>;
@@ -194,11 +194,11 @@ impl NotificationManager {
     /// Health check all adapters
     pub async fn health_check(&self) -> HashMap<String, Result<()>> {
         let mut results = HashMap::new();
-        
+
         for (name, adapter) in &self.adapters {
             results.insert(name.clone(), adapter.health_check().await);
         }
-        
+
         results
     }
 }
@@ -212,7 +212,7 @@ impl Default for NotificationManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_notification_creation() {
         let channels = vec![NotificationChannel::Pushover {
@@ -256,7 +256,10 @@ mod tests {
         .with_metadata("source".to_string(), "test".to_string());
 
         assert_eq!(notification.attachments.len(), 1);
-        assert_eq!(notification.metadata.get("source"), Some(&"test".to_string()));
+        assert_eq!(
+            notification.metadata.get("source"),
+            Some(&"test".to_string())
+        );
     }
 
     #[tokio::test]
@@ -264,7 +267,7 @@ mod tests {
         use crate::adapters::pushover::PushoverAdapter;
 
         let mut manager = NotificationManager::new();
-        
+
         // Register a Pushover adapter
         let pushover_adapter = PushoverAdapter::new("test_token".to_string());
         manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));

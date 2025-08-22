@@ -4,28 +4,24 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
-use gl_proc::{CommandSpec, run};
-use std::{
-    path::Path,
-    sync::Arc,
-    time::Duration,
-};
+use gl_proc::{run, CommandSpec};
+use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, warn};
 
-pub mod file_source;
 pub mod ffmpeg_source;
+pub mod file_source;
 pub mod yt_dlp_source;
 
 #[cfg(feature = "website")]
 pub mod website_source;
 
+pub use ffmpeg_source::{FfmpegConfig, FfmpegSource, HardwareAccel};
 pub use file_source::FileSource;
-pub use ffmpeg_source::{FfmpegSource, FfmpegConfig, HardwareAccel};
-pub use yt_dlp_source::{YtDlpSource, YtDlpConfig, OutputFormat};
+pub use yt_dlp_source::{OutputFormat, YtDlpConfig, YtDlpSource};
 
 #[cfg(feature = "website")]
-pub use website_source::{WebsiteSource, WebsiteConfig, WebDriverClient};
+pub use website_source::{WebDriverClient, WebsiteConfig, WebsiteSource};
 
 /// Handle to a running capture session
 /// When dropped, the capture should stop gracefully
@@ -68,7 +64,7 @@ impl Drop for CaptureHandle {
     fn drop(&mut self) {
         let source = Arc::clone(&self.source);
         let state = Arc::clone(&self.state);
-        
+
         // Spawn a task to stop the capture gracefully
         tokio::spawn(async move {
             let mut guard = state.lock().await;
@@ -93,10 +89,10 @@ enum CaptureState {
 pub trait CaptureSource {
     /// Start capturing and return a handle
     async fn start(&self) -> Result<CaptureHandle>;
-    
+
     /// Take a snapshot and return JPEG bytes
     async fn snapshot(&self) -> Result<Bytes>;
-    
+
     /// Stop capturing and clean up resources
     async fn stop(&self) -> Result<()>;
 }
@@ -146,7 +142,7 @@ pub async fn generate_snapshot_with_ffmpeg(
         "-i".to_string(),
         input_path.to_string_lossy().to_string(),
         "-vframes".to_string(),
-        "1".to_string(),  // Extract only 1 frame
+        "1".to_string(), // Extract only 1 frame
         "-f".to_string(),
         "image2".to_string(),
         "-q:v".to_string(),
@@ -157,7 +153,10 @@ pub async fn generate_snapshot_with_ffmpeg(
     if let (Some(width), Some(height)) = (config.max_width, config.max_height) {
         args.extend([
             "-vf".to_string(),
-            format!("scale={}:{}:force_original_aspect_ratio=decrease", width, height),
+            format!(
+                "scale={}:{}:force_original_aspect_ratio=decrease",
+                width, height
+            ),
         ]);
     }
 
@@ -179,7 +178,7 @@ pub async fn generate_snapshot_with_ffmpeg(
             "ffmpeg command failed"
         );
         return Err(Error::Config(format!(
-            "ffmpeg failed with exit code {}: {}", 
+            "ffmpeg failed with exit code {}: {}",
             result.exit_code().unwrap_or(-1),
             result.stderr
         )));
@@ -221,12 +220,12 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("gl_capture_test_{}", test_id));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let video_path = temp_dir.join("test.mp4");
-        
+
         // Create a dummy file for testing (real tests would use actual video)
         fs::write(&video_path, b"fake video data").await.unwrap();
-        
+
         let source = FileSource::new(video_path);
-        
+
         // Test that we can create a handle (even though it will fail without real video)
         // This mainly tests the API structure
         match source.start().await {
