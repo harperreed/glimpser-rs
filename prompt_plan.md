@@ -329,7 +329,7 @@ Wire-up:
 
 ---
 
-### Prompt 08 — Capture Abstractions + FileSource (Test-Only)
+### Prompt 08 — Capture Abstractions + FileSource (Test-Only) ✅ COMPLETED
 
 ```text
 Create `gl_capture`:
