@@ -257,7 +257,7 @@ Wire-up:
 
 ---
 
-### Prompt 05 — Database: SQLite + Sqlx + Migrations
+### Prompt 05 — Database: SQLite + Sqlx + Migrations ✅ COMPLETED
 
 ```text
 Create crate `gl_db` with sqlx (sqlite feature):

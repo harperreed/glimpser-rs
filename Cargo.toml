@@ -47,5 +47,17 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"
 config = "0.14"
 validator = { version = "0.18", features = ["derive"] }
 
+# Authentication & Authorization
+argon2 = { version = "0.5", features = ["std"] }
+jsonwebtoken = "9.3"
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# Async utilities
+futures-util = "0.3"
+
+# OpenAPI
+utoipa = { version = "4.2", features = ["actix_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "6.0", features = ["actix-web"] }
+
 # Testing
 wiremock = "0.6"
