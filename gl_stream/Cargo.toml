@@ -22,6 +22,17 @@ serde_json.workspace = true
 uuid.workspace = true
 prometheus-client.workspace = true
 
+# Optional RTSP support via GStreamer
+glib = { version = "0.20", optional = true }
+gstreamer = { version = "0.23", optional = true }
+gstreamer-app = { version = "0.23", optional = true }
+gstreamer-rtsp-server = { version = "0.23", optional = true }
+gstreamer-video = { version = "0.23", optional = true }
+
+[features]
+default = []
+rtsp = ["glib", "gstreamer", "gstreamer-app", "gstreamer-rtsp-server", "gstreamer-video"]
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"

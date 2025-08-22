@@ -17,9 +17,13 @@ use uuid::Uuid;
 
 mod mjpeg;
 mod metrics;
+#[cfg(feature = "rtsp")]
+mod rtsp;
 
 pub use mjpeg::*;
 pub use metrics::*;
+#[cfg(feature = "rtsp")]
+pub use rtsp::*;
 
 /// Configuration for MJPEG streaming
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -34,6 +38,21 @@ pub struct StreamConfig {
     pub max_clients: usize,
     /// JPEG quality (1-100)
     pub jpeg_quality: u8,
+    /// RTSP server configuration (feature-gated)
+    #[cfg(feature = "rtsp")]
+    pub rtsp: Option<RtspConfig>,
+}
+
+/// RTSP server configuration
+#[cfg(feature = "rtsp")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RtspConfig {
+    /// Enable RTSP server
+    pub enabled: bool,
+    /// RTSP server port
+    pub port: u16,
+    /// Server address to bind to
+    pub address: String,
 }
 
 impl Default for StreamConfig {
@@ -44,6 +63,19 @@ impl Default for StreamConfig {
             frame_timeout: Duration::from_secs(5),
             max_clients: 10,
             jpeg_quality: 85,
+            #[cfg(feature = "rtsp")]
+            rtsp: Some(RtspConfig::default()),
+        }
+    }
+}
+
+#[cfg(feature = "rtsp")]
+impl Default for RtspConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 8554,
+            address: "0.0.0.0".to_string(),
         }
     }
 }
