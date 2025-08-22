@@ -14,9 +14,9 @@ use crate::{AppState, models::ErrorResponse};
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(snapshot),
+    paths(snapshot, mjpeg_stream),
     components(schemas()),
-    tags((name = "stream", description = "Stream snapshot operations"))
+    tags((name = "stream", description = "Stream snapshot and MJPEG streaming operations"))
 )]
 pub struct StreamApiDoc;
 
@@ -150,4 +150,33 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
     };
     
     Ok(jpeg_bytes.to_vec())
+}
+
+/// Stream MJPEG video from a template
+#[utoipa::path(
+    get,
+    path = "/api/stream/{template_id}/mjpeg",
+    params(
+        ("template_id" = String, Path, description = "Template ID")
+    ),
+    responses(
+        (status = 200, description = "MJPEG stream", content_type = "multipart/x-mixed-replace"),
+        (status = 404, description = "Template not found"),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    security(("jwt_auth" = []), ("api_key" = []))
+)]
+#[actix_web::get("/{template_id}/mjpeg")]
+pub async fn mjpeg_stream(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> ActixResult<HttpResponse> {
+    let template_id = path.into_inner();
+    
+    info!(template_id = %template_id, "Starting MJPEG stream");
+    
+    // For now, return a simple error message since we need to integrate with stream manager
+    // This will be improved in future iterations to use the StreamManager
+    Ok(HttpResponse::NotImplemented()
+        .json(ErrorResponse::new("not_implemented", "MJPEG streaming not yet implemented - use snapshot endpoint instead")))
 }

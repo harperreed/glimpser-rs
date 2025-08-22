@@ -9,5 +9,23 @@ rust-version.workspace = true
 
 [dependencies]
 gl_core = { path = "../gl_core" }
-gl_db = { path = "../gl_db" }
+# gl_db = { path = "../gl_db" } # Temporarily disabled due to SQLx compilation issues
+# gl_capture = { path = "../gl_capture" } # Temporarily disabled to simplify compilation
 tokio.workspace = true
+tokio-cron-scheduler = "0.11"
+cron = "0.12"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
+async-trait.workspace = true
+rand = "0.8"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"], optional = true }
+
+[dev-dependencies]
+test_support = { path = "../test_support" }
+
+[features]
+default = []
+database = ["sqlx"]

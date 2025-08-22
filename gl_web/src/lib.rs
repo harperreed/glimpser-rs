@@ -28,6 +28,7 @@ pub struct AppState {
         auth_routes::login,
         public::me,
         stream::snapshot,
+        stream::mjpeg_stream,
     ),
     components(
         schemas(
@@ -85,6 +86,7 @@ pub fn create_app(state: AppState) -> App<
                     web::scope("/stream")
                         .wrap(middleware::auth::RequireAuth::new())
                         .service(stream::snapshot)
+                        .service(stream::mjpeg_stream)
                 )
         )
 }

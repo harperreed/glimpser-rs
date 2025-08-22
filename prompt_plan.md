@@ -368,7 +368,7 @@ Wire-up:
 
 ---
 
-### Prompt 10 — MJPEG Streaming Service
+### Prompt 10 — MJPEG Streaming Service ✅ COMPLETED
 
 ```text
 Create `gl_stream`:
@@ -388,7 +388,7 @@ Wire-up:
 
 ---
 
-### Prompt 11 — Scheduler (`gl_sched`) With Cron Jobs
+### Prompt 11 — Scheduler (`gl_sched`) With Cron Jobs ✅ COMPLETED
 
 ```text
 Create `gl_sched`:
