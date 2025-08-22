@@ -14,8 +14,10 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, warn};
 
 pub mod file_source;
+pub mod ffmpeg_source;
 
 pub use file_source::FileSource;
+pub use ffmpeg_source::{FfmpegSource, FfmpegConfig, HardwareAccel};
 
 /// Handle to a running capture session
 /// When dropped, the capture should stop gracefully
@@ -92,7 +94,7 @@ pub trait CaptureSource {
 }
 
 /// Configuration for snapshot generation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotConfig {
     /// Output format (typically "jpeg")
     pub format: String,

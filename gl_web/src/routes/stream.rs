@@ -2,7 +2,7 @@
 //! ABOUTME: Handles video stream snapshot generation from templates
 
 use actix_web::{web, HttpResponse, Result as ActixResult};
-use gl_capture::{FileSource, CaptureSource};
+use gl_capture::{FileSource, FfmpegSource, FfmpegConfig, HardwareAccel, CaptureSource};
 use gl_core::{Error, Result};
 use gl_db::TemplateRepository;
 use serde_json::Value;
@@ -69,22 +69,85 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
             .ok_or_else(|| Error::NotFound(format!("Template {} not found", template_id)))?
     };
     
-    // Parse the template config to extract source path
-    // For now, we expect the config to have a "source_path" field
+    // Parse the template config to determine source type
     let config: Value = serde_json::from_str(&template.config)
         .map_err(|e| Error::Config(format!("Invalid template config JSON: {}", e)))?;
     
-    let source_path = config
-        .get("source_path")
+    // Determine source type from config
+    let source_type = config
+        .get("source_type")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Config("Template config missing 'source_path' field".to_string()))?;
+        .unwrap_or("file"); // Default to file for backward compatibility
     
-    let source_path = PathBuf::from(source_path);
-    
-    // Create a file source and take a snapshot
-    let file_source = FileSource::new(&source_path);
-    let handle = file_source.start().await?;
-    let jpeg_bytes = handle.snapshot().await?;
+    let jpeg_bytes = match source_type {
+        "file" => {
+            // File-based source
+            let source_path = config
+                .get("source_path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Error::Config("File template config missing 'source_path' field".to_string()))?;
+            
+            let source_path = PathBuf::from(source_path);
+            let file_source = FileSource::new(&source_path);
+            let handle = file_source.start().await?;
+            handle.snapshot().await?
+        }
+        "ffmpeg" => {
+            // FFmpeg-based source
+            let input_url = config
+                .get("input_url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Error::Config("FFmpeg template config missing 'input_url' field".to_string()))?;
+            
+            // Parse FFmpeg configuration from template config
+            let mut ffmpeg_config = FfmpegConfig {
+                input_url: input_url.to_string(),
+                ..Default::default()
+            };
+            
+            // Parse hardware acceleration if specified
+            if let Some(hw_accel) = config.get("hardware_accel").and_then(|v| v.as_str()) {
+                ffmpeg_config.hardware_accel = match hw_accel.to_lowercase().as_str() {
+                    "vaapi" => HardwareAccel::Vaapi,
+                    "cuda" => HardwareAccel::Cuda,
+                    "qsv" => HardwareAccel::Qsv,
+                    "videotoolbox" => HardwareAccel::VideoToolbox,
+                    _ => HardwareAccel::None,
+                };
+            }
+            
+            // Parse input options if provided
+            if let Some(input_opts) = config.get("input_options").and_then(|v| v.as_object()) {
+                for (key, value) in input_opts {
+                    if let Some(value_str) = value.as_str() {
+                        ffmpeg_config.input_options.insert(key.clone(), value_str.to_string());
+                    }
+                }
+            }
+            
+            // Parse codec if specified
+            if let Some(codec) = config.get("video_codec").and_then(|v| v.as_str()) {
+                ffmpeg_config.video_codec = Some(codec.to_string());
+            }
+            
+            // Parse timeout if specified
+            if let Some(timeout) = config.get("timeout").and_then(|v| v.as_u64()) {
+                ffmpeg_config.timeout = Some(timeout as u32);
+            }
+            
+            // Parse quality settings
+            if let Some(quality) = config.get("quality").and_then(|v| v.as_u64()) {
+                ffmpeg_config.snapshot_config.quality = quality as u8;
+            }
+            
+            let ffmpeg_source = FfmpegSource::new(ffmpeg_config);
+            let handle = ffmpeg_source.start().await?;
+            handle.snapshot().await?
+        }
+        _ => {
+            return Err(Error::Config(format!("Unsupported source type: {}", source_type)));
+        }
+    };
     
     Ok(jpeg_bytes.to_vec())
 }
