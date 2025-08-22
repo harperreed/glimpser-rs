@@ -125,6 +125,12 @@ pub struct MockWebDriverClient {
     synthetic_png: Bytes,
 }
 
+impl Default for MockWebDriverClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockWebDriverClient {
     pub fn new() -> Self {
         // Minimal valid PNG (1x1 transparent pixel)

@@ -167,7 +167,7 @@ impl MotionDetectionService {
         let processed_img = self.downscale_image(&gray_img)?;
 
         let mut result = self.detector.detect_motion(
-            &processed_img.as_raw(),
+            processed_img.as_raw(),
             processed_img.width(),
             processed_img.height(),
         )?;
@@ -206,7 +206,7 @@ impl MotionDetectionService {
         let processed_img = self.downscale_image(&gray_img)?;
 
         let mut result = self.detector.detect_motion(
-            &processed_img.as_raw(),
+            processed_img.as_raw(),
             processed_img.width(),
             processed_img.height(),
         )?;

@@ -70,6 +70,7 @@ impl Default for YtDlpConfig {
 pub struct YtDlpSource {
     config: YtDlpConfig,
     temp_file: Arc<Mutex<Option<PathBuf>>>,
+    #[allow(dead_code)]
     process_handle: Arc<Mutex<Option<String>>>,
     restart_count: Arc<Mutex<u32>>,
 }
@@ -267,7 +268,7 @@ impl CaptureSource for YtDlpSource {
         let info_lines: Vec<&str> = info_result.stdout.trim().split('\n').collect();
         if info_lines.len() >= 3 {
             info!(
-                title = info_lines.get(0).unwrap_or(&"Unknown"),
+                title = info_lines.first().unwrap_or(&"Unknown"),
                 duration = info_lines.get(1).unwrap_or(&"Unknown"),
                 is_live = info_lines.get(2).unwrap_or(&"Unknown"),
                 "Video info retrieved"

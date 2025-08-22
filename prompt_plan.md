@@ -562,7 +562,7 @@ Wire-up:
 
 ---
 
-### Prompt 20 — Streaming: RTSP (Feature-Gated)
+### Prompt 20 — Streaming: RTSP (Feature-Gated) ✅
 
 ```text
 Add RTSP support in `gl_stream` (feature `rtsp`):

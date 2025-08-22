@@ -248,7 +248,7 @@ impl Scheduler {
 
         info!("Starting scheduler");
 
-        let mut scheduler = self.cron_scheduler.lock().await;
+        let scheduler = self.cron_scheduler.lock().await;
         scheduler
             .start()
             .await
@@ -267,7 +267,7 @@ impl Scheduler {
 
         info!("Stopping scheduler");
 
-        let mut scheduler = self.cron_scheduler.lock().await;
+        let scheduler = self.cron_scheduler.lock().await;
         scheduler
             .shutdown()
             .await
@@ -369,7 +369,7 @@ impl Scheduler {
         })
         .map_err(|e| Error::Config(format!("Failed to create cron job: {}", e)))?;
 
-        let mut scheduler = self.cron_scheduler.lock().await;
+        let scheduler = self.cron_scheduler.lock().await;
         scheduler
             .add(cron_job)
             .await

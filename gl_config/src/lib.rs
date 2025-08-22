@@ -120,39 +120,20 @@ impl Default for Argon2Config {
 }
 
 /// Feature flags
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct FeaturesConfig {
     pub enable_rtsp: bool,
     pub enable_ai: bool,
 }
 
-impl Default for FeaturesConfig {
-    fn default() -> Self {
-        Self {
-            enable_rtsp: false,
-            enable_ai: false,
-        }
-    }
-}
-
 /// External service configuration with secret redaction
-#[derive(Clone, Deserialize, Serialize, Validate)]
+#[derive(Clone, Deserialize, Serialize, Validate, Default)]
 #[serde(default)]
 pub struct ExternalConfig {
     pub twilio: Option<TwilioConfig>,
     pub smtp: Option<SmtpConfig>,
     #[validate(url)]
     pub webhook_base_url: Option<String>,
-}
-
-impl Default for ExternalConfig {
-    fn default() -> Self {
-        Self {
-            twilio: None,
-            smtp: None,
-            webhook_base_url: None,
-        }
-    }
 }
 
 impl fmt::Debug for ExternalConfig {

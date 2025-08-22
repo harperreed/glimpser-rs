@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_cap = { path = "../gl_cap" }
+gl_db = { path = "../gl_db" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

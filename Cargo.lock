@@ -1694,6 +1694,7 @@ dependencies = [
  "chrono",
  "gl_cap",
  "gl_core",
+ "gl_db",
  "lettre",
  "reqwest",
  "serde",

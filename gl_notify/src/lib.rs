@@ -11,10 +11,12 @@ use url::Url;
 pub mod adapters;
 pub mod cap;
 pub mod circuit_breaker;
+pub mod dispatcher;
 pub mod retry;
 
 pub use cap::{CapNotification, CapNotificationBuilder};
 pub use circuit_breaker::CircuitBreakerWrapper;
+pub use dispatcher::{DispatcherConfig, NotificationChannelConfig, NotificationDispatcher};
 pub use retry::RetryWrapper;
 
 /// Result type for notification operations
@@ -200,6 +202,14 @@ impl NotificationManager {
         }
 
         results
+    }
+}
+
+impl Clone for NotificationManager {
+    fn clone(&self) -> Self {
+        // For now, clone creates a new empty manager
+        // In a real implementation, we'd need to handle adapter cloning
+        Self::new()
     }
 }
 

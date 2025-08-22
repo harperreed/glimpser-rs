@@ -140,10 +140,15 @@ pub mod repositories;
 // Re-export common types and repositories
 pub use repositories::{
     alerts::{Alert, AlertRepository, CreateAlertRequest},
+    analysis_events::{AnalysisEvent, AnalysisEventRepository, CreateAnalysisEvent},
     api_keys::{ApiKey, ApiKeyRepository, CreateApiKeyRequest},
     captures::{Capture, CaptureRepository, CreateCaptureRequest, UpdateCaptureRequest},
     events::{CreateEventRequest, Event, EventRepository},
     jobs::{CreateJobRequest, Job, JobRepository, UpdateJobRequest},
+    notification_deliveries::{
+        CreateNotificationDelivery, DeliveryStatus, NotificationDelivery,
+        NotificationDeliveryRepository, UpdateDeliveryStatus,
+    },
     templates::{CreateTemplateRequest, Template, TemplateRepository, UpdateTemplateRequest},
     users::{CreateUserRequest, UpdateUserRequest, User, UserRepository},
 };

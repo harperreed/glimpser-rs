@@ -58,9 +58,7 @@ impl PixelDiffDetector {
         let threshold_confidence = (change_ratio / self.config.threshold).min(1.0);
 
         let confidence = if motion_detected {
-            (area_confidence * 0.6 + threshold_confidence * 0.4)
-                .min(0.99)
-                .max(0.7)
+            (area_confidence * 0.6 + threshold_confidence * 0.4).clamp(0.7, 0.99)
         } else {
             (change_ratio / self.config.threshold * 0.5).min(0.6)
         };
@@ -87,7 +85,7 @@ impl MotionDetector for PixelDiffDetector {
         self.frame_width = frame_width;
         self.frame_height = frame_height;
 
-        let total_pixels = (frame_width * frame_height) as u32;
+        let total_pixels = frame_width * frame_height;
 
         // If no previous frame, store current and return no motion
         let previous_frame = match &self.previous_frame {
