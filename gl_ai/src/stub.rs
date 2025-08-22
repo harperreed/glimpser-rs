@@ -177,7 +177,7 @@ impl AiClient for StubClient {
         );
 
         // Simulate processing delay based on image size
-        let delay_ms = (request.image_data.len() / 1000).max(50).min(500);
+        let delay_ms = (request.image_data.len() / 1000).clamp(50, 500);
         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64)).await;
 
         let (description, objects) =

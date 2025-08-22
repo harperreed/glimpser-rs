@@ -267,7 +267,7 @@ impl Scheduler {
 
         info!("Stopping scheduler");
 
-        let scheduler = self.cron_scheduler.lock().await;
+        let mut scheduler = self.cron_scheduler.lock().await;
         scheduler
             .shutdown()
             .await

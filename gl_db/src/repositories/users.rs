@@ -181,7 +181,6 @@ impl<'a> UserRepository<'a> {
         let now = now_iso8601();
         set_clauses.push(format!("updated_at = ?{}", param_idx));
         params.push(Box::new(now.clone()));
-        param_idx += 1;
 
         // For simplicity, we'll do a simpler update with conditional logic
         let user = if let Some(username) = request.username {

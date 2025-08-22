@@ -65,5 +65,11 @@ regex = "1.10"
 utoipa = { version = "4.2", features = ["actix_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "6.0", features = ["actix-web"] }
 
+# Static file serving
+actix-files = "0.6"
+mime_guess = "2.0"
+sha2 = "0.10"
+hex = "0.4"
+
 # Testing
 wiremock = "0.6"

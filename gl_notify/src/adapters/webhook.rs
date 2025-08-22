@@ -10,6 +10,7 @@ use crate::{Notification, NotificationChannel, Notifier, Result};
 /// Webhook notification adapter
 #[derive(Debug)]
 pub struct WebhookAdapter {
+    #[allow(dead_code)]
     client: Client,
 }
 

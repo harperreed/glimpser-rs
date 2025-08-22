@@ -10,6 +10,7 @@ use crate::{Notification, NotificationError, Notifier, Result};
 
 /// Simple circuit breaker state
 #[derive(Debug)]
+#[allow(dead_code)]
 enum CircuitState {
     Closed,   // Normal operation
     Open,     // Circuit open due to failures

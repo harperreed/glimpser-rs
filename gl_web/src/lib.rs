@@ -12,13 +12,14 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 
-use routes::{admin, alerts, auth as auth_routes, public, stream, templates};
+use routes::{admin, alerts, auth as auth_routes, public, static_files, stream, templates};
 
 /// Application state shared across all handlers
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub db: Db,
     pub jwt_secret: String,
+    pub static_config: static_files::StaticConfig,
 }
 
 /// OpenAPI documentation
@@ -60,9 +61,12 @@ pub fn create_app(
         InitError = (),
     >,
 > {
+    let static_config = state.static_config.clone();
+
     App::new()
         .app_data(web::Data::new(state))
         .wrap(actix_web::middleware::Logger::default())
+        .wrap(static_files::security_headers())
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .service(
             web::scope("/api")
@@ -87,6 +91,10 @@ pub fn create_app(
         )
         .configure(alerts::configure_alert_routes)
         .configure(templates::configure_template_routes)
+        // Static files service for assets directory
+        .service(static_files::create_static_service(static_config))
+    // TODO: Re-enable SPA fallback after fixing admin routes
+    // .default_service(web::route().to(static_files::spa_fallback))
 }
 
 /// Start the web server
@@ -122,6 +130,7 @@ mod tests {
         AppState {
             db,
             jwt_secret: "test_secret_key_32_characters_minimum".to_string(),
+            static_config: static_files::StaticConfig::default(),
         }
     }
 

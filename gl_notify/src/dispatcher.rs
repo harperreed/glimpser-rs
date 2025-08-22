@@ -8,7 +8,7 @@ use crate::{
 
 #[cfg(feature = "webpush")]
 use crate::adapters::webpush::WebPushAdapter;
-use gl_core::{time::now_iso8601, Result};
+use gl_core::Result;
 use gl_db::{
     AnalysisEvent, AnalysisEventRepository, CreateNotificationDelivery, Db, DeliveryStatus,
     NotificationDelivery, NotificationDeliveryRepository, UpdateDeliveryStatus,
@@ -322,20 +322,20 @@ impl NotificationDispatcher {
 
     /// Send a notification via the appropriate adapter
     async fn send_notification(
-        notification_manager: &NotificationManager,
+        _notification_manager: &NotificationManager,
         delivery: &NotificationDelivery,
         event: &AnalysisEvent,
     ) -> Result<Option<String>> {
         match delivery.channel_type.as_str() {
             "pushover" => {
-                Self::send_pushover_notification(notification_manager, delivery, event).await
+                Self::send_pushover_notification(_notification_manager, delivery, event).await
             }
             "webhook" => {
-                Self::send_webhook_notification(notification_manager, delivery, event).await
+                Self::send_webhook_notification(_notification_manager, delivery, event).await
             }
             #[cfg(feature = "webpush")]
             "webpush" => {
-                Self::send_webpush_notification(notification_manager, delivery, event).await
+                Self::send_webpush_notification(_notification_manager, delivery, event).await
             }
             _ => {
                 warn!(
@@ -352,7 +352,7 @@ impl NotificationDispatcher {
 
     /// Send Pushover notification
     async fn send_pushover_notification(
-        notification_manager: &NotificationManager,
+        _notification_manager: &NotificationManager,
         delivery: &NotificationDelivery,
         event: &AnalysisEvent,
     ) -> Result<Option<String>> {
@@ -371,7 +371,7 @@ impl NotificationDispatcher {
         );
 
         // Create a basic Pushover adapter (simplified for this example)
-        let adapter = PushoverAdapter::new("mock_app_token".to_string());
+        let _adapter = PushoverAdapter::new("mock_app_token".to_string());
         // In real implementation, this would use the actual Pushover API
         // adapter.send_notification(user_key, &title, &message).await
 
@@ -388,7 +388,7 @@ impl NotificationDispatcher {
 
     /// Send webhook notification
     async fn send_webhook_notification(
-        notification_manager: &NotificationManager,
+        _notification_manager: &NotificationManager,
         delivery: &NotificationDelivery,
         event: &AnalysisEvent,
     ) -> Result<Option<String>> {
@@ -413,7 +413,7 @@ impl NotificationDispatcher {
         });
 
         // Create a basic webhook adapter
-        let adapter = WebhookAdapter::new();
+        let _adapter = WebhookAdapter::new();
         // In real implementation, this would make the HTTP request
         // adapter.send_webhook(webhook_url, &payload).await
 
@@ -429,7 +429,7 @@ impl NotificationDispatcher {
     /// Send web push notification
     #[cfg(feature = "webpush")]
     async fn send_webpush_notification(
-        notification_manager: &NotificationManager,
+        _notification_manager: &NotificationManager,
         delivery: &NotificationDelivery,
         event: &AnalysisEvent,
     ) -> Result<Option<String>> {

@@ -579,7 +579,7 @@ Wire-up:
 
 ---
 
-### Prompt 21 — Notifications: End-to-End Alert Flow
+### Prompt 21 — Notifications: End-to-End Alert Flow ✅ COMPLETED
 
 ```text
 Glue pieces:
@@ -595,7 +595,7 @@ Tests:
 
 ---
 
-### Prompt 22 — PWA Static Serving + CSP
+### Prompt 22 — PWA Static Serving + CSP ✅ COMPLETED
 
 ```text
 In `gl_web`:

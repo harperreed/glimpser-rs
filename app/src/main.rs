@@ -52,9 +52,21 @@ async fn main() {
     let obs_state = ObsState::new();
 
     // Initialize web application state
+    let static_config = gl_web::routes::static_files::StaticConfig {
+        static_dir: config.server.static_dir.clone().into(),
+        max_age: config.server.static_max_age,
+        enable_csp: config.server.enable_csp,
+        csp_nonce: if config.server.enable_csp {
+            Some(gl_web::routes::static_files::generate_csp_nonce())
+        } else {
+            None
+        },
+    };
+
     let web_app_state = AppState {
         db: db.clone(),
         jwt_secret: config.security.jwt_secret.clone(),
+        static_config,
     };
 
     // Start observability server

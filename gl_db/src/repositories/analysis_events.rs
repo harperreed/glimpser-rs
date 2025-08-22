@@ -59,7 +59,7 @@ impl AnalysisEventRepository {
         let metadata_json = request
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| {
                 gl_core::Error::Database(format!("Failed to serialize metadata: {}", e))
@@ -68,7 +68,7 @@ impl AnalysisEventRepository {
         let suggested_actions_json = request
             .suggested_actions
             .as_ref()
-            .map(|a| serde_json::to_string(a))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| {
                 gl_core::Error::Database(format!("Failed to serialize suggested_actions: {}", e))

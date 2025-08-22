@@ -6,6 +6,7 @@ use gl_core::{time::now_iso8601, Id, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::HashMap;
+use std::str::FromStr;
 use tracing::{debug, warn};
 
 /// Status of a notification delivery
@@ -28,14 +29,19 @@ impl DeliveryStatus {
             Self::Retry => "retry",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
+impl FromStr for DeliveryStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "sent" => Self::Sent,
-            "delivered" => Self::Delivered,
-            "failed" => Self::Failed,
-            "retry" => Self::Retry,
-            _ => Self::Pending,
+            "sent" => Ok(Self::Sent),
+            "delivered" => Ok(Self::Delivered),
+            "failed" => Ok(Self::Failed),
+            "retry" => Ok(Self::Retry),
+            "pending" => Ok(Self::Pending),
+            _ => Ok(Self::Pending), // Default to Pending for unknown values
         }
     }
 }
@@ -109,7 +115,7 @@ impl NotificationDeliveryRepository {
         let metadata_json = request
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| {
                 gl_core::Error::Database(format!("Failed to serialize metadata: {}", e))
@@ -175,7 +181,7 @@ impl NotificationDeliveryRepository {
         let metadata_json = update
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| {
                 gl_core::Error::Database(format!("Failed to serialize metadata: {}", e))
@@ -407,7 +413,7 @@ impl NotificationDeliveryRepository {
                 gl_core::Error::Database(format!("Failed to get channel_type: {}", e))
             })?,
             channel_config,
-            status: DeliveryStatus::from_str(&status_str),
+            status: DeliveryStatus::from_str(&status_str).unwrap_or(DeliveryStatus::Pending),
             attempt_count: row.try_get("attempt_count").map_err(|e| {
                 gl_core::Error::Database(format!("Failed to get attempt_count: {}", e))
             })?,

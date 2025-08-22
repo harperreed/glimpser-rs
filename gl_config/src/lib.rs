@@ -8,7 +8,7 @@ use std::fmt;
 use validator::Validate;
 
 /// Main configuration struct
-#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, Default)]
 #[serde(default)]
 pub struct Config {
     #[validate(nested)]
@@ -33,6 +33,12 @@ pub struct ServerConfig {
     pub port: u16,
     #[validate(range(min = 1, max = 65535))]
     pub obs_port: u16,
+    /// Directory containing PWA static files
+    pub static_dir: String,
+    /// Enable CSP headers for PWA
+    pub enable_csp: bool,
+    /// Cache max-age for static assets (seconds)
+    pub static_max_age: u32,
 }
 
 impl Default for ServerConfig {
@@ -41,6 +47,9 @@ impl Default for ServerConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
             obs_port: 9000,
+            static_dir: "./static".to_string(),
+            enable_csp: true,
+            static_max_age: 86400, // 1 day
         }
     }
 }
@@ -192,20 +201,11 @@ impl fmt::Debug for SmtpConfig {
 }
 
 /// Storage configuration
-#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, Default)]
 #[serde(default)]
 pub struct StorageConfig {
     pub object_store_url: Option<String>,
     pub bucket: Option<String>,
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            object_store_url: None,
-            bucket: None,
-        }
-    }
 }
 
 impl Config {
@@ -218,6 +218,9 @@ impl Config {
             .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 8080)?
             .set_default("server.obs_port", 9000)?
+            .set_default("server.static_dir", "./static")?
+            .set_default("server.enable_csp", true)?
+            .set_default("server.static_max_age", 86400)?
             .set_default("database.path", "glimpser.db")?
             .set_default("database.pool_size", 10)?
             .set_default("database.sqlite_wal", true)?
@@ -277,19 +280,6 @@ impl Config {
         validation_result.map_err(|e| Error::Config(format!("Config validation failed: {}", e)))?;
 
         Ok(parsed)
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            database: DatabaseConfig::default(),
-            security: SecurityConfig::default(),
-            features: FeaturesConfig::default(),
-            external: ExternalConfig::default(),
-            storage: StorageConfig::default(),
-        }
     }
 }
 
