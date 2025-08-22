@@ -145,7 +145,7 @@ mod tests {
     use tokio::fs;
 
     /// Create a test database with a unique name
-    async fn create_test_db() -> Result<Db> {
+    pub async fn create_test_db() -> Result<Db> {
         let test_id = Id::new().to_string();
         let db_path = format!("test_glimpser_{}.db", test_id);
         

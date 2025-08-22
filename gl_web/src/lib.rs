@@ -12,7 +12,7 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 
-use routes::{admin, auth as auth_routes, public, stream};
+use routes::{admin, alerts, auth as auth_routes, public, stream, templates};
 
 /// Application state shared across all handlers
 #[derive(Debug, Clone)]
@@ -89,6 +89,8 @@ pub fn create_app(state: AppState) -> App<
                         .service(stream::mjpeg_stream)
                 )
         )
+        .configure(alerts::configure_alert_routes)
+        .configure(templates::configure_template_routes)
 }
 
 /// Start the web server

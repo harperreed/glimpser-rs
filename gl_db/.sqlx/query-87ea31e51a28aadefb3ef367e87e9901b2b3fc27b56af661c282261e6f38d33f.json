@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE templates \n            SET name = ?1, description = ?2, config = ?3, is_default = ?4, updated_at = ?5\n            WHERE id = ?6\n            RETURNING *\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "user_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "description",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "config",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "is_default",
+        "ordinal": 5,
+        "type_info": "Bool"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 7,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "87ea31e51a28aadefb3ef367e87e9901b2b3fc27b56af661c282261e6f38d33f"
+}
