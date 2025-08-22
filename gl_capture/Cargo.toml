@@ -18,3 +18,12 @@ serde_json.workspace = true
 bytes.workspace = true
 async-trait.workspace = true
 metrics.workspace = true
+
+# Website capture dependencies (feature-gated)
+thirtyfour = { version = "0.34", optional = true }
+base64 = { version = "0.22", optional = true }
+
+[features]
+default = []
+website = ["thirtyfour", "base64"]
+website_live = ["website"]

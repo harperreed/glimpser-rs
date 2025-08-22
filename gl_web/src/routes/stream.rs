@@ -3,6 +3,8 @@
 
 use actix_web::{web, HttpResponse, Result as ActixResult};
 use gl_capture::{FileSource, FfmpegSource, FfmpegConfig, HardwareAccel, CaptureSource};
+#[cfg(feature = "website")]
+use gl_capture::{WebsiteSource, WebsiteConfig};
 use gl_core::{Error, Result};
 use gl_db::TemplateRepository;
 use serde_json::Value;
@@ -73,35 +75,35 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
     let config: Value = serde_json::from_str(&template.config)
         .map_err(|e| Error::Config(format!("Invalid template config JSON: {}", e)))?;
     
-    // Determine source type from config
-    let source_type = config
-        .get("source_type")
+    // Determine source type from config kind field
+    let kind = config
+        .get("kind")
         .and_then(|v| v.as_str())
-        .unwrap_or("file"); // Default to file for backward compatibility
+        .ok_or_else(|| Error::Config("Template config missing 'kind' field".to_string()))?;
     
-    let jpeg_bytes = match source_type {
+    let jpeg_bytes = match kind {
         "file" => {
             // File-based source
-            let source_path = config
-                .get("source_path")
+            let file_path = config
+                .get("file_path")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| Error::Config("File template config missing 'source_path' field".to_string()))?;
+                .ok_or_else(|| Error::Config("File template config missing 'file_path' field".to_string()))?;
             
-            let source_path = PathBuf::from(source_path);
+            let source_path = PathBuf::from(file_path);
             let file_source = FileSource::new(&source_path);
             let handle = file_source.start().await?;
             handle.snapshot().await?
         }
         "ffmpeg" => {
             // FFmpeg-based source
-            let input_url = config
-                .get("input_url")
+            let source_url = config
+                .get("source_url")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| Error::Config("FFmpeg template config missing 'input_url' field".to_string()))?;
+                .ok_or_else(|| Error::Config("FFmpeg template config missing 'source_url' field".to_string()))?;
             
             // Parse FFmpeg configuration from template config
             let mut ffmpeg_config = FfmpegConfig {
-                input_url: input_url.to_string(),
+                input_url: source_url.to_string(),
                 ..Default::default()
             };
             
@@ -144,8 +146,62 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
             let handle = ffmpeg_source.start().await?;
             handle.snapshot().await?
         }
+        "website" => {
+            #[cfg(feature = "website")]
+            {
+                // Website-based source
+                let url = config
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| Error::Config("Website template config missing 'url' field".to_string()))?;
+                
+                let mut website_config = WebsiteConfig {
+                    url: url.to_string(),
+                    ..Default::default()
+                };
+                
+                // Parse optional fields from config
+                if let Some(headless) = config.get("headless").and_then(|v| v.as_bool()) {
+                    website_config.headless = headless;
+                }
+                
+                if let Some(stealth) = config.get("stealth").and_then(|v| v.as_bool()) {
+                    website_config.stealth = stealth;
+                }
+                
+                if let Some(width) = config.get("width").and_then(|v| v.as_u64()) {
+                    website_config.width = width as u32;
+                }
+                
+                if let Some(height) = config.get("height").and_then(|v| v.as_u64()) {
+                    website_config.height = height as u32;
+                }
+                
+                if let Some(selector) = config.get("element_selector").and_then(|v| v.as_str()) {
+                    website_config.element_selector = Some(selector.to_string());
+                }
+                
+                if let Some(username) = config.get("basic_auth_username").and_then(|v| v.as_str()) {
+                    website_config.basic_auth_username = Some(username.to_string());
+                }
+                
+                if let Some(password) = config.get("basic_auth_password").and_then(|v| v.as_str()) {
+                    website_config.basic_auth_password = Some(password.to_string());
+                }
+                
+                // Use mock client for now - in production this would use real WebDriver
+                let client = gl_capture::website_source::MockWebDriverClient::new_boxed();
+                let website_source = WebsiteSource::new(website_config, client);
+                let handle = website_source.start().await?;
+                handle.snapshot().await?
+            }
+            #[cfg(not(feature = "website"))]
+            {
+                return Err(Error::Config("Website capture not enabled - compile with 'website' feature".to_string()));
+            }
+        }
         _ => {
-            return Err(Error::Config(format!("Unsupported source type: {}", source_type)));
+            return Err(Error::Config(format!("Unsupported template kind: {}", kind)));
         }
     };
     

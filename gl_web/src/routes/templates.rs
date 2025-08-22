@@ -113,6 +113,53 @@ fn validate_website_config(config: &Map<String, Value>) -> Result<(), String> {
     if !config.contains_key("url") {
         return Err("website config must have 'url' field".to_string());
     }
+    
+    // Validate url is a string
+    if let Some(url) = config.get("url") {
+        if !url.is_string() {
+            return Err("website 'url' must be a string".to_string());
+        }
+        let url_str = url.as_str().unwrap();
+        if url_str.is_empty() {
+            return Err("website 'url' cannot be empty".to_string());
+        }
+        // Basic URL format validation
+        if !url_str.starts_with("http://") && !url_str.starts_with("https://") {
+            return Err("website 'url' must start with http:// or https://".to_string());
+        }
+    }
+    
+    // Validate optional fields
+    if let Some(headless) = config.get("headless") {
+        if !headless.is_boolean() {
+            return Err("website 'headless' must be a boolean".to_string());
+        }
+    }
+    
+    if let Some(stealth) = config.get("stealth") {
+        if !stealth.is_boolean() {
+            return Err("website 'stealth' must be a boolean".to_string());
+        }
+    }
+    
+    if let Some(width) = config.get("width") {
+        if !width.is_number() {
+            return Err("website 'width' must be a number".to_string());
+        }
+    }
+    
+    if let Some(height) = config.get("height") {
+        if !height.is_number() {
+            return Err("website 'height' must be a number".to_string());
+        }
+    }
+    
+    if let Some(selector) = config.get("element_selector") {
+        if !selector.is_string() {
+            return Err("website 'element_selector' must be a string".to_string());
+        }
+    }
+    
     Ok(())
 }
 
@@ -516,6 +563,41 @@ mod tests {
         assert!(validate_template_config(&invalid_config).is_err());
     }
 
+    #[test]
+    fn test_website_config_validation() {
+        let valid_config = json!({
+            "kind": "website",
+            "url": "https://example.com",
+            "headless": true,
+            "stealth": false,
+            "width": 1280,
+            "height": 720,
+            "element_selector": "#main"
+        });
+        assert!(validate_template_config(&valid_config).is_ok());
+        
+        // Missing url
+        let invalid_config = json!({
+            "kind": "website"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+        
+        // Invalid url
+        let invalid_config = json!({
+            "kind": "website", 
+            "url": "not-a-url"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+        
+        // Invalid field types
+        let invalid_config = json!({
+            "kind": "website",
+            "url": "https://example.com",
+            "headless": "not-a-boolean"
+        });
+        assert!(validate_template_config(&invalid_config).is_err());
+    }
+    
     #[test]
     fn test_unknown_kind_validation() {
         let invalid_config = json!({

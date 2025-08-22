@@ -10,10 +10,11 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_db = { path = "../gl_db" }
-gl_capture = { path = "../gl_capture" }
+gl_capture = { path = "../gl_capture", features = ["website"] }
 gl_stream = { path = "../gl_stream" }
 gl_notify = { path = "../gl_notify" }
 gl_cap = { path = "../gl_cap" }
+
 actix-web.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -30,3 +31,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 # Testing utilities already included in main actix-web
+
+[features]
+default = ["website"]
+website = ["gl_capture/website"]

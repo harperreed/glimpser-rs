@@ -16,8 +16,14 @@ use tracing::{debug, error, info, instrument, warn};
 pub mod file_source;
 pub mod ffmpeg_source;
 
+#[cfg(feature = "website")]
+pub mod website_source;
+
 pub use file_source::FileSource;
 pub use ffmpeg_source::{FfmpegSource, FfmpegConfig, HardwareAccel};
+
+#[cfg(feature = "website")]
+pub use website_source::{WebsiteSource, WebsiteConfig, WebDriverClient};
 
 /// Handle to a running capture session
 /// When dropped, the capture should stop gracefully
