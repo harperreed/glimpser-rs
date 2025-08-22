@@ -408,7 +408,7 @@ Wire-up:
 
 ---
 
-### Prompt 12 — Notifications (`gl_notify`) Adapters
+### Prompt 12 — Notifications (`gl_notify`) Adapters ✅ COMPLETED
 
 ```text
 Create `gl_notify`:
@@ -428,14 +428,14 @@ Wire-up:
 
 ---
 
-### Prompt 13 — CAP Alerts (`gl_cap`)
+### Prompt 13 — CAP Alerts (`gl_cap`) ✅ COMPLETED
 
 ```text
 Create `gl_cap`:
 
 Implement:
 - Builder for CAP 1.2 messages using `quick-xml`; structs with serde for marshal/unmarshal.
-- Profiles for common use (e.g., “Severe Weather Alert”), with validation helpers (required fields, ISO timestamps).
+- Profiles for common use (e.g., "Severe Weather Alert"), with validation helpers (required fields, ISO timestamps).
 - Optional XSD validation if feasible (feature gate).
 
 Tests:
@@ -447,7 +447,7 @@ Wire-up:
 
 ---
 
-### Prompt 14 — Web Templates & Admin CRUD
+### Prompt 14 — Web Templates & Admin CRUD ✅ COMPLETED
 
 ```text
 Enhance `gl_web`:
@@ -467,7 +467,7 @@ Wire-up:
 
 ---
 
-### Prompt 15 — Website Capture via Selenium (`thirtyfour`)
+### Prompt 15 — Website Capture via Selenium (`thirtyfour`) ✅ COMPLETED
 
 ```text
 Extend `gl_capture`:
@@ -486,7 +486,7 @@ Wire-up:
 
 ---
 
-### Prompt 16 — yt-dlp Capture
+### Prompt 16 — yt-dlp Capture ✅ COMPLETED
 
 ```text
 Extend `gl_capture`:
@@ -504,7 +504,7 @@ Wire-up:
 
 ---
 
-### Prompt 17 — Analysis: AI Client Stubs & Online Impl
+### Prompt 17 — Analysis: AI Client Stubs & Online Impl ✅
 
 ```text
 Create `gl_ai`:
@@ -523,7 +523,7 @@ Wire-up:
 
 ---
 
-### Prompt 18 — Vision: Motion Detection (OpenCV Optional)
+### Prompt 18 — Vision: Motion Detection (OpenCV Optional) ✅
 
 ```text
 Create `gl_vision`:
@@ -542,7 +542,7 @@ Wire-up:
 
 ---
 
-### Prompt 19 — Analysis Pipeline & Rules
+### Prompt 19 — Analysis Pipeline & Rules ✅
 
 ```text
 Implement in a new `gl_analysis` module (can live within `gl_capture` or standalone):
