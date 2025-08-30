@@ -39,6 +39,12 @@ pub struct ServerConfig {
     pub enable_csp: bool,
     /// Cache max-age for static assets (seconds)
     pub static_max_age: u32,
+    /// Rate limiting configuration
+    #[validate(nested)]
+    pub rate_limit: RateLimitConfig,
+    /// Body size limits configuration
+    #[validate(nested)]
+    pub body_limits: BodyLimitsConfig,
 }
 
 impl Default for ServerConfig {
@@ -50,6 +56,56 @@ impl Default for ServerConfig {
             static_dir: "./static".to_string(),
             enable_csp: true,
             static_max_age: 86400, // 1 day
+            rate_limit: RateLimitConfig::default(),
+            body_limits: BodyLimitsConfig::default(),
+        }
+    }
+}
+
+/// Rate limiting configuration
+#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+pub struct RateLimitConfig {
+    /// Maximum requests per IP per minute
+    #[validate(range(min = 1, max = 10000))]
+    pub ip_requests_per_minute: u32,
+    /// Maximum requests per API key per minute
+    #[validate(range(min = 1, max = 100000))]
+    pub api_key_requests_per_minute: u32,
+    /// Rate limiting window duration in seconds
+    #[validate(range(min = 1, max = 3600))]
+    pub window_seconds: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            ip_requests_per_minute: 100,
+            api_key_requests_per_minute: 1000,
+            window_seconds: 60,
+        }
+    }
+}
+
+/// Body size limits configuration
+#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+pub struct BodyLimitsConfig {
+    /// Global JSON body size limit in bytes
+    #[validate(range(min = 1024, max = 104857600))] // 1KB to 100MB
+    pub global_json_limit: usize,
+    /// Admin endpoints JSON limit in bytes
+    #[validate(range(min = 1024, max = 104857600))]
+    pub admin_json_limit: usize,
+    /// Upload endpoints limit in bytes
+    #[validate(range(min = 1024, max = 1073741824))] // 1KB to 1GB
+    pub upload_limit: usize,
+}
+
+impl Default for BodyLimitsConfig {
+    fn default() -> Self {
+        Self {
+            global_json_limit: 1048576, // 1MB default
+            admin_json_limit: 10485760, // 10MB for admin operations
+            upload_limit: 104857600,    // 100MB for uploads
         }
     }
 }
@@ -221,6 +277,12 @@ impl Config {
             .set_default("server.static_dir", "./static")?
             .set_default("server.enable_csp", true)?
             .set_default("server.static_max_age", 86400)?
+            .set_default("server.rate_limit.ip_requests_per_minute", 100)?
+            .set_default("server.rate_limit.api_key_requests_per_minute", 1000)?
+            .set_default("server.rate_limit.window_seconds", 60)?
+            .set_default("server.body_limits.global_json_limit", 1048576)?
+            .set_default("server.body_limits.admin_json_limit", 10485760)?
+            .set_default("server.body_limits.upload_limit", 104857600)?
             .set_default("database.path", "glimpser.db")?
             .set_default("database.pool_size", 10)?
             .set_default("database.sqlite_wal", true)?
@@ -287,9 +349,15 @@ impl Config {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    // Use a mutex to serialize tests that modify environment variables
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_config_defaults() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+
         // Clear any existing env vars that might interfere
         let vars_to_clear = [
             "GLIMPSER_SERVER_HOST",
@@ -323,6 +391,8 @@ mod tests {
 
     #[test]
     fn test_config_from_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+
         // Clear any existing env vars first
         env::remove_var("GLIMPSER_SERVER_HOST");
         env::remove_var("GLIMPSER_SERVER_PORT");
@@ -349,6 +419,8 @@ mod tests {
 
     #[test]
     fn test_config_validation_failure() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+
         // Clear any existing values first
         env::remove_var("GLIMPSER_SERVER_PORT");
         env::set_var(
@@ -367,6 +439,8 @@ mod tests {
 
     #[test]
     fn test_secret_redaction() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+
         // Clear any environment variables that might interfere
         env::remove_var("GLIMPSER_SERVER_PORT");
         env::remove_var("GLIMPSER_DATABASE_POOL_SIZE");
@@ -382,6 +456,8 @@ mod tests {
 
     #[test]
     fn test_jwt_secret_too_short() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+
         env::set_var("GLIMPSER_SECURITY_JWT_SECRET", "short"); // Too short
 
         let result = Config::load();

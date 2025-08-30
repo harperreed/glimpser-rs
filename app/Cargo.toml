@@ -19,3 +19,7 @@ gl_obs = { path = "../gl_obs" }
 gl_web = { path = "../gl_web" }
 tokio.workspace = true
 tracing.workspace = true
+clap = { version = "4.0", features = ["derive"] }
+chrono = "0.4"
+sqlx.workspace = true
+rpassword = "7.0"

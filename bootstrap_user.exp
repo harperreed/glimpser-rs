@@ -1,0 +1,11 @@
+#!/usr/bin/expect -f
+spawn ./target/release/glimpser bootstrap
+expect "Enter admin email address:"
+send "admin@test.com\r"
+expect "Enter username (default: admin):"
+send "admin\r"
+expect "Enter admin password:"
+send "password123\r"
+expect "Confirm admin password:"
+send "password123\r"
+expect eof

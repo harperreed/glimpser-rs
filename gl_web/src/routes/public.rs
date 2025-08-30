@@ -8,6 +8,7 @@ use crate::{
 };
 use actix_web::{get, web, HttpRequest, HttpResponse, Result};
 use gl_db::UserRepository;
+use serde_json::json;
 use tracing::{debug, warn};
 
 /// Get current user information
@@ -76,4 +77,26 @@ pub async fn me(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResp
             )))
         }
     }
+}
+
+/// Health check endpoint
+#[get("/health")]
+pub async fn health() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(json!({
+        "status": "healthy",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "version": env!("CARGO_PKG_VERSION")
+    })))
+}
+
+/// Get streams endpoint (placeholder)
+#[get("/streams")]
+pub async fn streams() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(json!([])))
+}
+
+/// Get alerts endpoint (placeholder)
+#[get("/alerts")]
+pub async fn alerts() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(json!([])))
 }

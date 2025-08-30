@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glimpser - Admin Panel</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#2563eb">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <h1>🔍 Glimpser</h1>
+        </div>
+        <div class="nav-menu">
+            <a href="/static/dashboard.html">Dashboard</a>
+            <a href="/static/streams.html">Streams</a>
+            <a href="/static/admin.html" class="active">Admin</a>
+            <button id="logout-btn" class="btn-secondary">Logout</button>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="admin-header">
+            <h2>Admin Panel</h2>
+            <div class="admin-warning">
+                <span>⚠️ Administrator privileges required</span>
+            </div>
+        </div>
+
+        <div class="admin-tabs">
+            <button class="tab-btn active" data-tab="users">Users</button>
+            <button class="tab-btn" data-tab="api-keys">API Keys</button>
+            <button class="tab-btn" data-tab="templates">Templates</button>
+            <button class="tab-btn" data-tab="system">System</button>
+        </div>
+
+        <!-- Users Tab -->
+        <div id="users-tab" class="tab-content active">
+            <div class="section-header">
+                <h3>User Management</h3>
+                <button id="create-user-btn" class="btn-primary">Create User</button>
+            </div>
+
+            <div id="users-table" class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-tbody">
+                        <tr>
+                            <td colspan="4" class="loading">Loading users...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- API Keys Tab -->
+        <div id="api-keys-tab" class="tab-content">
+            <div class="section-header">
+                <h3>API Key Management</h3>
+                <button id="create-api-key-btn" class="btn-primary">Generate API Key</button>
+            </div>
+
+            <div id="api-keys-table" class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>User</th>
+                            <th>Created</th>
+                            <th>Last Used</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="api-keys-tbody">
+                        <tr>
+                            <td colspan="5" class="loading">Loading API keys...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Templates Tab -->
+        <div id="templates-tab" class="tab-content">
+            <div class="section-header">
+                <h3>Template Management</h3>
+                <button id="create-template-btn" class="btn-primary">Create Template</button>
+            </div>
+
+            <div id="templates-table" class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="templates-tbody">
+                        <tr>
+                            <td colspan="4" class="loading">Loading templates...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- System Tab -->
+        <div id="system-tab" class="tab-content">
+            <div class="section-header">
+                <h3>System Information</h3>
+                <button id="refresh-system-btn" class="btn-secondary">Refresh</button>
+            </div>
+
+            <div class="system-info">
+                <div class="info-card">
+                    <h4>Database</h4>
+                    <div id="db-info" class="info-content">
+                        <div class="loading">Loading database info...</div>
+                    </div>
+                </div>
+
+                <div class="info-card">
+                    <h4>Configuration</h4>
+                    <div id="config-info" class="info-content">
+                        <div class="loading">Loading configuration...</div>
+                    </div>
+                </div>
+
+                <div class="info-card">
+                    <h4>Version</h4>
+                    <div id="version-info" class="info-content">
+                        <div class="loading">Loading version info...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="error-message" class="error-message hidden"></div>
+    </main>
+
+    <!-- Modals -->
+    <div id="user-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Create User</h3>
+            <form id="user-form">
+                <div class="form-group">
+                    <label for="user-email">Email</label>
+                    <input type="email" id="user-email" required>
+                </div>
+                <div class="form-group">
+                    <label for="user-password">Password</label>
+                    <input type="password" id="user-password" required>
+                </div>
+                <div class="form-group">
+                    <label for="user-role">Role</label>
+                    <select id="user-role" required>
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('user-modal')">Cancel</button>
+                    <button type="submit" class="btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Template Modal -->
+    <div id="template-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Create Template</h3>
+            <form id="template-form">
+                <div class="form-group">
+                    <label for="template-name">Name</label>
+                    <input type="text" id="template-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="template-description">Description</label>
+                    <textarea id="template-description" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="template-type">Source Type</label>
+                    <select id="template-type" required>
+                        <option value="">Select type...</option>
+                        <option value="rtsp">RTSP Camera</option>
+                        <option value="youtube">YouTube Stream</option>
+                        <option value="file">Video File</option>
+                        <option value="website">Website Capture</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="template-url">Source URL</label>
+                    <input type="text" id="template-url" placeholder="e.g. rtsp://camera.ip/stream" required>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="template-default">
+                        Set as default template
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('template-modal')">Cancel</button>
+                    <button type="submit" class="btn-primary">Create Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/js/auth.js"></script>
+    <script src="/static/js/admin.js"></script>
+</body>
+</html>

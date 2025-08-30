@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glimpser - Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#2563eb">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <h1>🔍 Glimpser</h1>
+        </div>
+        <div class="nav-menu">
+            <a href="/static/dashboard.html" class="active">Dashboard</a>
+            <a href="/static/streams.html">Streams</a>
+            <a href="/static/admin.html" id="admin-link" class="hidden">Admin</a>
+            <button id="logout-btn" class="btn-secondary">Logout</button>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="dashboard-header">
+            <h2>System Overview</h2>
+            <div class="user-info">
+                <span id="user-name">Loading...</span>
+                <span id="user-role" class="badge"></span>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>API Status</h3>
+                <div id="api-status" class="status-indicator">
+                    <div class="spinner"></div>
+                    <span>Checking...</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Active Streams</h3>
+                <div id="streams-count" class="stat-number">-</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Recent Alerts</h3>
+                <div id="alerts-count" class="stat-number">-</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>System Health</h3>
+                <div id="health-status" class="status-indicator">
+                    <div class="spinner"></div>
+                    <span>Checking...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <div class="card">
+                <h3>Recent Activity</h3>
+                <div id="recent-activity" class="activity-list">
+                    <div class="loading">Loading recent activity...</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Quick Actions</h3>
+                <div class="action-buttons">
+                    <a href="/static/streams.html" class="btn-primary">View Streams</a>
+                    <button id="refresh-btn" class="btn-secondary">Refresh Data</button>
+                    <a href="/docs/" target="_blank" class="btn-secondary">API Docs</a>
+                </div>
+            </div>
+        </div>
+
+        <div id="error-message" class="error-message hidden"></div>
+    </main>
+
+    <script src="/static/js/auth.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

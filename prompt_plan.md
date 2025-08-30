@@ -612,7 +612,7 @@ Wire-up:
 
 ---
 
-### Prompt 23 — Auto-Update (Sidecar or Self-Replace)
+### Prompt 23 — Auto-Update (Sidecar or Self-Replace) ✅ COMPLETED
 
 ```text
 Create `gl_update`:
@@ -631,7 +631,7 @@ Wire-up:
 
 ---
 
-### Prompt 24 — Rate Limiting, Body Limits, Input Validation
+### Prompt 24 — Rate Limiting, Body Limits, Input Validation ✅ COMPLETED
 
 ```text
 Hardening in `gl_web`:

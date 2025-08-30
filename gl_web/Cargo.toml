@@ -14,6 +14,7 @@ gl_capture = { path = "../gl_capture", features = ["website"] }
 gl_stream = { path = "../gl_stream" }
 gl_notify = { path = "../gl_notify" }
 gl_cap = { path = "../gl_cap" }
+gl_update = { path = "../gl_update" }
 
 actix-web.workspace = true
 serde.workspace = true

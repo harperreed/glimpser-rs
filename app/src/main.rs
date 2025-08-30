@@ -1,14 +1,32 @@
+use clap::{Parser, Subcommand};
 use gl_config::Config;
 use gl_core::telemetry;
-use gl_db::Db;
+use gl_db::{Db, UserRepository};
 use gl_obs::ObsState;
 use gl_web::AppState;
 use std::process;
 
+#[derive(Parser)]
+#[command(name = "glimpser")]
+#[command(about = "Glimpser surveillance platform")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Bootstrap initial admin user (interactive)
+    Bootstrap,
+    /// Start the server (default)
+    Start,
+}
+
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+
     telemetry::init_tracing("development", "glimpser");
-    tracing::info!("glimpser starting");
 
     // Load configuration - exit with non-zero if invalid
     let config = match Config::load() {
@@ -21,14 +39,6 @@ async fn main() {
             process::exit(1);
         }
     };
-
-    tracing::info!(
-        host = %config.server.host,
-        port = %config.server.port,
-        obs_port = %config.server.obs_port,
-        db_path = %config.database.path,
-        "Application configured and ready"
-    );
 
     // Initialize database with migrations
     let db = match Db::new(&config.database.path).await {
@@ -47,6 +57,169 @@ async fn main() {
         tracing::error!("Database health check failed: {}", e);
         process::exit(1);
     }
+
+    match cli.command.unwrap_or(Commands::Start) {
+        Commands::Bootstrap => {
+            interactive_bootstrap(&db).await;
+            return;
+        }
+        Commands::Start => {
+            tracing::info!("glimpser starting");
+            start_server(config, db).await;
+        }
+    }
+}
+
+async fn interactive_bootstrap(db: &Db) {
+    use std::io::{self, Write};
+
+    println!();
+    println!("🔍 Glimpser Admin User Bootstrap");
+    println!("================================");
+    println!();
+
+    // Get email
+    print!("Enter admin email address: ");
+    io::stdout().flush().unwrap();
+    let mut email = String::new();
+    io::stdin().read_line(&mut email).unwrap();
+    let email = email.trim();
+
+    if email.is_empty() {
+        eprintln!("❌ Email cannot be empty");
+        process::exit(1);
+    }
+
+    // Validate email format
+    if !email.contains('@') || !email.contains('.') {
+        eprintln!("❌ Invalid email format");
+        process::exit(1);
+    }
+
+    // Get username (optional)
+    print!("Enter username (default: admin): ");
+    io::stdout().flush().unwrap();
+    let mut username = String::new();
+    io::stdin().read_line(&mut username).unwrap();
+    let username = username.trim();
+    let username = if username.is_empty() {
+        "admin"
+    } else {
+        username
+    };
+
+    // Get password securely
+    let password = match rpassword::prompt_password("Enter admin password: ") {
+        Ok(pass) => pass,
+        Err(_) => {
+            eprintln!("❌ Failed to read password");
+            process::exit(1);
+        }
+    };
+
+    if password.len() < 8 {
+        eprintln!("❌ Password must be at least 8 characters long");
+        process::exit(1);
+    }
+
+    // Confirm password
+    let confirm_password = match rpassword::prompt_password("Confirm admin password: ") {
+        Ok(pass) => pass,
+        Err(_) => {
+            eprintln!("❌ Failed to read password confirmation");
+            process::exit(1);
+        }
+    };
+
+    if password != confirm_password {
+        eprintln!("❌ Passwords do not match");
+        process::exit(1);
+    }
+
+    println!();
+    println!("Creating admin user...");
+
+    bootstrap_user(db, email, &password, username).await;
+}
+
+async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) {
+    use chrono::Utc;
+    use gl_core::id::Id;
+    use gl_web::auth::PasswordAuth;
+
+    tracing::info!("Bootstrapping admin user: {}", email);
+
+    let user_repo = UserRepository::new(db.pool());
+
+    // Check if user already exists
+    match user_repo.find_by_email(email).await {
+        Ok(Some(_)) => {
+            tracing::warn!(
+                "User with email {} already exists, skipping bootstrap",
+                email
+            );
+            return;
+        }
+        Ok(None) => {
+            tracing::info!("Creating new admin user");
+        }
+        Err(e) => {
+            tracing::error!("Failed to check for existing user: {}", e);
+            process::exit(1);
+        }
+    }
+
+    // Hash the password
+    let password_hash = match PasswordAuth::hash_password(password) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!("Failed to hash password: {}", e);
+            process::exit(1);
+        }
+    };
+
+    // Create the user
+    let user_id = Id::new().to_string();
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let create_result = sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, role, is_active, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'admin', true, ?5, ?6)"
+    )
+    .bind(&user_id)
+    .bind(username)
+    .bind(email)
+    .bind(&password_hash)
+    .bind(&now)
+    .bind(&now)
+    .execute(db.pool())
+    .await;
+
+    match create_result {
+        Ok(_) => {
+            tracing::info!("✅ Admin user created successfully!");
+            tracing::info!("   Email: {}", email);
+            tracing::info!("   Username: {}", username);
+            tracing::info!("   Role: admin");
+            tracing::info!(
+                "You can now login to the web interface at http://127.0.0.1:8080/static/"
+            );
+        }
+        Err(e) => {
+            tracing::error!("Failed to create user: {}", e);
+            process::exit(1);
+        }
+    }
+}
+
+async fn start_server(config: Config, db: Db) {
+    tracing::info!(
+        host = %config.server.host,
+        port = %config.server.port,
+        obs_port = %config.server.obs_port,
+        db_path = %config.database.path,
+        "Application configured and ready"
+    );
 
     // Initialize observability state
     let obs_state = ObsState::new();
@@ -67,6 +240,18 @@ async fn main() {
         db: db.clone(),
         jwt_secret: config.security.jwt_secret.clone(),
         static_config,
+        rate_limit_config: gl_web::middleware::ratelimit::RateLimitConfig {
+            ip_requests_per_minute: config.server.rate_limit.ip_requests_per_minute,
+            api_key_requests_per_minute: config.server.rate_limit.api_key_requests_per_minute,
+            window_duration: std::time::Duration::from_secs(
+                config.server.rate_limit.window_seconds,
+            ),
+        },
+        body_limits_config: gl_web::middleware::bodylimits::BodyLimitsConfig::new(
+            config.server.body_limits.global_json_limit,
+        )
+        .with_override("/api/admin", config.server.body_limits.admin_json_limit)
+        .with_override("/api/upload", config.server.body_limits.upload_limit),
     };
 
     // Start observability server

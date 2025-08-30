@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glimpser - Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#2563eb">
+</head>
+<body>
+    <div class="container">
+        <div class="login-card">
+            <div class="logo">
+                <h1>🔍 Glimpser</h1>
+                <p>Real-time monitoring and alert system</p>
+            </div>
+
+            <form id="login-form" class="login-form">
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+
+                <button type="submit" id="login-btn" class="btn-primary">
+                    <span>Login</span>
+                    <div class="spinner hidden"></div>
+                </button>
+
+                <div id="error-message" class="error-message hidden"></div>
+            </form>
+
+            <div class="login-help">
+                <p>Don't have an account? Contact your administrator.</p>
+                <p>API documentation available at <a href="/docs/" target="_blank">/docs/</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/auth.js"></script>
+</body>
+</html>

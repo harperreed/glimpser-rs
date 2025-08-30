@@ -64,7 +64,7 @@ fn generate_etag(path: &Path) -> ActixResult<EntityTag> {
 }
 
 /// Static file handler with caching
-#[actix_web::get("/{filename:.*}")]
+#[actix_web::get("/static/{filename:.*}")]
 pub async fn serve_static(
     path: web::Path<String>,
     req: HttpRequest,
@@ -72,19 +72,13 @@ pub async fn serve_static(
 ) -> ActixResult<HttpResponse> {
     let filename = path.into_inner();
 
-    // Skip API and docs routes
-    if filename.starts_with("api") || filename.starts_with("docs") {
-        return Err(actix_web::error::ErrorNotFound("Not a static file"));
-    }
-
     let full_path = static_config.static_dir.join(&filename);
 
-    // Check if file exists, fallback to index.html for SPA routing
-    let file_path = if full_path.exists() && full_path.is_file() {
-        full_path
-    } else {
-        static_config.static_dir.join("index.html")
-    };
+    // Only serve actual static files - no fallback for missing files
+    if !full_path.exists() || !full_path.is_file() {
+        return Err(actix_web::error::ErrorNotFound("Static file not found"));
+    }
+    let file_path = full_path;
 
     // Generate ETag
     let etag = generate_etag(&file_path)?;
@@ -136,9 +130,50 @@ pub async fn serve_static(
     Ok(response.content_type(content_type).body(file_content))
 }
 
+/// SPA fallback handler
+#[actix_web::get("/{filename:.*}")]
+pub async fn spa_fallback(
+    path: web::Path<String>,
+    static_config: web::Data<StaticConfig>,
+) -> ActixResult<HttpResponse> {
+    let filename = path.into_inner();
+
+    // Skip API and docs routes - let them return 404
+    if filename.starts_with("api") || filename.starts_with("docs") {
+        return Err(actix_web::error::ErrorNotFound("Not found"));
+    }
+
+    // For all other routes, serve the SPA index.html
+    let index_path = static_config.static_dir.join("index.html");
+    let file_content = std::fs::read(&index_path)
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Could not load SPA"))?;
+
+    let etag = generate_etag(&index_path)?;
+    let etag_header_value = format!("W/\"{}\"", etag.tag());
+
+    let mut response = HttpResponse::Ok();
+    response.insert_header(("etag", etag_header_value));
+    response.insert_header(("cache-control", "no-cache")); // Don't cache SPA routes
+
+    // Add CSP headers if enabled
+    if static_config.enable_csp {
+        let csp_value = if let Some(nonce) = &static_config.csp_nonce {
+            format!(
+                "default-src 'self'; script-src 'self' 'nonce-{}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';",
+                nonce
+            )
+        } else {
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';".to_string()
+        };
+        response.insert_header(("content-security-policy", csp_value));
+    }
+
+    Ok(response.content_type("text/html").body(file_content))
+}
+
 /// Create static file service with PWA support
 pub fn create_static_service(_config: StaticConfig) -> actix_web::Scope {
-    web::scope("").service(serve_static)
+    web::scope("").service(serve_static).service(spa_fallback)
 }
 
 /// Middleware to add security headers
@@ -258,17 +293,16 @@ mod tests {
         .await;
 
         // First request to get ETag
-        let req = test::TestRequest::get().uri("/app.js").to_request();
+        let req = test::TestRequest::get().uri("/static/app.js").to_request();
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
         let etag = resp.headers().get("etag").unwrap().to_str().unwrap();
-        println!("ETag value: '{}'", etag);
         assert!(etag.starts_with("W/"));
 
         // Second request with If-None-Match should return 304
         let req = test::TestRequest::get()
-            .uri("/app.js")
+            .uri("/static/app.js")
             .insert_header(("if-none-match", etag))
             .to_request();
         let resp = test::call_service(&app, req).await;
@@ -323,7 +357,7 @@ mod tests {
         )
         .await;
 
-        let req = test::TestRequest::get().uri("/app.js").to_request();
+        let req = test::TestRequest::get().uri("/static/app.js").to_request();
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 

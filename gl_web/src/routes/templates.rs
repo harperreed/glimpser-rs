@@ -9,7 +9,9 @@ use tracing::{info, warn};
 use validator::Validate;
 
 use crate::{
-    middleware::auth::get_http_auth_user, middleware::rbac::RequireRole, models::ApiResponse,
+    middleware::auth::{get_http_auth_user, RequireAuth},
+    middleware::rbac::RequireRole,
+    models::ApiResponse,
 };
 
 /// Query parameters for listing templates
@@ -560,6 +562,7 @@ pub async fn delete_template(
 pub fn configure_template_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/templates")
+            .wrap(RequireAuth::new())
             .route(
                 "",
                 web::get().to(list_templates).wrap(RequireRole::operator()),

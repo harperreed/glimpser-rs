@@ -153,3 +153,118 @@ impl std::fmt::Display for Role {
         write!(f, "{}", self.as_str())
     }
 }
+
+/// RFC 7807 Problem Details response
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ProblemDetails {
+    /// The problem type URI (required)
+    #[serde(rename = "type")]
+    pub problem_type: String,
+
+    /// Human-readable summary of the problem (required)
+    pub title: String,
+
+    /// HTTP status code (optional but recommended)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+
+    /// Human-readable explanation specific to this occurrence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+
+    /// URI reference that identifies the specific occurrence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+
+    /// Additional problem-specific extension fields
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ProblemDetails {
+    /// Create a new problem details response
+    pub fn new(problem_type: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            problem_type: problem_type.into(),
+            title: title.into(),
+            status: None,
+            detail: None,
+            instance: None,
+            extensions: serde_json::Map::new(),
+        }
+    }
+
+    /// Set the HTTP status code
+    pub fn with_status(mut self, status: u16) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// Set the detail message
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    /// Set the instance URI
+    pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
+        self.instance = Some(instance.into());
+        self
+    }
+
+    /// Add an extension field
+    pub fn with_extension(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.extensions.insert(key.into(), value);
+        self
+    }
+
+    /// Create a validation error problem
+    pub fn validation_error(detail: impl Into<String>) -> Self {
+        Self::new(
+            "https://datatracker.ietf.org/rfc/rfc7231.html#section-6.5.1",
+            "Bad Request",
+        )
+        .with_status(400)
+        .with_detail(detail.into())
+    }
+
+    /// Create a rate limit error problem
+    pub fn rate_limit_error(retry_after: Option<u64>) -> Self {
+        let mut problem = Self::new(
+            "https://datatracker.ietf.org/rfc/rfc7231.html#section-6.6.4",
+            "Too Many Requests",
+        )
+        .with_status(429)
+        .with_detail("Rate limit exceeded");
+
+        if let Some(retry_after) = retry_after {
+            problem = problem
+                .with_extension("retry_after", serde_json::Value::Number(retry_after.into()));
+        }
+
+        problem
+    }
+
+    /// Create a payload too large error problem
+    pub fn payload_too_large_error(max_size: u64) -> Self {
+        Self::new(
+            "https://datatracker.ietf.org/rfc/rfc7231.html#section-6.5.11",
+            "Payload Too Large",
+        )
+        .with_status(413)
+        .with_detail(format!(
+            "Request payload exceeds maximum size of {} bytes",
+            max_size
+        ))
+        .with_extension("max_size", serde_json::Value::Number(max_size.into()))
+    }
+}
+
+/// Validation error details for RFC 7807 responses
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ValidationError {
+    pub field: String,
+    pub code: String,
+    pub message: String,
+    pub value: Option<serde_json::Value>,
+}
