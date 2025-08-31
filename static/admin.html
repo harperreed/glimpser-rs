@@ -159,6 +159,10 @@
                     <input type="email" id="user-email" required>
                 </div>
                 <div class="form-group">
+                    <label for="user-username">Username</label>
+                    <input type="text" id="user-username" required>
+                </div>
+                <div class="form-group">
                     <label for="user-password">Password</label>
                     <input type="password" id="user-password" required>
                 </div>
@@ -170,7 +174,7 @@
                     </select>
                 </div>
                 <div class="form-actions">
-                    <button type="button" class="btn-secondary" onclick="closeModal('user-modal')">Cancel</button>
+                    <button type="button" class="btn-secondary" data-close-modal="user-modal">Cancel</button>
                     <button type="submit" class="btn-primary">Create</button>
                 </div>
             </form>
@@ -211,7 +215,7 @@
                     </label>
                 </div>
                 <div class="form-actions">
-                    <button type="button" class="btn-secondary" onclick="closeModal('template-modal')">Cancel</button>
+                    <button type="button" class="btn-secondary" data-close-modal="template-modal">Cancel</button>
                     <button type="submit" class="btn-primary">Create Template</button>
                 </div>
             </form>

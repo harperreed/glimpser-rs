@@ -118,7 +118,7 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
                         Ok(config) => config,
                         Err(e) => {
                             error!(
-                                "Failed to parse template config for template '{}' (id: {}): {}. Config: {}", 
+                                "Failed to parse template config for template '{}' (id: {}): {}. Config: {}",
                                 template.name, template.id, e, template.config
                             );
                             return None;
@@ -130,7 +130,7 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
                         Some(source) => source,
                         None => {
                             error!(
-                                "Failed to extract source from template '{}' (id: {}). Config: {}", 
+                                "Failed to extract source from template '{}' (id: {}). Config: {}",
                                 template.name, template.id, serde_json::to_string_pretty(&config).unwrap_or_default()
                             );
                             return None;
@@ -182,12 +182,24 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
 fn extract_source_from_template_config(config: &Value) -> Option<String> {
     // Get the template kind/type
     let kind = config.get("kind").and_then(|v| v.as_str())?;
-    
+
     match kind {
-        "website" => config.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        "rtsp" => config.get("rtsp_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        "file" => config.get("file_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        "yt" | "youtube" => config.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        "website" => config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "rtsp" => config
+            .get("rtsp_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "file" => config
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "yt" | "youtube" => config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         _ => {
             warn!("Unknown template kind: {}", kind);
             None
@@ -208,14 +220,17 @@ fn extract_resolution_from_config(config: &Value) -> Option<String> {
 
 /// Get appropriate FPS value based on template type
 fn get_fps_for_template_type(config: &Value) -> u32 {
-    let kind = config.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
-    
+    let kind = config
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
     match kind {
-        "website" => 1,    // Website captures are typically 1 frame per interval
-        "rtsp" => 30,      // RTSP streams are usually 30 FPS
-        "file" => 24,      // Video files often 24 FPS
-        "yt" | "youtube" => 30,  // YouTube streams typically 30 FPS
-        _ => 1,            // Default for unknown types
+        "website" => 1,         // Website captures are typically 1 frame per interval
+        "rtsp" => 30,           // RTSP streams are usually 30 FPS
+        "file" => 24,           // Video files often 24 FPS
+        "yt" | "youtube" => 30, // YouTube streams typically 30 FPS
+        _ => 1,                 // Default for unknown types
     }
 }
 

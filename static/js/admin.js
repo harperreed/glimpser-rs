@@ -71,6 +71,13 @@ function setupModals() {
             closeModal(e.target.id);
         }
     });
+
+    // Handle modal close buttons
+    document.querySelectorAll('[data-close-modal]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            closeModal(e.target.dataset.closeModal);
+        });
+    });
 }
 
 async function loadInitialData() {
@@ -101,7 +108,11 @@ async function loadUsers() {
     tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading users...</td></tr>';
 
     try {
-        const users = await authManager.apiRequest('/admin/users');
+        const response = await fetch('/api/admin/users', {
+            headers: authManager.getAuthHeaders()
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const users = await response.json();
 
         if (!users || users.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" class="empty">No users found</td></tr>';
@@ -114,11 +125,23 @@ async function loadUsers() {
                 <td><span class="badge ${user.role}">${user.role}</span></td>
                 <td>${formatDate(user.created_at)}</td>
                 <td>
-                    <button onclick="editUser('${user.id}')" class="btn-secondary">Edit</button>
-                    <button onclick="deleteUser('${user.id}')" class="btn-danger">Delete</button>
+                    <button data-edit-user="${user.id}" class="btn-secondary">Edit</button>
+                    <button data-delete-user="${user.id}" class="btn-danger">Delete</button>
                 </td>
             </tr>
         `).join('');
+
+        // Add event listeners for user actions
+        tbody.querySelectorAll('[data-edit-user]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                editUser(e.target.dataset.editUser);
+            });
+        });
+        tbody.querySelectorAll('[data-delete-user]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                deleteUser(e.target.dataset.deleteUser);
+            });
+        });
 
     } catch (error) {
         console.error('Error loading users:', error);
@@ -133,7 +156,11 @@ async function loadApiKeys() {
     tbody.innerHTML = '<tr><td colspan="5" class="loading">Loading API keys...</td></tr>';
 
     try {
-        const apiKeys = await authManager.apiRequest('/admin/api-keys');
+        const response = await fetch('/api/admin/api-keys', {
+            headers: authManager.getAuthHeaders()
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const apiKeys = await response.json();
 
         if (!apiKeys || apiKeys.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="empty">No API keys found</td></tr>';
@@ -147,10 +174,17 @@ async function loadApiKeys() {
                 <td>${formatDate(key.created_at)}</td>
                 <td>${key.last_used_at ? formatDate(key.last_used_at) : 'Never'}</td>
                 <td>
-                    <button onclick="revokeApiKey('${key.id}')" class="btn-danger">Revoke</button>
+                    <button data-revoke-key="${key.id}" class="btn-danger">Revoke</button>
                 </td>
             </tr>
         `).join('');
+
+        // Add event listeners for API key actions
+        tbody.querySelectorAll('[data-revoke-key]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                revokeApiKey(e.target.dataset.revokeKey);
+            });
+        });
 
     } catch (error) {
         console.error('Error loading API keys:', error);
@@ -165,7 +199,7 @@ async function loadTemplates() {
     tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading templates...</td></tr>';
 
     try {
-        const templates = await authManager.apiRequest('/api/templates');
+        const templates = await authManager.apiRequest('admin/templates');
 
         if (!templates || templates.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" class="empty">No templates found</td></tr>';
@@ -178,11 +212,23 @@ async function loadTemplates() {
                 <td>${escapeHtml(template.type || 'Unknown')}</td>
                 <td>${formatDate(template.created_at)}</td>
                 <td>
-                    <button onclick="editTemplate('${template.id}')" class="btn-secondary">Edit</button>
-                    <button onclick="deleteTemplate('${template.id}')" class="btn-danger">Delete</button>
+                    <button data-edit-template="${template.id}" class="btn-secondary">Edit</button>
+                    <button data-delete-template="${template.id}" class="btn-danger">Delete</button>
                 </td>
             </tr>
         `).join('');
+
+        // Add event listeners for template actions
+        tbody.querySelectorAll('[data-edit-template]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                editTemplate(e.target.dataset.editTemplate);
+            });
+        });
+        tbody.querySelectorAll('[data-delete-template]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                deleteTemplate(e.target.dataset.deleteTemplate);
+            });
+        });
 
     } catch (error) {
         console.error('Error loading templates:', error);
@@ -258,14 +304,20 @@ async function handleCreateUser(e) {
     e.preventDefault();
 
     const email = document.getElementById('user-email').value;
+    const username = document.getElementById('user-username').value;
     const password = document.getElementById('user-password').value;
     const role = document.getElementById('user-role').value;
 
     try {
-        await authManager.apiRequest('/admin/users', {
+        const response = await fetch('/api/admin/users', {
             method: 'POST',
-            body: JSON.stringify({ email, password, role })
+            headers: {
+                ...authManager.getAuthHeaders(),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ email, username, password, role })
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         closeModal('user-modal');
         document.getElementById('user-form').reset();
@@ -280,37 +332,108 @@ async function handleCreateUser(e) {
 async function handleCreateTemplate(e) {
     e.preventDefault();
 
+    const form = document.getElementById('template-form');
+    const editingId = form.dataset.editingId;
+    const isEditing = !!editingId;
+
     const name = document.getElementById('template-name').value;
     const description = document.getElementById('template-description').value;
     const type = document.getElementById('template-type').value;
     const url = document.getElementById('template-url').value;
     const isDefault = document.getElementById('template-default').checked;
 
+    // Build the config object based on template type
+    let config;
+    switch (type) {
+        case 'website':
+            config = {
+                kind: 'website',
+                url: url,
+                headless: true,
+                stealth: false,
+                width: 1280,
+                height: 720
+            };
+            break;
+        case 'rtsp':
+            config = {
+                kind: 'rtsp',
+                rtsp_url: url,
+                reconnect: true
+            };
+            break;
+        case 'file':
+            config = {
+                kind: 'file',
+                file_path: url
+            };
+            break;
+        case 'youtube':
+            config = {
+                kind: 'yt',
+                url: url,
+                format: 'best',
+                is_live: false
+            };
+            break;
+        default:
+            showError('Unknown template type: ' + type);
+            return;
+    }
+
     try {
-        await authManager.apiRequest('/api/templates', {
-            method: 'POST',
-            body: JSON.stringify({
-                name,
-                description,
-                source_type: type,
-                source_url: url,
-                is_default: isDefault
-            })
-        });
+        const requestBody = {
+            name,
+            description: description || null,
+            config,
+            is_default: isDefault
+        };
+
+        const response = await fetch(
+            isEditing ? `/api/templates/${editingId}` : '/api/templates',
+            {
+                method: isEditing ? 'PUT' : 'POST',
+                headers: {
+                    ...authManager.getAuthHeaders(),
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody)
+            }
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         closeModal('template-modal');
-        document.getElementById('template-form').reset();
+        resetTemplateForm();
         await loadTemplates();
-        showSuccess('Template created successfully');
+        showSuccess(isEditing ? 'Template updated successfully' : 'Template created successfully');
 
     } catch (error) {
-        showError('Failed to create template: ' + error.message);
+        showError(`Failed to ${isEditing ? 'update' : 'create'} template: ` + error.message);
     }
+}
+
+function resetTemplateForm() {
+    const form = document.getElementById('template-form');
+    form.reset();
+
+    // Clear editing state
+    delete form.dataset.editingId;
+
+    // Reset form title and button text to default
+    const modalTitle = document.querySelector('#template-modal h3');
+    const submitButton = document.querySelector('#template-form button[type="submit"]');
+    modalTitle.textContent = 'Create Template';
+    submitButton.textContent = 'Create Template';
 }
 
 function openModal(modalId) {
     const modal = document.getElementById(modalId);
     if (modal) {
+        // Reset template form if opening template modal for creation
+        if (modalId === 'template-modal' && !document.getElementById('template-form').dataset.editingId) {
+            resetTemplateForm();
+        }
+
         modal.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
     }
@@ -334,9 +457,11 @@ async function deleteUser(userId) {
     if (!confirm('Are you sure you want to delete this user?')) return;
 
     try {
-        await authManager.apiRequest(`/admin/users/${userId}`, {
-            method: 'DELETE'
+        const response = await fetch(`/api/admin/users/${userId}`, {
+            method: 'DELETE',
+            headers: authManager.getAuthHeaders()
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         await loadUsers();
         showSuccess('User deleted successfully');
@@ -350,9 +475,11 @@ async function revokeApiKey(keyId) {
     if (!confirm('Are you sure you want to revoke this API key?')) return;
 
     try {
-        await authManager.apiRequest(`/admin/api-keys/${keyId}`, {
-            method: 'DELETE'
+        const response = await fetch(`/api/admin/api-keys/${keyId}`, {
+            method: 'DELETE',
+            headers: authManager.getAuthHeaders()
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         await loadApiKeys();
         showSuccess('API key revoked successfully');
@@ -363,17 +490,76 @@ async function revokeApiKey(keyId) {
 }
 
 async function editTemplate(templateId) {
-    // TODO: Implement template editing
-    console.log('Edit template:', templateId);
+    try {
+        // Fetch the template data
+        const response = await fetch(`/api/templates/${templateId}`, {
+            headers: authManager.getAuthHeaders()
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const template = await response.json();
+
+        // Populate the form with existing template data
+        document.getElementById('template-name').value = template.name || '';
+        document.getElementById('template-description').value = template.description || '';
+        document.getElementById('template-default').checked = template.is_default || false;
+
+        // Parse the config to determine type and URL
+        let config;
+        try {
+            config = typeof template.config === 'string' ? JSON.parse(template.config) : template.config;
+        } catch (e) {
+            console.error('Error parsing template config:', e);
+            config = {};
+        }
+
+        // Set the type and URL based on config
+        const typeSelect = document.getElementById('template-type');
+        const urlInput = document.getElementById('template-url');
+
+        if (config.kind === 'website') {
+            typeSelect.value = 'website';
+            urlInput.value = config.url || '';
+        } else if (config.kind === 'rtsp') {
+            typeSelect.value = 'rtsp';
+            urlInput.value = config.rtsp_url || config.url || '';
+        } else if (config.kind === 'file') {
+            typeSelect.value = 'file';
+            urlInput.value = config.file_path || config.path || '';
+        } else if (config.kind === 'yt' || config.kind === 'youtube') {
+            typeSelect.value = 'youtube';
+            urlInput.value = config.url || '';
+        } else {
+            // Default to website if unknown
+            typeSelect.value = 'website';
+            urlInput.value = '';
+        }
+
+        // Update form title and button text for editing
+        const modalTitle = document.querySelector('#template-modal h3');
+        const submitButton = document.querySelector('#template-form button[type="submit"]');
+        modalTitle.textContent = 'Edit Template';
+        submitButton.textContent = 'Update Template';
+
+        // Store the template ID in the form for later use
+        document.getElementById('template-form').dataset.editingId = templateId;
+
+        // Open the modal
+        openModal('template-modal');
+
+    } catch (error) {
+        showError('Failed to load template: ' + error.message);
+    }
 }
 
 async function deleteTemplate(templateId) {
     if (!confirm('Are you sure you want to delete this template?')) return;
 
     try {
-        await authManager.apiRequest(`/api/templates/${templateId}`, {
-            method: 'DELETE'
+        const response = await fetch(`/api/templates/${templateId}`, {
+            method: 'DELETE',
+            headers: authManager.getAuthHeaders()
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         await loadTemplates();
         showSuccess('Template deleted successfully');

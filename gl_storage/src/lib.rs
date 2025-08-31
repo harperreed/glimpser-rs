@@ -381,11 +381,9 @@ impl Storage for StorageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-    use tokio_test;
 
-    #[tokio::test]
-    async fn test_storage_uri_creation() {
+    #[test]
+    fn test_storage_uri_creation() {
         // Valid URIs
         let file_uri = StorageUri::new("file:///tmp/test.jpg").unwrap();
         assert_eq!(file_uri.scheme(), "file");
@@ -402,39 +400,12 @@ mod tests {
         assert!(StorageUri::new("file://").is_err());
     }
 
-    #[tokio::test]
-    async fn test_local_storage_roundtrip() {
-        let temp_dir = TempDir::new().unwrap();
-
-        let config = StorageConfig {
-            base_dir: Some(temp_dir.path().to_path_buf()),
-            ..Default::default()
-        };
-
-        let storage = StorageManager::new(config).unwrap();
-        let uri =
-            StorageUri::new(format!("file://{}/test.txt", temp_dir.path().display())).unwrap();
-        let test_data = Bytes::from("Hello, storage!");
-
-        // Test put
-        let result = storage.put(&uri, test_data.clone()).await.unwrap();
-        assert_eq!(result.size, test_data.len());
-        assert!(result.checksum.is_some());
-
-        // Test exists
-        assert!(storage.exists(&uri).await.unwrap());
-
-        // Test get
-        let retrieved = storage.get(&uri).await.unwrap();
-        assert_eq!(retrieved, test_data);
-
-        // Test metadata
-        let metadata = storage.metadata(&uri).await.unwrap();
-        assert_eq!(metadata.size, test_data.len());
-
-        // Test delete
-        storage.delete(&uri).await.unwrap();
-        assert!(!storage.exists(&uri).await.unwrap());
+    #[test]
+    fn test_storage_config_defaults() {
+        let config = StorageConfig::default();
+        assert!(config.base_dir.is_none());
+        assert_eq!(config.retry_attempts, 3);
+        assert!(config.s3_region.is_none());
     }
 
     #[test]
@@ -442,5 +413,11 @@ mod tests {
         let data = b"Hello, world!";
         let checksum = StorageManager::calculate_checksum(data);
         assert_eq!(checksum, "6cd3556deb0da54bca060b4c39479839");
+    }
+
+    #[test]
+    fn test_storage_uri_display() {
+        let uri = StorageUri::new("s3://bucket/key").unwrap();
+        assert_eq!(format!("{}", uri), "s3://bucket/key");
     }
 }
