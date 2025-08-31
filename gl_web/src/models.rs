@@ -43,6 +43,8 @@ pub struct TemplateInfo {
     pub user_id: String,
     pub name: String,
     pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub template_type: String,
     pub is_default: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -257,6 +259,49 @@ impl ProblemDetails {
             max_size
         ))
         .with_extension("max_size", serde_json::Value::Number(max_size.into()))
+    }
+}
+
+/// Stream information response matching frontend expectations
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct StreamInfo {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub status: StreamStatus,
+    pub resolution: String,
+    pub fps: u32,
+    pub last_frame_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_id: Option<String>,
+}
+
+/// Stream status enumeration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamStatus {
+    Active,
+    Inactive,
+    Error,
+    Starting,
+    Stopping,
+}
+
+impl StreamStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StreamStatus::Active => "active",
+            StreamStatus::Inactive => "inactive",
+            StreamStatus::Error => "error",
+            StreamStatus::Starting => "starting",
+            StreamStatus::Stopping => "stopping",
+        }
+    }
+}
+
+impl std::fmt::Display for StreamStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 

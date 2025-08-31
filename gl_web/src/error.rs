@@ -158,6 +158,9 @@ impl From<gl_core::Error> for ApiError {
                 Self::internal_server_error(format!("Configuration error: {}", msg))
             }
             gl_core::Error::Io(e) => Self::internal_server_error(format!("IO error: {}", e)),
+            gl_core::Error::Storage(msg) => {
+                Self::internal_server_error(format!("Storage error: {}", msg))
+            }
         }
     }
 }

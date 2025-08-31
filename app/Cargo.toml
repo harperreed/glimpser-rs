@@ -23,3 +23,11 @@ clap = { version = "4.0", features = ["derive"] }
 chrono = "0.4"
 sqlx.workspace = true
 rpassword = "7.0"
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+reqwest = { version = "0.12", features = ["json"] }
+tempfile = "3.12"
+serde_json = "1.0"
+test_support = { path = "../test_support" }

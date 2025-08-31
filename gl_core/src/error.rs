@@ -21,6 +21,9 @@ pub enum Error {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Storage error: {0}")]
+    Storage(String),
 }
 
 impl From<config::ConfigError> for Error {

@@ -17,10 +17,12 @@ members = [
     "gl_vision",
     "gl_analysis",
     "gl_update",
+    "gl_storage",
     "test_support",
 ]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 
@@ -70,6 +72,12 @@ actix-files = "0.6"
 mime_guess = "2.0"
 sha2 = "0.10"
 hex = "0.4"
+
+# Object storage
+object_store = { version = "0.11", features = ["http", "aws", "azure"] }
+url = "2.5"
+backoff = { version = "0.4", features = ["tokio"] }
+md5 = "0.7"
 
 # Testing
 wiremock = "0.6"

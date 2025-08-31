@@ -1,0 +1,32 @@
+[package]
+name = "gl_storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Core dependencies
+gl_core = { path = "../gl_core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures-util = { workspace = true }
+bytes = { workspace = true }
+
+# Object storage
+object_store = { workspace = true }
+url = { workspace = true }
+backoff = { workspace = true }
+
+# Hashing and validation
+md5 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.12"
+tokio-test = "0.4"
+
+[features]
+default = []
+mock-s3 = []

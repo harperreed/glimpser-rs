@@ -3,13 +3,13 @@
 
 use crate::{
     middleware::auth::get_http_auth_user,
-    models::{ErrorResponse, UserInfo},
+    models::{ErrorResponse, StreamInfo, StreamStatus, UserInfo},
     AppState,
 };
 use actix_web::{get, web, HttpRequest, HttpResponse, Result};
-use gl_db::UserRepository;
-use serde_json::json;
-use tracing::{debug, warn};
+use gl_db::{TemplateRepository, UserRepository};
+use serde_json::{json, Value};
+use tracing::{debug, error, warn};
 
 /// Get current user information
 #[utoipa::path(
@@ -89,10 +89,102 @@ pub async fn health() -> Result<HttpResponse> {
     })))
 }
 
-/// Get streams endpoint (placeholder)
+/// Get streams endpoint - transforms templates into active streams
+#[utoipa::path(
+    get,
+    path = "/api/streams",
+    tag = "public",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "List of active streams", body = Vec<StreamInfo>),
+        (status = 401, description = "Authentication required", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse),
+    )
+)]
 #[get("/streams")]
-pub async fn streams() -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok().json(json!([])))
+pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
+    debug!("Getting streams list");
+
+    let template_repo = TemplateRepository::new(state.db.pool());
+
+    match template_repo.list(None, 0, 1000).await {
+        Ok(templates) => {
+            let template_count = templates.len();
+            let streams: Vec<StreamInfo> = templates
+                .into_iter()
+                .filter_map(|template| {
+                    // Parse the config JSON string
+                    let config: Value = match serde_json::from_str(&template.config) {
+                        Ok(config) => config,
+                        Err(e) => {
+                            warn!("Failed to parse template config for {}: {}", template.id, e);
+                            return None;
+                        }
+                    };
+
+                    // Extract source URL from template config
+                    let source = extract_source_from_template_config(&config)
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    // For now, mark all templates as inactive since we don't have execution layer yet
+                    // TODO: Check actual execution status when capture manager is implemented
+                    let status = StreamStatus::Inactive;
+
+                    // Extract resolution from config or use default
+                    let resolution = extract_resolution_from_config(&config)
+                        .unwrap_or_else(|| "1920x1080".to_string());
+
+                    // Website templates typically capture ~1 frame per interval
+                    let fps = 1;
+
+                    Some(StreamInfo {
+                        id: template.id.clone(),
+                        name: template.name.clone(),
+                        source,
+                        status,
+                        resolution,
+                        fps,
+                        last_frame_at: None, // TODO: Get from capture history when implemented
+                        template_id: Some(template.id),
+                    })
+                })
+                .collect();
+
+            debug!(
+                "Returning {} streams from {} templates",
+                streams.len(),
+                template_count
+            );
+            Ok(HttpResponse::Ok().json(streams))
+        }
+        Err(e) => {
+            error!("Failed to fetch templates: {}", e);
+            Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
+                "database_error",
+                "Failed to retrieve streams",
+            )))
+        }
+    }
+}
+
+/// Extract source URL from template configuration JSON
+fn extract_source_from_template_config(config: &Value) -> Option<String> {
+    // Website templates have URL at the root level
+    config
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Extract resolution from template configuration JSON
+fn extract_resolution_from_config(config: &Value) -> Option<String> {
+    // Website templates have width and height fields
+    if let Some(width) = config.get("width").and_then(|v| v.as_u64()) {
+        if let Some(height) = config.get("height").and_then(|v| v.as_u64()) {
+            return Some(format!("{}x{}", width, height));
+        }
+    }
+    None
 }
 
 /// Get alerts endpoint (placeholder)
