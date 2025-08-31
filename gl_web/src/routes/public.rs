@@ -117,14 +117,25 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
                     let config: Value = match serde_json::from_str(&template.config) {
                         Ok(config) => config,
                         Err(e) => {
-                            warn!("Failed to parse template config for {}: {}", template.id, e);
+                            error!(
+                                "Failed to parse template config for template '{}' (id: {}): {}. Config: {}", 
+                                template.name, template.id, e, template.config
+                            );
                             return None;
                         }
                     };
 
                     // Extract source URL from template config
-                    let source = extract_source_from_template_config(&config)
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let source = match extract_source_from_template_config(&config) {
+                        Some(source) => source,
+                        None => {
+                            error!(
+                                "Failed to extract source from template '{}' (id: {}). Config: {}", 
+                                template.name, template.id, serde_json::to_string_pretty(&config).unwrap_or_default()
+                            );
+                            return None;
+                        }
+                    };
 
                     // For now, mark all templates as inactive since we don't have execution layer yet
                     // TODO: Check actual execution status when capture manager is implemented
@@ -134,8 +145,8 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
                     let resolution = extract_resolution_from_config(&config)
                         .unwrap_or_else(|| "1920x1080".to_string());
 
-                    // Website templates typically capture ~1 frame per interval
-                    let fps = 1;
+                    // Set FPS based on template type
+                    let fps = get_fps_for_template_type(&config);
 
                     Some(StreamInfo {
                         id: template.id.clone(),
@@ -169,11 +180,19 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
 
 /// Extract source URL from template configuration JSON
 fn extract_source_from_template_config(config: &Value) -> Option<String> {
-    // Website templates have URL at the root level
-    config
-        .get("url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    // Get the template kind/type
+    let kind = config.get("kind").and_then(|v| v.as_str())?;
+    
+    match kind {
+        "website" => config.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        "rtsp" => config.get("rtsp_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        "file" => config.get("file_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        "yt" | "youtube" => config.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        _ => {
+            warn!("Unknown template kind: {}", kind);
+            None
+        }
+    }
 }
 
 /// Extract resolution from template configuration JSON
@@ -185,6 +204,19 @@ fn extract_resolution_from_config(config: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// Get appropriate FPS value based on template type
+fn get_fps_for_template_type(config: &Value) -> u32 {
+    let kind = config.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
+    
+    match kind {
+        "website" => 1,    // Website captures are typically 1 frame per interval
+        "rtsp" => 30,      // RTSP streams are usually 30 FPS
+        "file" => 24,      // Video files often 24 FPS
+        "yt" | "youtube" => 30,  // YouTube streams typically 30 FPS
+        _ => 1,            // Default for unknown types
+    }
 }
 
 /// Get alerts endpoint (placeholder)

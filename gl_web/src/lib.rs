@@ -1,7 +1,7 @@
 //! ABOUTME: Web API layer with authentication and routing
 //! ABOUTME: Provides REST endpoints and OpenAPI documentation
 
-use actix_web::{web, App, HttpServer};
+use actix_web::{web, App, HttpResponse, HttpServer};
 use gl_core::Result;
 use gl_db::Db;
 use utoipa::OpenApi;
@@ -99,18 +99,6 @@ pub fn create_app(
                         .service(auth_routes::login),
                 )
                 .service(
-                    web::scope("")
-                        // Apply rate limiting after authentication - innermost wrap runs last
-                        .wrap(middleware::ratelimit::RateLimit::new(
-                            rate_limit_config.clone(),
-                        ))
-                        .wrap(middleware::auth::RequireAuth::new())
-                        .service(public::me)
-                        .service(public::health)
-                        .service(public::streams)
-                        .service(public::alerts),
-                )
-                .service(
                     web::scope("/admin")
                         // Apply rate limiting after authentication - innermost wrap runs last
                         .wrap(middleware::ratelimit::RateLimit::new(
@@ -118,6 +106,7 @@ pub fn create_app(
                         ))
                         .wrap(middleware::rbac::RequireRole::admin())
                         .wrap(middleware::auth::RequireAuth::new())
+                        .service(admin::test_route)
                         .service(admin::list_templates)
                         .service(admin::list_users)
                         .service(admin::create_user)
@@ -131,18 +120,52 @@ pub fn create_app(
                         .service(admin::update_history),
                 )
                 .service(
-                    web::scope("/stream")
+                    web::scope("")
                         // Apply rate limiting after authentication - innermost wrap runs last
                         .wrap(middleware::ratelimit::RateLimit::new(
                             rate_limit_config.clone(),
                         ))
                         .wrap(middleware::auth::RequireAuth::new())
+                        .service(public::me)
+                        .service(public::health)
+                        .service(public::streams)
+                        .service(public::alerts),
+                )
+                .service(
+                    web::scope("/stream")
+                        .wrap(middleware::auth::RequireAuth::new())
                         .service(stream::snapshot)
                         .service(stream::mjpeg_stream),
-                ),
+                )
+                .service(
+                    web::scope("")
+                        .wrap(middleware::ratelimit::RateLimit::new(
+                            rate_limit_config.clone(),
+                        ))
+                        .wrap(middleware::rbac::RequireRole::operator())
+                        .wrap(middleware::auth::RequireAuth::new())
+                        .service(templates::list_templates_service)
+                        .service(templates::get_template_service),
+                )
+                .service(
+                    web::scope("")
+                        .wrap(middleware::ratelimit::RateLimit::new(
+                            rate_limit_config.clone(),
+                        ))
+                        .wrap(middleware::rbac::RequireRole::admin())
+                        .wrap(middleware::auth::RequireAuth::new())
+                        .service(templates::create_template_service)
+                        .service(templates::update_template_service)
+                        .service(templates::delete_template_service),
+                )
+                .configure(alerts::configure_alert_routes)
+                .service(web::scope("/debug").route(
+                    "/test",
+                    web::get().to(|| async {
+                        HttpResponse::Ok().json(serde_json::json!({"debug": "working"}))
+                    }),
+                )),
         )
-        .configure(alerts::configure_alert_routes)
-        .configure(templates::configure_template_routes)
         // Static files service for assets directory
         .service(static_files::create_static_service(static_config))
     // TODO: Re-enable SPA fallback after fixing admin routes
@@ -365,7 +388,7 @@ mod tests {
         // First request should succeed
         let req1 = test::TestRequest::post()
             .uri("/api/auth/login")
-            .set_json(&serde_json::json!({
+            .set_json(serde_json::json!({
                 "email": "test@example.com",
                 "password": "password123"
             }))
@@ -378,7 +401,7 @@ mod tests {
         // Second request should succeed
         let req2 = test::TestRequest::post()
             .uri("/api/auth/login")
-            .set_json(&serde_json::json!({
+            .set_json(serde_json::json!({
                 "email": "test@example.com",
                 "password": "password123"
             }))
@@ -390,7 +413,7 @@ mod tests {
         // Third request should be rate limited
         let req3 = test::TestRequest::post()
             .uri("/api/auth/login")
-            .set_json(&serde_json::json!({
+            .set_json(serde_json::json!({
                 "email": "test@example.com",
                 "password": "password123"
             }))
