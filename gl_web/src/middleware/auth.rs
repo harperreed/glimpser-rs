@@ -66,25 +66,53 @@ where
         let service = Rc::clone(&self.service);
 
         Box::pin(async move {
-            // Try JWT authentication first
+            let mut jwt_token: Option<&str> = None;
+
+            // Try JWT authentication from Authorization header first
             if let Some(auth_header) = req.headers().get("authorization") {
                 if let Ok(auth_str) = auth_header.to_str() {
                     if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                        if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
-                            match JwtAuth::verify_token(token, &app_state.jwt_secret) {
-                                Ok(claims) => {
-                                    debug!(
-                                        "JWT authentication successful for user: {}",
-                                        claims.sub
-                                    );
-                                    req.extensions_mut().insert(AuthUser::from_jwt(claims));
-                                    return service.call(req).await;
-                                }
-                                Err(e) => {
-                                    warn!("JWT verification failed: {}", e);
-                                    return Err(ErrorUnauthorized("Invalid JWT token"));
-                                }
+                        jwt_token = Some(token);
+                    }
+                }
+            }
+
+            // If no Authorization header, try cookie
+            if jwt_token.is_none() {
+                if let Some(cookie_header) = req.headers().get("cookie") {
+                    if let Ok(cookie_str) = cookie_header.to_str() {
+                        // Parse cookies manually to find JWT token
+                        for cookie_part in cookie_str.split(';') {
+                            let cookie_part = cookie_part.trim();
+                            if let Some(token_value) = cookie_part.strip_prefix("auth_token=") {
+                                jwt_token = Some(token_value);
+                                break;
                             }
+                        }
+                    }
+                }
+            }
+
+            // Verify JWT token if found
+            if let Some(token) = jwt_token {
+                if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
+                    match JwtAuth::verify_token(token, &app_state.jwt_secret) {
+                        Ok(claims) => {
+                            debug!(
+                                "JWT authentication successful for user: {} (via {})",
+                                claims.sub,
+                                if req.headers().get("authorization").is_some() {
+                                    "header"
+                                } else {
+                                    "cookie"
+                                }
+                            );
+                            req.extensions_mut().insert(AuthUser::from_jwt(claims));
+                            return service.call(req).await;
+                        }
+                        Err(e) => {
+                            warn!("JWT verification failed: {}", e);
+                            return Err(ErrorUnauthorized("Invalid JWT token"));
                         }
                     }
                 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM snapshots\n            WHERE template_id = ?\n            AND id NOT IN (\n                SELECT id FROM snapshots\n                WHERE template_id = ?\n                ORDER BY captured_at DESC\n                LIMIT ?\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "e0aa4e9ac89ddccab7b5bd36524e3c5e2c0cb2b3c9c0839f655d7b951234b910"
+}

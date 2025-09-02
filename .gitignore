@@ -22,3 +22,10 @@ Thumbs.db
 *.db-wal
 test_*.db*
 glimpser.db*
+docs
+
+# Data directory and artifacts
+data/
+*.jpg
+*.jpeg
+*.png

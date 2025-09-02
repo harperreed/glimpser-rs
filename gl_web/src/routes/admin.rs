@@ -10,22 +10,65 @@ use gl_update::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
+/// Simple test endpoint to debug routing issues
+#[get("/test")]
+pub async fn test_route() -> Result<HttpResponse> {
+    debug!("Test admin route hit!");
+    Ok(HttpResponse::Ok().json(serde_json::json!({"status": "admin route working"})))
+}
+
 /// List all templates (admin only)
 #[get("/templates")]
-pub async fn list_templates(
-    _state: web::Data<AppState>,
-    _req: HttpRequest,
-) -> Result<HttpResponse> {
+pub async fn list_templates(state: web::Data<AppState>, _req: HttpRequest) -> Result<HttpResponse> {
     debug!("Listing templates for admin user");
 
-    // For now, return empty list - this is just to test the structure
-    let templates: Vec<TemplateInfo> = vec![];
+    // Get templates from database
+    let template_repo = gl_db::TemplateRepository::new(state.db.pool());
 
-    debug!(
-        "Templates retrieved successfully, count: {}",
-        templates.len()
-    );
-    Ok(HttpResponse::Ok().json(templates))
+    match template_repo.list(None, 0, 100).await {
+        Ok(templates) => {
+            debug!(
+                "Templates retrieved successfully, count: {}",
+                templates.len()
+            );
+
+            // Convert to TemplateInfo format expected by admin panel
+            let template_infos: Vec<TemplateInfo> = templates
+                .into_iter()
+                .map(|t| {
+                    // Extract type from config JSON
+                    let template_type = match serde_json::from_str::<serde_json::Value>(&t.config) {
+                        Ok(config) => config
+                            .get("kind")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        Err(_) => "unknown".to_string(),
+                    };
+
+                    TemplateInfo {
+                        id: t.id,
+                        user_id: t.user_id,
+                        name: t.name,
+                        description: t.description,
+                        template_type,
+                        is_default: t.is_default,
+                        created_at: t.created_at,
+                        updated_at: t.updated_at,
+                    }
+                })
+                .collect();
+
+            Ok(HttpResponse::Ok().json(template_infos))
+        }
+        Err(e) => {
+            error!("Failed to retrieve templates: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to retrieve templates",
+                "details": e.to_string()
+            })))
+        }
+    }
 }
 
 /// Admin user response structure

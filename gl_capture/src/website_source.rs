@@ -97,10 +97,25 @@ impl WebsiteSource {
 
 #[async_trait]
 impl CaptureSource for WebsiteSource {
+    #[cfg(feature = "website_embedded")]
     #[instrument(skip(self))]
     async fn start(&self) -> Result<CaptureHandle> {
         info!(url = %self.config.url, "Starting website capture");
-        // For websites, "starting" just validates the config and client
+        // Create a new embedded Chrome client for the capture handle
+        let client = HeadlessChromeClient::new_boxed().map_err(|e| {
+            Error::Config(format!("Failed to create embedded Chrome client: {}", e))
+        })?;
+        Ok(CaptureHandle::new(std::sync::Arc::new(WebsiteSource {
+            config: self.config.clone(),
+            client,
+        })))
+    }
+
+    #[cfg(not(feature = "website_embedded"))]
+    #[instrument(skip(self))]
+    async fn start(&self) -> Result<CaptureHandle> {
+        info!(url = %self.config.url, "Starting website capture");
+        // Fallback to mock client if embedded chrome is not available
         Ok(CaptureHandle::new(std::sync::Arc::new(WebsiteSource {
             config: self.config.clone(),
             client: MockWebDriverClient::new_boxed(),
@@ -270,6 +285,118 @@ impl WebDriverClient for ThirtyfourClient {
                 .quit()
                 .await
                 .map_err(|e| Error::Config(format!("Failed to close WebDriver: {}", e)))?;
+        }
+        Ok(())
+    }
+}
+
+// Embedded headless Chrome implementation (behind feature gate)
+#[cfg(feature = "website_embedded")]
+pub struct HeadlessChromeClient {
+    browser: std::sync::Arc<tokio::sync::Mutex<Option<headless_chrome::Browser>>>,
+}
+
+#[cfg(feature = "website_embedded")]
+impl HeadlessChromeClient {
+    pub fn new() -> Result<Self> {
+        use headless_chrome::{Browser, LaunchOptions};
+
+        let options = LaunchOptions::default_builder()
+            .headless(true)
+            .sandbox(false)
+            .window_size(Some((1920, 1080)))
+            .build()
+            .expect("Failed to build launch options");
+
+        let browser = Browser::new(options)
+            .map_err(|e| Error::Config(format!("Failed to launch Chrome: {}", e)))?;
+
+        Ok(Self {
+            browser: std::sync::Arc::new(tokio::sync::Mutex::new(Some(browser))),
+        })
+    }
+
+    pub fn new_boxed() -> Result<Box<dyn WebDriverClient>> {
+        Ok(Box::new(Self::new()?))
+    }
+}
+
+#[cfg(feature = "website_embedded")]
+#[async_trait]
+impl WebDriverClient for HeadlessChromeClient {
+    #[instrument(skip(self))]
+    async fn screenshot(&self, config: &WebsiteConfig) -> Result<Bytes> {
+        info!(url = %config.url, "Taking embedded Chrome screenshot");
+
+        let browser_guard = self.browser.lock().await;
+        let browser = browser_guard
+            .as_ref()
+            .ok_or_else(|| Error::Config("Chrome browser has been closed".to_string()))?;
+
+        // Create a new tab
+        let tab = browser
+            .new_tab()
+            .map_err(|e| Error::Config(format!("Failed to create new tab: {}", e)))?;
+
+        // Set viewport size using set_bounds
+        tab.set_bounds(headless_chrome::types::Bounds::Normal {
+            left: Some(0),
+            top: Some(0),
+            width: Some(config.width as f64),
+            height: Some(config.height as f64),
+        })
+        .map_err(|e| Error::Config(format!("Failed to set viewport: {}", e)))?;
+
+        // Navigate to URL
+        tab.navigate_to(&config.url)
+            .map_err(|e| Error::Config(format!("Failed to navigate to {}: {}", config.url, e)))?;
+
+        // Wait for page to load
+        tab.wait_until_navigated()
+            .map_err(|e| Error::Config(format!("Failed to wait for navigation: {}", e)))?;
+
+        // Additional wait for dynamic content
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        // Take screenshot
+        let screenshot_data = if let Some(selector) = &config.element_selector {
+            debug!(selector = %selector, "Taking element-specific screenshot");
+
+            // Find element and take screenshot
+            let element = tab
+                .find_element(selector)
+                .map_err(|e| Error::Config(format!("Element not found '{}': {}", selector, e)))?;
+
+            element
+                .capture_screenshot(
+                    headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                )
+                .map_err(|e| {
+                    Error::Config(format!("Failed to capture element screenshot: {}", e))
+                })?
+        } else {
+            // Full page screenshot
+            tab.capture_screenshot(
+                headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                None, // Quality (not used for PNG)
+                None, // Clip (full page)
+                true, // From surface
+            )
+            .map_err(|e| Error::Config(format!("Failed to capture screenshot: {}", e)))?
+        };
+
+        // Close the tab
+        let _ = tab.close(true);
+
+        Ok(Bytes::from(screenshot_data))
+    }
+
+    async fn close(&self) -> Result<()> {
+        debug!("Closing embedded Chrome browser");
+        let mut browser_guard = self.browser.lock().await;
+        if let Some(browser) = browser_guard.take() {
+            // Browser will be automatically cleaned up when dropped
+            drop(browser);
         }
         Ok(())
     }

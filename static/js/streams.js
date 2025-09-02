@@ -1,12 +1,17 @@
 // ABOUTME: Stream viewer functionality for live video feeds
 // ABOUTME: Handles stream display, filtering, and real-time updates
 
+// Global event handlers to prevent memory leaks
+let streamActionsHandler = null;
+let modalClickHandler = null;
+
 document.addEventListener('DOMContentLoaded', function() {
     if (!requireAuth()) return;
 
     setupLogout();
     updateNavigation();
     setupStreamControls();
+    setupModalEventListeners();
     loadStreams();
 
     // Auto-refresh every 10 seconds
@@ -54,37 +59,8 @@ async function loadStreams() {
                 streams = [];
             }
         } catch (error) {
-            console.log('Streams API not available, showing placeholder data');
-            // Create some placeholder stream data for demonstration
-            streams = [
-                {
-                    id: 'stream-1',
-                    name: 'Front Door Camera',
-                    source: 'rtsp://192.168.1.100/stream',
-                    status: 'active',
-                    resolution: '1920x1080',
-                    fps: 30,
-                    last_frame_at: new Date().toISOString()
-                },
-                {
-                    id: 'stream-2',
-                    name: 'Parking Lot',
-                    source: 'rtsp://192.168.1.101/stream',
-                    status: 'inactive',
-                    resolution: '1280x720',
-                    fps: 15,
-                    last_frame_at: new Date(Date.now() - 300000).toISOString()
-                },
-                {
-                    id: 'stream-3',
-                    name: 'Office Lobby',
-                    source: 'http://192.168.1.102/mjpeg',
-                    status: 'active',
-                    resolution: '1920x1080',
-                    fps: 25,
-                    last_frame_at: new Date().toISOString()
-                }
-            ];
+            console.error('Failed to load streams from API:', error);
+            streams = [];
         }
 
         if (streams.length === 0) {
@@ -113,12 +89,13 @@ function displayStreams(streams) {
     streamsGrid.innerHTML = streams.map(stream => {
         const statusClass = stream.status === 'active' ? 'online' : 'offline';
         const lastSeen = stream.last_frame_at ? formatTimeAgo(new Date(stream.last_frame_at)) : 'Never';
+        const templateId = stream.template_id || stream.id;
 
         return `
-            <div class="stream-card" data-stream-id="${stream.id}" data-status="${stream.status}">
-                <div class="stream-preview" onclick="openStreamModal('${stream.id}')">
+            <div class="stream-card" data-stream-id="${stream.id}" data-template-id="${templateId}" data-status="${stream.status}">
+                <div class="stream-preview" data-action="open-modal" data-stream-id="${stream.id}">
                     ${stream.status === 'active' ?
-                        `<img src="/api/streams/${stream.id}/thumbnail" alt="${escapeHtml(stream.name)}" onerror="this.style.display='none'; this.parentElement.innerHTML='<span>📹 No Preview</span>'">`
+                        `<img src="/api/stream/${stream.id}/thumbnail" alt="${escapeHtml(stream.name)}" class="stream-thumbnail">`
                         : '<span>📹 Offline</span>'
                     }
                 </div>
@@ -133,10 +110,19 @@ function displayStreams(streams) {
                     <div class="stream-details">
                         <small>${stream.resolution || 'Unknown'} @ ${stream.fps || 0}fps</small>
                     </div>
+                    <div class="stream-controls">
+                        ${stream.status === 'active' ?
+                            `<button data-action="stop-stream" data-template-id="${templateId}" class="btn-danger btn-small">Stop</button>` :
+                            `<button data-action="start-stream" data-template-id="${templateId}" class="btn-primary btn-small">Start</button>`
+                        }
+                    </div>
                 </div>
             </div>
         `;
     }).join('');
+
+    // Add event listeners after creating the HTML
+    setupStreamEventListeners();
 }
 
 function filterStreams() {
@@ -178,36 +164,11 @@ async function openStreamModal(streamId) {
         // Try to get stream details
         let stream;
         try {
-            stream = await authManager.apiRequest(`/streams/${streamId}`);
+            stream = await authManager.apiRequest(`/stream/${streamId}`);
         } catch (error) {
-            // Fallback to mock data for demonstration
-            const mockStreams = {
-                'stream-1': {
-                    id: 'stream-1',
-                    name: 'Front Door Camera',
-                    source: 'rtsp://192.168.1.100/stream',
-                    status: 'active',
-                    resolution: '1920x1080',
-                    fps: 30
-                },
-                'stream-2': {
-                    id: 'stream-2',
-                    name: 'Parking Lot',
-                    source: 'rtsp://192.168.1.101/stream',
-                    status: 'inactive',
-                    resolution: '1280x720',
-                    fps: 15
-                },
-                'stream-3': {
-                    id: 'stream-3',
-                    name: 'Office Lobby',
-                    source: 'http://192.168.1.102/mjpeg',
-                    status: 'active',
-                    resolution: '1920x1080',
-                    fps: 25
-                }
-            };
-            stream = mockStreams[streamId];
+            console.error('Failed to load stream details:', error);
+            showError('Failed to load stream details');
+            return;
         }
 
         if (!stream) {
@@ -239,7 +200,7 @@ async function openStreamModal(streamId) {
         // Handle stream display
         if (stream.status === 'active') {
             if (modalImage && modalPlaceholder) {
-                modalImage.src = `/api/streams/${streamId}/live`;
+                modalImage.src = `/api/stream/${streamId}/live`;
                 modalImage.onerror = () => {
                     modalImage.classList.add('hidden');
                     modalPlaceholder.classList.remove('hidden');
@@ -285,12 +246,6 @@ function closeModal(modalId) {
     }
 }
 
-// Close modal when clicking outside
-document.addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal')) {
-        closeModal(e.target.id);
-    }
-});
 
 // Utility functions
 function formatTimeAgo(date) {
@@ -322,5 +277,159 @@ function showError(message) {
         setTimeout(() => {
             errorElement.classList.add('hidden');
         }, 5000);
+    }
+}
+
+function showSuccess(message) {
+    // Create or update a success message element
+    let successElement = document.getElementById('success-message');
+    if (!successElement) {
+        successElement = document.createElement('div');
+        successElement.id = 'success-message';
+        successElement.className = 'success-message hidden';
+        document.querySelector('.main-content').appendChild(successElement);
+    }
+
+    successElement.textContent = message;
+    successElement.classList.remove('hidden');
+    setTimeout(() => {
+        successElement.classList.add('hidden');
+    }, 3000);
+}
+
+function setupStreamEventListeners() {
+    // Handle all stream actions using event delegation
+    const streamsGrid = document.getElementById('streams-grid');
+    if (!streamsGrid) return;
+
+    // Remove existing listener if it exists
+    if (streamActionsHandler) {
+        streamsGrid.removeEventListener('click', streamActionsHandler);
+    }
+
+    // Create new handler function and store reference
+    streamActionsHandler = function(event) {
+        handleStreamActions(event);
+    };
+
+    // Add event listener with stored reference
+    streamsGrid.addEventListener('click', streamActionsHandler);
+
+    // Handle image errors with proper cleanup
+    const thumbnails = streamsGrid.querySelectorAll('.stream-thumbnail');
+    thumbnails.forEach(img => {
+        // Remove any existing error handlers first
+        img.removeEventListener('error', handleImageError);
+        // Add new handler
+        img.addEventListener('error', handleImageError);
+    });
+}
+
+function handleImageError() {
+    this.style.display = 'none';
+    this.parentElement.innerHTML = '<span>📹 No Preview</span>';
+}
+
+function setupModalEventListeners() {
+    // Remove existing listener if it exists to prevent duplicates
+    if (modalClickHandler) {
+        document.removeEventListener('click', modalClickHandler);
+    }
+
+    // Create new handler function and store reference
+    modalClickHandler = function(event) {
+        const action = event.target.getAttribute('data-action');
+
+        if (action === 'close-modal') {
+            const modalId = event.target.getAttribute('data-modal-id');
+            if (modalId) {
+                closeModal(modalId);
+            }
+        }
+
+        // Close modal when clicking outside (on modal backdrop)
+        if (event.target.classList.contains('modal')) {
+            closeModal(event.target.id);
+        }
+    };
+
+    // Add event listener with stored reference
+    document.addEventListener('click', modalClickHandler);
+}
+
+function handleStreamActions(event) {
+    const action = event.target.getAttribute('data-action');
+
+    if (action === 'open-modal') {
+        const streamId = event.target.getAttribute('data-stream-id');
+        if (streamId) {
+            openStreamModal(streamId);
+        }
+    } else if (action === 'start-stream') {
+        event.stopPropagation();
+        const templateId = event.target.getAttribute('data-template-id');
+        if (templateId) {
+            startStream(templateId, event);
+        }
+    } else if (action === 'stop-stream') {
+        event.stopPropagation();
+        const templateId = event.target.getAttribute('data-template-id');
+        if (templateId) {
+            stopStream(templateId, event);
+        }
+    }
+}
+
+async function startStream(templateId, event) {
+    const button = event.target;
+    const originalText = button.textContent;
+
+    try {
+        button.textContent = 'Starting...';
+        button.disabled = true;
+
+        const response = await authManager.apiRequest(`/stream/${templateId}/start`, {
+            method: 'POST'
+        });
+
+        showSuccess(`Stream started successfully`);
+
+        // Reload streams to update status immediately
+        loadStreams();
+
+    } catch (error) {
+        console.error('Error starting stream:', error);
+        showError(`Failed to start stream: ${error.message}`);
+
+        // Only restore button state on error
+        button.textContent = originalText;
+        button.disabled = false;
+    }
+}
+
+async function stopStream(templateId, event) {
+    const button = event.target;
+    const originalText = button.textContent;
+
+    try {
+        button.textContent = 'Stopping...';
+        button.disabled = true;
+
+        const response = await authManager.apiRequest(`/stream/${templateId}/stop`, {
+            method: 'POST'
+        });
+
+        showSuccess(`Stream stopped successfully`);
+
+        // Reload streams to update status immediately
+        loadStreams();
+
+    } catch (error) {
+        console.error('Error stopping stream:', error);
+        showError(`Failed to stop stream: ${error.message}`);
+
+        // Only restore button state on error
+        button.textContent = originalText;
+        button.disabled = false;
     }
 }

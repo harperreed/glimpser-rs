@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use gl_config::Config;
 use gl_core::telemetry;
-use gl_db::{Db, UserRepository};
+use gl_db::{CreateTemplateRequest, Db, TemplateRepository, UserRepository};
 use gl_obs::ObsState;
 use gl_web::AppState;
 use std::process;
@@ -139,10 +139,14 @@ async fn interactive_bootstrap(db: &Db) {
     println!();
     println!("Creating admin user...");
 
-    bootstrap_user(db, email, &password, username).await;
+    let user_id = bootstrap_user(db, email, &password, username).await;
+
+    println!();
+    println!("Creating example templates...");
+    create_example_templates(db, &user_id).await;
 }
 
-async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) {
+async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) -> String {
     use chrono::Utc;
     use gl_core::id::Id;
     use gl_web::auth::PasswordAuth;
@@ -153,12 +157,12 @@ async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) {
 
     // Check if user already exists
     match user_repo.find_by_email(email).await {
-        Ok(Some(_)) => {
+        Ok(Some(existing_user)) => {
             tracing::warn!(
                 "User with email {} already exists, skipping bootstrap",
                 email
             );
-            return;
+            return existing_user.id;
         }
         Ok(None) => {
             tracing::info!("Creating new admin user");
@@ -204,12 +208,89 @@ async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) {
             tracing::info!(
                 "You can now login to the web interface at http://127.0.0.1:8080/static/"
             );
+            user_id
         }
         Err(e) => {
             tracing::error!("Failed to create user: {}", e);
             process::exit(1);
         }
     }
+}
+
+async fn create_example_templates(db: &Db, user_id: &str) {
+    let template_repo = TemplateRepository::new(db.pool());
+
+    // Create Wrigleyville EarthCam template
+    let webcam_config = serde_json::json!({
+        "kind": "website",
+        "url": "https://www.earthcam.com/usa/illinois/chicago/wrigleyville/?cam=wrigleyville",
+        "headless": true,
+        "stealth": true,
+        "width": 1920,
+        "height": 1080,
+        "element_selector": ".cam-image"
+    });
+
+    let webcam_template = CreateTemplateRequest {
+        user_id: user_id.to_string(),
+        name: "Wrigleyville EarthCam".to_string(),
+        description: Some("Live webcam feed from Wrigleyville area in Chicago".to_string()),
+        config: webcam_config.to_string(),
+        is_default: false,
+    };
+
+    match template_repo.create(webcam_template).await {
+        Ok(template) => {
+            tracing::info!("✅ Created example webcam template: {}", template.name);
+            println!(
+                "   📹 Webcam Template: {} (ID: {})",
+                template.name, template.id
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Failed to create webcam template: {}", e);
+            println!("   ⚠️  Failed to create webcam template");
+        }
+    }
+
+    // Create NPR news site template
+    let news_config = serde_json::json!({
+        "kind": "website",
+        "url": "https://www.npr.org",
+        "headless": true,
+        "stealth": true,
+        "width": 1920,
+        "height": 1080,
+        "element_selector": "main"
+    });
+
+    let news_template = CreateTemplateRequest {
+        user_id: user_id.to_string(),
+        name: "NPR News Site".to_string(),
+        description: Some("NPR main page for news monitoring".to_string()),
+        config: news_config.to_string(),
+        is_default: false,
+    };
+
+    match template_repo.create(news_template).await {
+        Ok(template) => {
+            tracing::info!("✅ Created example news template: {}", template.name);
+            println!(
+                "   📰 News Template: {} (ID: {})",
+                template.name, template.id
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Failed to create news template: {}", e);
+            println!("   ⚠️  Failed to create news template");
+        }
+    }
+
+    println!();
+    println!("🎉 Bootstrap complete! You can now:");
+    println!("   • Access the web interface at http://127.0.0.1:8080/static/");
+    println!("   • Use the example templates for testing");
+    println!("   • Take snapshots via API: /api/stream/<template_id>/snapshot");
 }
 
 async fn start_server(config: Config, db: Db) {
@@ -236,6 +317,11 @@ async fn start_server(config: Config, db: Db) {
         },
     };
 
+    // Initialize capture manager
+    let capture_manager = std::sync::Arc::new(gl_web::capture_manager::CaptureManager::new(
+        db.pool().clone(),
+    ));
+
     let web_app_state = AppState {
         db: db.clone(),
         jwt_secret: config.security.jwt_secret.clone(),
@@ -252,6 +338,7 @@ async fn start_server(config: Config, db: Db) {
         )
         .with_override("/api/admin", config.server.body_limits.admin_json_limit)
         .with_override("/api/upload", config.server.body_limits.upload_limit),
+        capture_manager,
     };
 
     // Start observability server

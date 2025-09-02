@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, template_id, user_id, file_path, storage_uri, content_type,\n                   width, height, file_size, checksum, etag, captured_at,\n                   created_at, updated_at\n            FROM snapshots\n            WHERE template_id = ?\n            ORDER BY captured_at DESC\n            LIMIT ? OFFSET ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "template_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "user_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "storage_uri",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_type",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "width",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "height",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "file_size",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "checksum",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "etag",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "captured_at",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 13,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5023e6a7cbc70e7cf74c22f83834abf76dabb23f0f8cb388ef7d03ee4717718e"
+}

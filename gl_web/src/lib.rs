@@ -8,21 +8,24 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 pub mod auth;
+pub mod capture_manager;
 pub mod error;
 pub mod middleware;
 pub mod models;
 pub mod routes;
 
 use routes::{admin, alerts, auth as auth_routes, public, static_files, stream, templates};
+use std::sync::Arc;
 
 /// Application state shared across all handlers
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub jwt_secret: String,
     pub static_config: static_files::StaticConfig,
     pub rate_limit_config: middleware::ratelimit::RateLimitConfig,
     pub body_limits_config: middleware::bodylimits::BodyLimitsConfig,
+    pub capture_manager: Arc<capture_manager::CaptureManager>,
 }
 
 /// OpenAPI documentation
@@ -33,6 +36,8 @@ pub struct AppState {
         public::me,
         stream::snapshot,
         stream::mjpeg_stream,
+        stream::start_stream,
+        stream::stop_stream,
     ),
     components(
         schemas(
@@ -100,11 +105,9 @@ pub fn create_app(
                 )
                 .service(
                     web::scope("/admin")
-                        // Apply rate limiting after authentication - innermost wrap runs last
                         .wrap(middleware::ratelimit::RateLimit::new(
                             rate_limit_config.clone(),
                         ))
-                        .wrap(middleware::rbac::RequireRole::admin())
                         .wrap(middleware::auth::RequireAuth::new())
                         .service(admin::test_route)
                         .service(admin::list_templates)
@@ -120,8 +123,21 @@ pub fn create_app(
                         .service(admin::update_history),
                 )
                 .service(
+                    web::scope("/stream")
+                        .wrap(middleware::ratelimit::RateLimit::new(
+                            rate_limit_config.clone(),
+                        ))
+                        .wrap(middleware::auth::RequireAuth::new())
+                        .service(stream::snapshot)
+                        .service(stream::mjpeg_stream)
+                        .service(stream::start_stream)
+                        .service(stream::stop_stream)
+                        .service(stream::thumbnail)
+                        .service(stream::stream_details)
+                        .service(stream::live_stream),
+                )
+                .service(
                     web::scope("")
-                        // Apply rate limiting after authentication - innermost wrap runs last
                         .wrap(middleware::ratelimit::RateLimit::new(
                             rate_limit_config.clone(),
                         ))
@@ -132,28 +148,13 @@ pub fn create_app(
                         .service(public::alerts),
                 )
                 .service(
-                    web::scope("/stream")
-                        .wrap(middleware::auth::RequireAuth::new())
-                        .service(stream::snapshot)
-                        .service(stream::mjpeg_stream),
-                )
-                .service(
-                    web::scope("")
+                    web::scope("/templates")
                         .wrap(middleware::ratelimit::RateLimit::new(
                             rate_limit_config.clone(),
                         ))
-                        .wrap(middleware::rbac::RequireRole::operator())
                         .wrap(middleware::auth::RequireAuth::new())
                         .service(templates::list_templates_service)
-                        .service(templates::get_template_service),
-                )
-                .service(
-                    web::scope("")
-                        .wrap(middleware::ratelimit::RateLimit::new(
-                            rate_limit_config.clone(),
-                        ))
-                        .wrap(middleware::rbac::RequireRole::admin())
-                        .wrap(middleware::auth::RequireAuth::new())
+                        .service(templates::get_template_service)
                         .service(templates::create_template_service)
                         .service(templates::update_template_service)
                         .service(templates::delete_template_service),
@@ -202,12 +203,15 @@ mod tests {
             .await
             .expect("Failed to create test database");
 
+        let capture_manager = Arc::new(capture_manager::CaptureManager::new(db.pool().clone()));
+
         AppState {
             db,
             jwt_secret: "test_secret_key_32_characters_minimum".to_string(),
             static_config: static_files::StaticConfig::default(),
             rate_limit_config: middleware::ratelimit::RateLimitConfig::default(),
             body_limits_config: middleware::bodylimits::BodyLimitsConfig::default(),
+            capture_manager,
         }
     }
 

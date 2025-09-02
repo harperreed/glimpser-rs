@@ -10,7 +10,8 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_db = { path = "../gl_db" }
-gl_capture = { path = "../gl_capture", features = ["website"] }
+gl_capture = { path = "../gl_capture", features = ["website_embedded"] }
+gl_storage = { path = "../gl_storage" }
 gl_stream = { path = "../gl_stream" }
 gl_notify = { path = "../gl_notify" }
 gl_cap = { path = "../gl_cap" }
@@ -33,6 +34,9 @@ actix-files.workspace = true
 mime_guess.workspace = true
 sha2.workspace = true
 hex.workspace = true
+sqlx.workspace = true
+tokio-stream = "0.1.17"
+bytes.workspace = true
 
 [dev-dependencies]
 tempfile = "3.0"

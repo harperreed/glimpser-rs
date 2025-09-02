@@ -110,56 +110,82 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
     match template_repo.list(None, 0, 1000).await {
         Ok(templates) => {
             let template_count = templates.len();
-            let streams: Vec<StreamInfo> = templates
-                .into_iter()
-                .filter_map(|template| {
-                    // Parse the config JSON string
-                    let config: Value = match serde_json::from_str(&template.config) {
-                        Ok(config) => config,
-                        Err(e) => {
-                            error!(
-                                "Failed to parse template config for template '{}' (id: {}): {}. Config: {}",
-                                template.name, template.id, e, template.config
-                            );
-                            return None;
+            let mut streams: Vec<StreamInfo> = Vec::new();
+
+            for template in templates {
+                // Parse the config JSON string
+                let config: Value = match serde_json::from_str(&template.config) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        error!(
+                            "Failed to parse template config for template '{}' (id: {}): {}. Config: {}",
+                            template.name, template.id, e, template.config
+                        );
+                        continue;
+                    }
+                };
+
+                // Extract source URL from template config
+                let source = match extract_source_from_template_config(&config) {
+                    Some(source) => source,
+                    None => {
+                        error!(
+                            "Failed to extract source from template '{}' (id: {}). Config: {}",
+                            template.name,
+                            template.id,
+                            serde_json::to_string_pretty(&config).unwrap_or_default()
+                        );
+                        continue;
+                    }
+                };
+
+                // Check actual execution status from database and capture manager
+                let status = match template.execution_status.as_deref() {
+                    Some("active") => {
+                        // Double check with capture manager if it's really running
+                        if state
+                            .capture_manager
+                            .is_template_running(&template.id)
+                            .await
+                        {
+                            StreamStatus::Active
+                        } else {
+                            StreamStatus::Inactive
                         }
-                    };
+                    }
+                    Some("starting") => StreamStatus::Starting,
+                    Some("stopping") => StreamStatus::Stopping,
+                    Some("error") => StreamStatus::Error,
+                    _ => StreamStatus::Inactive,
+                };
 
-                    // Extract source URL from template config
-                    let source = match extract_source_from_template_config(&config) {
-                        Some(source) => source,
-                        None => {
-                            error!(
-                                "Failed to extract source from template '{}' (id: {}). Config: {}",
-                                template.name, template.id, serde_json::to_string_pretty(&config).unwrap_or_default()
-                            );
-                            return None;
-                        }
-                    };
+                // Extract resolution from config or use default
+                let resolution = extract_resolution_from_config(&config)
+                    .unwrap_or_else(|| "1920x1080".to_string());
 
-                    // For now, mark all templates as inactive since we don't have execution layer yet
-                    // TODO: Check actual execution status when capture manager is implemented
-                    let status = StreamStatus::Inactive;
+                // Set FPS based on template type
+                let fps = get_fps_for_template_type(&config);
 
-                    // Extract resolution from config or use default
-                    let resolution = extract_resolution_from_config(&config)
-                        .unwrap_or_else(|| "1920x1080".to_string());
+                // Get last frame time from capture manager if running
+                let last_frame_at = if let Some(capture_info) =
+                    state.capture_manager.get_capture_status(&template.id).await
+                {
+                    capture_info.last_frame_at.map(|dt| dt.to_rfc3339())
+                } else {
+                    template.last_executed_at.clone()
+                };
 
-                    // Set FPS based on template type
-                    let fps = get_fps_for_template_type(&config);
-
-                    Some(StreamInfo {
-                        id: template.id.clone(),
-                        name: template.name.clone(),
-                        source,
-                        status,
-                        resolution,
-                        fps,
-                        last_frame_at: None, // TODO: Get from capture history when implemented
-                        template_id: Some(template.id),
-                    })
-                })
-                .collect();
+                streams.push(StreamInfo {
+                    id: template.id.clone(),
+                    name: template.name.clone(),
+                    source,
+                    status,
+                    resolution,
+                    fps,
+                    last_frame_at,
+                    template_id: Some(template.id),
+                });
+            }
 
             debug!(
                 "Returning {} streams from {} templates",

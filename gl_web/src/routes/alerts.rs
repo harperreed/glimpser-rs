@@ -342,7 +342,7 @@ pub async fn notification_health() -> ActixResult<HttpResponse> {
 /// Configure alert routes
 pub fn configure_alert_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/api/alerts")
+        web::scope("/alerts")
             .route("/health", web::get().to(notification_health))
             .route(
                 "/test",
