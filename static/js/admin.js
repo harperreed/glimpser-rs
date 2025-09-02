@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateNavigation();
     setupTabs();
     setupModals();
+    setupTemplateTypeHandling();
     loadInitialData();
 });
 
@@ -30,6 +31,34 @@ function setupTabs() {
             loadTabData(targetTab);
         });
     });
+}
+
+function setupTemplateTypeHandling() {
+    const templateTypeSelect = document.getElementById('template-type');
+    if (templateTypeSelect) {
+        templateTypeSelect.addEventListener('change', function() {
+            handleTemplateTypeChange(this.value);
+        });
+    }
+}
+
+function handleTemplateTypeChange(templateType) {
+    const websiteOptions = document.getElementById('website-options');
+    const ffmpegOptions = document.getElementById('ffmpeg-options');
+
+    // Hide all sections first
+    if (websiteOptions) websiteOptions.classList.add('hidden');
+    if (ffmpegOptions) ffmpegOptions.classList.add('hidden');
+
+    // Show relevant sections based on type
+    switch (templateType) {
+        case 'website':
+            if (websiteOptions) websiteOptions.classList.remove('hidden');
+            break;
+        case 'ffmpeg':
+            if (ffmpegOptions) ffmpegOptions.classList.remove('hidden');
+            break;
+    }
 }
 
 function setupModals() {
@@ -199,7 +228,7 @@ async function loadTemplates() {
     tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading templates...</td></tr>';
 
     try {
-        const templates = await authManager.apiRequest('admin/templates');
+        const templates = await authManager.apiRequest('/admin/templates');
 
         if (!templates || templates.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" class="empty">No templates found</td></tr>';
@@ -346,34 +375,48 @@ async function handleCreateTemplate(e) {
     let config;
     switch (type) {
         case 'website':
+            const width = parseInt(document.getElementById('template-width').value) || 1920;
+            const height = parseInt(document.getElementById('template-height').value) || 1080;
+            const elementSelector = document.getElementById('template-element-selector').value.trim();
+            const headless = document.getElementById('template-headless').checked;
+
             config = {
                 kind: 'website',
                 url: url,
-                headless: true,
+                headless: headless,
                 stealth: false,
-                width: 1280,
-                height: 720
+                width: width,
+                height: height
             };
+
+            // Add element selector if provided
+            if (elementSelector) {
+                config.element_selector = elementSelector;
+            }
             break;
-        case 'rtsp':
+        case 'ffmpeg':
+            const hardwareAccel = document.getElementById('template-hardware-accel').value;
             config = {
-                kind: 'rtsp',
-                rtsp_url: url,
+                kind: 'ffmpeg',
+                source_url: url,
                 reconnect: true
+            };
+            if (hardwareAccel && hardwareAccel !== 'none') {
+                config.hardware_acceleration = hardwareAccel;
+            }
+            break;
+        case 'yt':
+            config = {
+                kind: 'yt',
+                url: url,
+                format: 'best',
+                is_live: false
             };
             break;
         case 'file':
             config = {
                 kind: 'file',
                 file_path: url
-            };
-            break;
-        case 'youtube':
-            config = {
-                kind: 'yt',
-                url: url,
-                format: 'best',
-                is_live: false
             };
             break;
         default:
@@ -424,6 +467,15 @@ function resetTemplateForm() {
     const submitButton = document.querySelector('#template-form button[type="submit"]');
     modalTitle.textContent = 'Create Template';
     submitButton.textContent = 'Create Template';
+
+    // Reset to default values
+    document.getElementById('template-width').value = 1920;
+    document.getElementById('template-height').value = 1080;
+    document.getElementById('template-headless').checked = true;
+    document.getElementById('template-hardware-accel').value = 'none';
+
+    // Hide all optional sections
+    handleTemplateTypeChange('');
 }
 
 function openModal(modalId) {
@@ -519,20 +571,38 @@ async function editTemplate(templateId) {
         if (config.kind === 'website') {
             typeSelect.value = 'website';
             urlInput.value = config.url || '';
-        } else if (config.kind === 'rtsp') {
-            typeSelect.value = 'rtsp';
-            urlInput.value = config.rtsp_url || config.url || '';
+
+            // Populate website-specific fields
+            document.getElementById('template-width').value = config.width || 1920;
+            document.getElementById('template-height').value = config.height || 1080;
+            document.getElementById('template-element-selector').value = config.element_selector || '';
+            document.getElementById('template-headless').checked = config.headless !== false;
+        } else if (config.kind === 'ffmpeg') {
+            typeSelect.value = 'ffmpeg';
+            urlInput.value = config.source_url || config.rtsp_url || config.url || '';
+
+            // Populate ffmpeg-specific fields
+            document.getElementById('template-hardware-accel').value = config.hardware_acceleration || 'none';
         } else if (config.kind === 'file') {
             typeSelect.value = 'file';
             urlInput.value = config.file_path || config.path || '';
         } else if (config.kind === 'yt' || config.kind === 'youtube') {
-            typeSelect.value = 'youtube';
+            typeSelect.value = 'yt';
             urlInput.value = config.url || '';
         } else {
             // Default to website if unknown
             typeSelect.value = 'website';
             urlInput.value = '';
+
+            // Set default values for website fields
+            document.getElementById('template-width').value = 1920;
+            document.getElementById('template-height').value = 1080;
+            document.getElementById('template-element-selector').value = '';
+            document.getElementById('template-headless').checked = true;
         }
+
+        // Show/hide appropriate sections based on selected type
+        handleTemplateTypeChange(typeSelect.value);
 
         // Update form title and button text for editing
         const modalTitle = document.querySelector('#template-modal h3');
