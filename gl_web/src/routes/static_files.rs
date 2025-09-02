@@ -112,11 +112,11 @@ pub async fn serve_static(
     if static_config.enable_csp {
         let csp_value = if let Some(nonce) = &static_config.csp_nonce {
             format!(
-                "default-src 'self'; script-src 'self' 'nonce-{}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';",
+                "default-src 'self'; script-src 'self' 'nonce-{}' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';",
                 nonce
             )
         } else {
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';".to_string()
+            "default-src 'self'; script-src 'self' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';".to_string()
         };
 
         response.insert_header(("content-security-policy", csp_value));
@@ -159,11 +159,11 @@ pub async fn spa_fallback(
     if static_config.enable_csp {
         let csp_value = if let Some(nonce) = &static_config.csp_nonce {
             format!(
-                "default-src 'self'; script-src 'self' 'nonce-{}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';",
+                "default-src 'self'; script-src 'self' 'nonce-{}' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';",
                 nonce
             )
         } else {
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';".to_string()
+            "default-src 'self'; script-src 'self' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none';".to_string()
         };
         response.insert_header(("content-security-policy", csp_value));
     }
