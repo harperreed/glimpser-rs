@@ -10,6 +10,16 @@ use gl_update::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
+/// Test route to verify admin access
+#[get("/test")]
+pub async fn test_route(_req: HttpRequest) -> Result<HttpResponse> {
+    debug!("Admin test route accessed");
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "status": "ok",
+        "message": "Admin access verified"
+    })))
+}
+
 /// List all templates (admin only)
 #[get("/templates")]
 pub async fn list_templates(

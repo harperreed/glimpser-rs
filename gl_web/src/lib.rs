@@ -137,27 +137,7 @@ pub fn create_app(
                         .service(stream::snapshot)
                         .service(stream::mjpeg_stream),
                 )
-                .service(
-                    web::scope("")
-                        .wrap(middleware::ratelimit::RateLimit::new(
-                            rate_limit_config.clone(),
-                        ))
-                        .wrap(middleware::rbac::RequireRole::operator())
-                        .wrap(middleware::auth::RequireAuth::new())
-                        .service(templates::list_templates_service)
-                        .service(templates::get_template_service),
-                )
-                .service(
-                    web::scope("")
-                        .wrap(middleware::ratelimit::RateLimit::new(
-                            rate_limit_config.clone(),
-                        ))
-                        .wrap(middleware::rbac::RequireRole::admin())
-                        .wrap(middleware::auth::RequireAuth::new())
-                        .service(templates::create_template_service)
-                        .service(templates::update_template_service)
-                        .service(templates::delete_template_service),
-                )
+                .configure(templates::configure_template_routes)
                 .configure(alerts::configure_alert_routes)
                 .service(web::scope("/debug").route(
                     "/test",
