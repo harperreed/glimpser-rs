@@ -16,6 +16,9 @@ pub struct Template {
     pub is_default: bool,
     pub created_at: String,
     pub updated_at: String,
+    pub execution_status: Option<String>,
+    pub last_executed_at: Option<String>,
+    pub last_error_message: Option<String>,
 }
 
 /// Request to create a new template
@@ -55,8 +58,8 @@ impl<'a> TemplateRepository<'a> {
         let template = sqlx::query_as!(
             Template,
             r#"
-            INSERT INTO templates (id, user_id, name, description, config, is_default, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO templates (id, user_id, name, description, config, is_default, created_at, updated_at, execution_status, last_executed_at, last_error_message)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             RETURNING *
             "#,
             id,
@@ -66,7 +69,10 @@ impl<'a> TemplateRepository<'a> {
             request.config,
             request.is_default,
             now,
-            now
+            now,
+            "inactive",
+            None::<String>,
+            None::<String>
         )
         .fetch_one(self.pool)
         .await
@@ -77,10 +83,18 @@ impl<'a> TemplateRepository<'a> {
 
     /// Find template by ID
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Template>> {
-        let template = sqlx::query_as!(Template, "SELECT * FROM templates WHERE id = ?1", id)
-            .fetch_optional(self.pool)
-            .await
-            .map_err(|e| Error::Database(format!("Failed to find template: {}", e)))?;
+        let template = sqlx::query_as!(
+            Template,
+            r#"
+            SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                   execution_status, last_executed_at, last_error_message
+            FROM templates WHERE id = ?1
+            "#,
+            id
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to find template: {}", e)))?;
 
         Ok(template)
     }
@@ -110,7 +124,8 @@ impl<'a> TemplateRepository<'a> {
             UPDATE templates
             SET name = ?1, description = ?2, config = ?3, is_default = ?4, updated_at = ?5
             WHERE id = ?6
-            RETURNING *
+            RETURNING id, user_id, name, description, config, is_default, created_at, updated_at,
+                      execution_status, last_executed_at, last_error_message
             "#,
             name,
             description,
@@ -146,7 +161,11 @@ impl<'a> TemplateRepository<'a> {
         let templates = if let Some(uid) = user_id {
             sqlx::query_as!(
                 Template,
-                "SELECT * FROM templates WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+                r#"
+                SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                       execution_status, last_executed_at, last_error_message
+                FROM templates WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3
+                "#,
                 uid,
                 limit,
                 offset
@@ -156,7 +175,11 @@ impl<'a> TemplateRepository<'a> {
         } else {
             sqlx::query_as!(
                 Template,
-                "SELECT * FROM templates ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+                r#"
+                SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                       execution_status, last_executed_at, last_error_message
+                FROM templates ORDER BY created_at DESC LIMIT ?1 OFFSET ?2
+                "#,
                 limit,
                 offset
             )
@@ -192,7 +215,11 @@ impl<'a> TemplateRepository<'a> {
         let pattern = format!("%{}%", name_pattern);
         let templates = sqlx::query_as!(
             Template,
-            "SELECT * FROM templates WHERE name LIKE ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            r#"
+            SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                   execution_status, last_executed_at, last_error_message
+            FROM templates WHERE name LIKE ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3
+            "#,
             pattern,
             limit,
             offset
@@ -200,6 +227,83 @@ impl<'a> TemplateRepository<'a> {
         .fetch_all(self.pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to search templates: {}", e)))?;
+
+        Ok(templates)
+    }
+
+    /// Update execution status
+    pub async fn update_execution_status(
+        &self,
+        id: &str,
+        status: &str,
+        last_executed_at: Option<&str>,
+    ) -> Result<bool> {
+        let now = now_iso8601();
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE templates
+            SET execution_status = ?1, last_executed_at = ?2, updated_at = ?3
+            WHERE id = ?4
+            "#,
+            status,
+            last_executed_at,
+            now,
+            id
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update execution status: {}", e)))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update execution status with error message
+    pub async fn update_execution_status_with_error(
+        &self,
+        id: &str,
+        status: &str,
+        error_message: &str,
+    ) -> Result<bool> {
+        let now = now_iso8601();
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE templates
+            SET execution_status = ?1, last_error_message = ?2, updated_at = ?3
+            WHERE id = ?4
+            "#,
+            status,
+            error_message,
+            now,
+            id
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(format!(
+                "Failed to update execution status with error: {}",
+                e
+            ))
+        })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Find templates by execution status
+    pub async fn find_by_execution_status(&self, status: &str) -> Result<Vec<Template>> {
+        let templates = sqlx::query_as!(
+            Template,
+            r#"
+            SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                   execution_status, last_executed_at, last_error_message
+            FROM templates WHERE execution_status = ?1 ORDER BY last_executed_at DESC
+            "#,
+            status
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to find templates by status: {}", e)))?;
 
         Ok(templates)
     }

@@ -1,0 +1,28 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+
+# Set environment variables
+set env(GLIMPSER_SECURITY_JWT_SECRET) "valid32characterjwtsecretfortest"
+
+# Start the bootstrap process
+spawn cargo run --bin glimpser bootstrap
+
+# Wait for email prompt
+expect "Enter admin email address:"
+send "admin@example.com\r"
+
+# Wait for username prompt
+expect "Enter username (default: admin):"
+send "admin\r"
+
+# Wait for password prompt
+expect "Enter admin password:"
+send "admin123\r"
+
+# Wait for password confirmation
+expect "Confirm admin password:"
+send "admin123\r"
+
+# Wait for completion
+expect eof

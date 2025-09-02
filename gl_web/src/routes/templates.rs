@@ -8,11 +8,7 @@ use serde_json::{Map, Value};
 use tracing::{info, warn};
 use validator::Validate;
 
-use crate::{
-    middleware::auth::{get_http_auth_user, RequireAuth},
-    middleware::rbac::RequireRole,
-    models::ApiResponse,
-};
+use crate::{middleware::auth::get_http_auth_user, models::ApiResponse};
 
 /// Query parameters for listing templates
 #[derive(Debug, Deserialize)]
@@ -558,32 +554,55 @@ pub async fn delete_template(
     Ok(HttpResponse::NoContent().finish())
 }
 
-/// Configure template routes
-pub fn configure_template_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/api/templates")
-            .wrap(RequireAuth::new())
-            .route(
-                "",
-                web::get().to(list_templates).wrap(RequireRole::operator()),
-            )
-            .route(
-                "",
-                web::post().to(create_template).wrap(RequireRole::admin()),
-            )
-            .route(
-                "/{id}",
-                web::get().to(get_template).wrap(RequireRole::operator()),
-            )
-            .route(
-                "/{id}",
-                web::put().to(update_template).wrap(RequireRole::admin()),
-            )
-            .route(
-                "/{id}",
-                web::delete().to(delete_template).wrap(RequireRole::admin()),
-            ),
-    );
+/// List templates handler for actix service macro
+#[actix_web::get("/templates")]
+pub async fn list_templates_service(
+    query: web::Query<ListTemplatesQuery>,
+    req: HttpRequest,
+    db: web::Data<gl_db::Db>,
+) -> ActixResult<HttpResponse> {
+    list_templates(query, req, db).await
+}
+
+/// Get template handler for actix service macro
+#[actix_web::get("/templates/{id}")]
+pub async fn get_template_service(
+    path: web::Path<String>,
+    req: HttpRequest,
+    db: web::Data<gl_db::Db>,
+) -> ActixResult<HttpResponse> {
+    get_template(path, req, db).await
+}
+
+/// Create template handler for actix service macro
+#[actix_web::post("/templates")]
+pub async fn create_template_service(
+    payload: web::Json<CreateTemplateApiRequest>,
+    req: HttpRequest,
+    db: web::Data<gl_db::Db>,
+) -> ActixResult<HttpResponse> {
+    create_template(payload, req, db).await
+}
+
+/// Update template handler for actix service macro
+#[actix_web::put("/templates/{id}")]
+pub async fn update_template_service(
+    path: web::Path<String>,
+    payload: web::Json<UpdateTemplateApiRequest>,
+    req: HttpRequest,
+    db: web::Data<gl_db::Db>,
+) -> ActixResult<HttpResponse> {
+    update_template(path, payload, req, db).await
+}
+
+/// Delete template handler for actix service macro
+#[actix_web::delete("/templates/{id}")]
+pub async fn delete_template_service(
+    path: web::Path<String>,
+    req: HttpRequest,
+    db: web::Data<gl_db::Db>,
+) -> ActixResult<HttpResponse> {
+    delete_template(path, req, db).await
 }
 
 #[cfg(test)]
@@ -721,6 +740,9 @@ mod tests {
             description: None,
             config: "{}".to_string(),
             is_default: false,
+            execution_status: Some("idle".to_string()),
+            last_executed_at: None,
+            last_error_message: None,
             created_at: "2023-01-01T00:00:00Z".to_string(),
             updated_at: "2023-01-01T00:00:00Z".to_string(),
         };

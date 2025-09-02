@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_proc = { path = "../gl_proc" }
+gl_storage = { path = "../gl_storage" }
 test_support = { path = "../test_support" }
 tokio.workspace = true
 tracing.workspace = true
@@ -23,8 +24,13 @@ chrono = { version = "0.4", features = ["serde"] }
 # Website capture dependencies (feature-gated)
 thirtyfour = { version = "0.34", optional = true }
 base64 = { version = "0.22", optional = true }
+headless_chrome = { version = "1.0", optional = true }
+
+[dev-dependencies]
+tempfile = "3.12"
 
 [features]
 default = []
 website = ["thirtyfour", "base64"]
+website_embedded = ["headless_chrome", "base64"]
 website_live = ["website"]

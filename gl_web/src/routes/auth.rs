@@ -69,7 +69,7 @@ pub async fn login(
                             debug!("JWT token created for user: {}", user.id);
 
                             let response = LoginResponse {
-                                access_token: token,
+                                access_token: token.clone(),
                                 token_type: "Bearer".to_string(),
                                 expires_in: JwtAuth::token_expiration_secs(),
                                 user: UserInfo {
@@ -82,7 +82,18 @@ pub async fn login(
                                 },
                             };
 
-                            Ok(HttpResponse::Ok().json(response))
+                            // Set JWT token as HTTP-only cookie for image requests
+                            let cookie = actix_web::cookie::Cookie::build("auth_token", token)
+                                .path("/")
+                                .max_age(actix_web::cookie::time::Duration::seconds(
+                                    JwtAuth::token_expiration_secs() as i64,
+                                ))
+                                .http_only(true)
+                                .secure(false) // Set to true in production with HTTPS
+                                .same_site(actix_web::cookie::SameSite::Lax)
+                                .finish();
+
+                            Ok(HttpResponse::Ok().cookie(cookie).json(response))
                         }
                         Err(e) => {
                             warn!("Failed to create JWT token: {}", e);

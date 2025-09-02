@@ -1,0 +1,17 @@
+#!/usr/bin/expect -f
+
+spawn env GLIMPSER_SECURITY_JWT_SECRET=valid32characterjwtsecretfortest cargo run --bin glimpser bootstrap
+
+expect "Enter admin email address: "
+send "admin@test.com\r"
+
+expect "Enter username (default: admin): "
+send "admin\r"
+
+expect "Enter admin password: "
+send "testpass123\r"
+
+expect "Confirm admin password: "
+send "testpass123\r"
+
+expect eof

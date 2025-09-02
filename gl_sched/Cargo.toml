@@ -9,8 +9,8 @@ rust-version.workspace = true
 
 [dependencies]
 gl_core = { path = "../gl_core" }
-# gl_db = { path = "../gl_db" } # Temporarily disabled due to SQLx compilation issues
-# gl_capture = { path = "../gl_capture" } # Temporarily disabled to simplify compilation
+gl_db = { path = "../gl_db" }
+gl_capture = { path = "../gl_capture" }
 tokio.workspace = true
 tokio-cron-scheduler = "0.11"
 cron = "0.12"

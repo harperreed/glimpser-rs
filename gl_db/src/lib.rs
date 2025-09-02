@@ -149,6 +149,7 @@ pub use repositories::{
         CreateNotificationDelivery, DeliveryStatus, NotificationDelivery,
         NotificationDeliveryRepository, UpdateDeliveryStatus,
     },
+    snapshots::{CreateSnapshotRequest, Snapshot, SnapshotMetadata, SnapshotRepository},
     templates::{CreateTemplateRequest, Template, TemplateRepository, UpdateTemplateRequest},
     users::{CreateUserRequest, UpdateUserRequest, User, UserRepository},
 };

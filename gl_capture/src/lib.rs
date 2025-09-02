@@ -9,6 +9,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, warn};
 
+pub mod artifact_storage;
 pub mod ffmpeg_source;
 pub mod file_source;
 pub mod yt_dlp_source;
@@ -16,6 +17,9 @@ pub mod yt_dlp_source;
 #[cfg(feature = "website")]
 pub mod website_source;
 
+pub use artifact_storage::{
+    snapshot_and_store, ArtifactStorageConfig, ArtifactStorageService, StoredArtifact,
+};
 pub use ffmpeg_source::{FfmpegConfig, FfmpegSource, HardwareAccel};
 pub use file_source::FileSource;
 pub use yt_dlp_source::{OutputFormat, YtDlpConfig, YtDlpSource};
