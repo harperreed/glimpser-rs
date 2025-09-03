@@ -73,7 +73,10 @@ export default function DashboardPage() {
                 </div>
                 <div className="bg-gray-50 px-5 py-3">
                   <div className="text-sm">
-                    <button className="font-medium text-blue-600 hover:text-blue-500">
+                    <button 
+                      onClick={() => router.push('/streams')}
+                      className="font-medium text-blue-600 hover:text-blue-500"
+                    >
                       View all streams
                     </button>
                   </div>
