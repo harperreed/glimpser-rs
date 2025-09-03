@@ -15,7 +15,7 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 
-use routes::{alerts, auth as auth_routes, public, static_files, stream, templates};
+use routes::{admin, alerts, auth as auth_routes, public, static_files, stream, templates};
 use std::sync::Arc;
 
 /// Application state shared across all handlers
@@ -133,6 +133,28 @@ pub fn create_app(
                         .service(templates::create_template_service)
                         .service(templates::update_template_service)
                         .service(templates::delete_template_service),
+                )
+                .service(
+                    web::scope("/settings")
+                        .wrap(middleware::ratelimit::RateLimit::new(
+                            rate_limit_config.clone(),
+                        ))
+                        .wrap(middleware::auth::RequireAuth::new())
+                        // Template management
+                        .service(admin::list_templates)
+                        .service(admin::get_template)
+                        .service(admin::create_template)
+                        .service(admin::update_template)
+                        .service(admin::delete_template)
+                        // User management
+                        .service(admin::list_users)
+                        .service(admin::get_user)
+                        .service(admin::create_user)
+                        .service(admin::delete_user)
+                        // API key management
+                        .service(admin::list_api_keys)
+                        .service(admin::create_api_key)
+                        .service(admin::delete_api_key),
                 )
                 .configure(alerts::configure_alert_routes)
                 .service(web::scope("/debug").route(
