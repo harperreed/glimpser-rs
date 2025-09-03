@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/contexts/auth';
@@ -26,7 +26,7 @@ export default function StreamsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedStream, setSelectedStream] = useState<Stream | null>(null);
-  
+
   const { user, logout } = useAuth();
   const router = useRouter();
 
@@ -42,6 +42,14 @@ export default function StreamsPage() {
     } finally {
       setIsLoading(false);
     }
+  }, []);
+
+  // Add ref to track if component is mounted
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   // Filter streams when filter or streams change
@@ -64,6 +72,20 @@ export default function StreamsPage() {
     return () => clearInterval(interval);
   }, [loadStreams]);
 
+  // Handle modal keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedStream) {
+        setSelectedStream(null);
+      }
+    };
+
+    if (selectedStream) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [selectedStream]);
+
   const handleLogout = () => {
     logout();
     router.push('/login');
@@ -73,13 +95,13 @@ export default function StreamsPage() {
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    
+
     if (diffMinutes < 1) return 'Just now';
     if (diffMinutes < 60) return `${diffMinutes}m ago`;
-    
+
     const diffHours = Math.floor(diffMinutes / 60);
     if (diffHours < 24) return `${diffHours}h ago`;
-    
+
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
   };
@@ -93,7 +115,7 @@ export default function StreamsPage() {
             <h1 className="text-xl font-bold text-blue-600">🔍 Glimpser</h1>
           </div>
           <div className="flex items-center gap-6">
-            <button 
+            <button
               onClick={() => router.push('/dashboard')}
               className="text-gray-500 font-medium hover:text-blue-600 transition-colors duration-200"
             >
@@ -103,7 +125,7 @@ export default function StreamsPage() {
             <span className="text-sm text-gray-500">
               Welcome, {user?.username || user?.email}
             </span>
-            <button 
+            <button
               onClick={handleLogout}
               className="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200"
             >
@@ -117,15 +139,15 @@ export default function StreamsPage() {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <h2 className="text-2xl font-bold text-gray-800">Live Streams</h2>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-              <button 
+              <button
                 onClick={loadStreams}
                 disabled={isLoading}
                 className="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200 disabled:opacity-50"
               >
                 {isLoading ? 'Refreshing...' : 'Refresh'}
               </button>
-              <select 
-                value={filter} 
+              <select
+                value={filter}
                 onChange={(e) => setFilter(e.target.value as FilterType)}
                 className="px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
               >
@@ -163,23 +185,24 @@ export default function StreamsPage() {
           {filteredStreams.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredStreams.map((stream) => (
-                <div 
+                <div
                   key={stream.id}
                   className="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden"
                 >
                   {/* Stream Preview */}
-                  <div 
+                  <div
                     className="aspect-video bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors"
                     onClick={() => setSelectedStream(stream)}
                   >
                     {stream.status === 'active' ? (
-                      <img 
+                      <img
                         src={`/api/stream/${stream.template_id || stream.id}/thumbnail`}
                         alt={stream.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                          (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                          const img = e.target as HTMLImageElement;
+                          img.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xMiA5VjEzIiBzdHJva2U9IiM2QjcyODAiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CjxwYXRoIGQ9Ik0xMiAxN0gxMi4wMSIgc3Ryb2tlPSIjNkI3MjgwIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K';
+                          img.alt = 'Failed to load thumbnail';
                         }}
                       />
                     ) : (
@@ -192,8 +215,8 @@ export default function StreamsPage() {
                     <div className="flex justify-between items-start mb-2">
                       <h3 className="font-semibold text-gray-800 truncate">{stream.name}</h3>
                       <span className={`px-2 py-1 text-xs rounded-full ${
-                        stream.status === 'active' 
-                          ? 'bg-green-100 text-green-800' 
+                        stream.status === 'active'
+                          ? 'bg-green-100 text-green-800'
                           : 'bg-gray-100 text-gray-600'
                       }`}>
                         {stream.status === 'active' ? 'Online' : 'Offline'}
@@ -201,7 +224,7 @@ export default function StreamsPage() {
                     </div>
                     <p className="text-sm text-gray-500">
                       Last seen: {
-                        stream.last_frame_at 
+                        stream.last_frame_at
                           ? formatTimeAgo(new Date(stream.last_frame_at))
                           : 'Never'
                       }
@@ -214,22 +237,28 @@ export default function StreamsPage() {
 
           {/* Stream Details Modal */}
           {selectedStream && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto">
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+              onClick={() => setSelectedStream(null)}
+            >
+              <div 
+                className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <div className="p-6">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-semibold">{selectedStream.name}</h3>
-                    <button 
+                    <button
                       onClick={() => setSelectedStream(null)}
                       className="text-gray-400 hover:text-gray-600"
                     >
                       ✕
                     </button>
                   </div>
-                  
+
                   <div className="aspect-video bg-gray-100 rounded-lg mb-4 flex items-center justify-center">
                     {selectedStream.status === 'active' ? (
-                      <img 
+                      <img
                         src={`/api/stream/${selectedStream.template_id || selectedStream.id}/mjpeg`}
                         alt={`${selectedStream.name} live stream`}
                         className="w-full h-full object-cover rounded-lg"
