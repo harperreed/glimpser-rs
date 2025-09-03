@@ -73,7 +73,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="bg-gray-50 px-5 py-3">
                   <div className="text-sm">
-                    <button 
+                    <button
                       onClick={() => router.push('/streams')}
                       className="font-medium text-blue-600 hover:text-blue-500"
                     >
@@ -164,8 +164,11 @@ export default function DashboardPage() {
                       <button className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                         View Templates
                       </button>
-                      <button className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
-                        System Settings
+                      <button 
+                        onClick={() => router.push('/admin')}
+                        className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                      >
+                        Admin Panel
                       </button>
                       <button className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                         API Documentation
