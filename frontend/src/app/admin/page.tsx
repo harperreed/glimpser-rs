@@ -116,7 +116,7 @@ export default function AdminPage() {
 
   const deleteUser = async (userId: string) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
-    
+
     try {
       await apiClient.delete(`/settings/users/${userId}`);
       await loadUsers();
@@ -127,7 +127,7 @@ export default function AdminPage() {
 
   const deleteApiKey = async (keyId: string) => {
     if (!confirm('Are you sure you want to delete this API key?')) return;
-    
+
     try {
       await apiClient.delete(`/settings/api-keys/${keyId}`);
       await loadApiKeys();
@@ -138,7 +138,7 @@ export default function AdminPage() {
 
   const deleteTemplate = async (templateId: string) => {
     if (!confirm('Are you sure you want to delete this template?')) return;
-    
+
     try {
       await apiClient.delete(`/settings/templates/${templateId}`);
       await loadTemplates();
@@ -156,13 +156,13 @@ export default function AdminPage() {
             <h1 className="text-xl font-bold text-blue-600">🔍 Glimpser</h1>
           </div>
           <div className="flex items-center gap-6">
-            <button 
+            <button
               onClick={() => router.push('/dashboard')}
               className="text-gray-500 font-medium hover:text-blue-600 transition-colors duration-200"
             >
               Dashboard
             </button>
-            <button 
+            <button
               onClick={() => router.push('/streams')}
               className="text-gray-500 font-medium hover:text-blue-600 transition-colors duration-200"
             >
@@ -172,7 +172,7 @@ export default function AdminPage() {
             <span className="text-sm text-gray-500">
               Welcome, {user?.username || user?.email}
             </span>
-            <button 
+            <button
               onClick={handleLogout}
               className="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200"
             >
@@ -255,7 +255,7 @@ export default function AdminPage() {
                           <td className="px-4 py-4 border-b border-gray-200">{user.email}</td>
                           <td className="px-4 py-4 border-b border-gray-200">{formatDate(user.created_at)}</td>
                           <td className="px-4 py-4 border-b border-gray-200">
-                            <button 
+                            <button
                               onClick={() => deleteUser(user.id)}
                               className="text-red-600 hover:text-red-800 font-medium"
                             >
@@ -307,7 +307,7 @@ export default function AdminPage() {
                           <td className="px-4 py-4 border-b border-gray-200 font-mono text-sm">{key.key_hash.substring(0, 16)}...</td>
                           <td className="px-4 py-4 border-b border-gray-200">{formatDate(key.created_at)}</td>
                           <td className="px-4 py-4 border-b border-gray-200">
-                            <button 
+                            <button
                               onClick={() => deleteApiKey(key.id)}
                               className="text-red-600 hover:text-red-800 font-medium"
                             >
@@ -367,7 +367,7 @@ export default function AdminPage() {
                           </td>
                           <td className="px-4 py-4 border-b border-gray-200">{formatDate(template.created_at)}</td>
                           <td className="px-4 py-4 border-b border-gray-200">
-                            <button 
+                            <button
                               onClick={() => deleteTemplate(template.id)}
                               className="text-red-600 hover:text-red-800 font-medium mr-4"
                             >

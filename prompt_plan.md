@@ -59,16 +59,16 @@ Migrate from vanilla HTML/CSS/JS frontend to Next.js while keeping the robust Ru
 - Implement real-time updates
 
 **Tasks:**
-- [ ] Create stream dashboard page (replace `streams.js`)
+- [x] Create stream dashboard page (replace `streams.js`)
   - Stream grid with filtering
   - Real-time status updates
   - Thumbnail display
   - Modal for stream details
-- [ ] Build admin panel (replace `admin.js`)
+- [x] Build admin panel (replace `admin.js`)
   - User management
   - Template management
   - API key management
-- [ ] Implement dashboard overview (replace `dashboard.js`)
+- [x] Implement dashboard overview (replace `dashboard.js`)
   - System statistics
   - Recent activity
   - Quick actions

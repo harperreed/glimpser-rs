@@ -3,7 +3,10 @@
 
 use crate::{models::TemplateInfo, AppState};
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Result};
-use gl_db::{CreateUserRequest, UserRepository, CreateTemplateRequest, UpdateTemplateRequest, CreateApiKeyRequest, ApiKeyRepository};
+use gl_db::{
+    ApiKeyRepository, CreateApiKeyRequest, CreateTemplateRequest, CreateUserRequest,
+    UpdateTemplateRequest, UserRepository,
+};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tracing::{debug, error, info, warn};
@@ -80,9 +83,9 @@ pub async fn create_template(
     debug!("Creating new template: {}", req.name);
 
     let template_repo = gl_db::TemplateRepository::new(state.db.pool());
-    
+
     // Validate JSON config
-    if let Err(_) = serde_json::from_str::<serde_json::Value>(&req.config) {
+    if serde_json::from_str::<serde_json::Value>(&req.config).is_err() {
         return Ok(HttpResponse::BadRequest().json(serde_json::json!({
             "error": "Invalid JSON configuration"
         })));
@@ -134,7 +137,7 @@ pub async fn update_template(
 
     // Validate JSON config if provided
     if let Some(ref config) = req.config {
-        if let Err(_) = serde_json::from_str::<serde_json::Value>(config) {
+        if serde_json::from_str::<serde_json::Value>(config).is_err() {
             return Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": "Invalid JSON configuration"
             })));
@@ -250,8 +253,12 @@ pub async fn list_users(state: web::Data<AppState>, _req: HttpRequest) -> Result
                     id: u.id,
                     username: u.username,
                     email: u.email,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&u.created_at).unwrap().with_timezone(&chrono::Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&u.updated_at).unwrap().with_timezone(&chrono::Utc),
+                    created_at: chrono::DateTime::parse_from_rfc3339(&u.created_at)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&u.updated_at)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
                 })
                 .collect();
 
@@ -284,7 +291,7 @@ pub async fn create_user(
     debug!("Creating new user: {}", req.username);
 
     let user_repo = UserRepository::new(state.db.pool());
-    
+
     // Hash the password
     let password_hash = match crate::auth::PasswordAuth::hash_password(&req.password) {
         Ok(hash) => hash,
@@ -309,8 +316,12 @@ pub async fn create_user(
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                created_at: chrono::DateTime::parse_from_rfc3339(&user.created_at).unwrap().with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&user.updated_at).unwrap().with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&user.created_at)
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&user.updated_at)
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
             };
             Ok(HttpResponse::Created().json(user_response))
         }
@@ -352,10 +363,7 @@ pub async fn delete_user(
 
 /// Get a specific user
 #[get("/users/{id}")]
-pub async fn get_user(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-) -> Result<HttpResponse> {
+pub async fn get_user(state: web::Data<AppState>, path: web::Path<String>) -> Result<HttpResponse> {
     let user_id = path.into_inner();
     debug!("Getting user: {}", user_id);
 
@@ -368,8 +376,12 @@ pub async fn get_user(
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                created_at: chrono::DateTime::parse_from_rfc3339(&user.created_at).unwrap().with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&user.updated_at).unwrap().with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&user.created_at)
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&user.updated_at)
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
             };
             Ok(HttpResponse::Ok().json(user_response))
         }
@@ -418,8 +430,12 @@ pub async fn list_api_keys(state: web::Data<AppState>, _req: HttpRequest) -> Res
                     id: k.id,
                     name: k.name,
                     key_hash: k.key_hash,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&k.created_at).unwrap().with_timezone(&chrono::Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&k.updated_at).unwrap().with_timezone(&chrono::Utc),
+                    created_at: chrono::DateTime::parse_from_rfc3339(&k.created_at)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&k.updated_at)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
                 })
                 .collect();
 
@@ -450,7 +466,7 @@ pub async fn create_api_key(
     debug!("Creating new API key: {}", req.name);
 
     let api_key_repo = ApiKeyRepository::new(state.db.pool());
-    
+
     // Generate a new API key
     let api_key = gl_core::Id::new().to_string();
     let key_hash = format!("{:x}", sha2::Sha256::digest(&api_key));
@@ -460,7 +476,7 @@ pub async fn create_api_key(
         name: req.name.clone(),
         key_hash: key_hash.clone(),
         permissions: "read,write".to_string(), // Default permissions
-        expires_at: None, // No expiration
+        expires_at: None,                      // No expiration
     };
 
     match api_key_repo.create(create_req).await {

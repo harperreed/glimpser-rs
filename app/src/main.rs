@@ -187,8 +187,8 @@ async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) ->
     let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     let create_result = sqlx::query(
-        "INSERT INTO users (id, username, email, password_hash, role, is_active, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 'admin', true, ?5, ?6)"
+        "INSERT INTO users (id, username, email, password_hash, is_active, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, true, ?5, ?6)"
     )
     .bind(&user_id)
     .bind(username)
@@ -204,9 +204,8 @@ async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) ->
             tracing::info!("✅ Admin user created successfully!");
             tracing::info!("   Email: {}", email);
             tracing::info!("   Username: {}", username);
-            tracing::info!("   Role: admin");
             tracing::info!(
-                "You can now login to the web interface at http://127.0.0.1:8080/static/"
+                "You can now login to the web interface at http://localhost:3000"
             );
             user_id
         }
