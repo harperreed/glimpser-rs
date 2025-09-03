@@ -137,6 +137,49 @@ class ApiClient {
   delete<T>(endpoint: string) {
     return this.request<T>(endpoint, { method: 'DELETE' });
   }
+
+  // Template endpoints
+  async getTemplates(params?: { page?: number; page_size?: number; search?: string }) {
+    const query = params ? new URLSearchParams(
+      Object.entries(params).filter(([_, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
+    ).toString() : '';
+    return this.request(`/templates${query ? `?${query}` : ''}`);
+  }
+
+  async getTemplate(id: string) {
+    return this.request(`/templates/${id}`);
+  }
+
+  async createTemplate(template: {
+    name: string;
+    description?: string;
+    config: any;
+    is_default?: boolean;
+  }) {
+    return this.post('/templates', template);
+  }
+
+  async updateTemplate(id: string, template: {
+    name?: string;
+    description?: string;
+    config?: any;
+    is_default?: boolean;
+  }) {
+    return this.put(`/templates/${id}`, template);
+  }
+
+  async deleteTemplate(id: string) {
+    return this.delete(`/templates/${id}`);
+  }
+
+  // Stream control endpoints
+  async startStream(id: string) {
+    return this.post(`/stream/${id}/start`);
+  }
+
+  async stopStream(id: string) {
+    return this.post(`/stream/${id}/stop`);
+  }
 }
 
 export class ApiError extends Error {

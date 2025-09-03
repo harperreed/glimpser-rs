@@ -87,7 +87,7 @@ Migrate from vanilla HTML/CSS/JS frontend to Next.js while keeping the robust Ru
 - Alert system dashboard
 
 **Tasks:**
-- [ ] Stream viewer with MJPEG integration
+- [x] Stream viewer with MJPEG integration
 - [ ] Real-time notifications (WebSocket or SSE)
 - [ ] Advanced template editor with JSON schema validation
 - [ ] Alert management system

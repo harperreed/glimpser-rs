@@ -39,9 +39,9 @@ export default function StreamViewerPage() {
     try {
       setError(null);
       setIsLoading(true);
-      
+
       const streams = await apiClient.streams();
-      const foundStream = Array.isArray(streams) 
+      const foundStream = Array.isArray(streams)
         ? streams.find((s: Stream) => s.id === streamId || s.template_id === streamId)
         : null;
 
@@ -133,7 +133,7 @@ export default function StreamViewerPage() {
   return (
     <ProtectedRoute>
       <div ref={containerRef} className={`${isFullscreen ? 'bg-black' : 'min-h-screen bg-gray-900'}`}>
-        
+
         {/* Header - hidden in fullscreen */}
         {!isFullscreen && (
           <header className="bg-gray-800 border-b border-gray-700">
@@ -183,7 +183,7 @@ export default function StreamViewerPage() {
         {/* Stream Viewer */}
         <main className={`${isFullscreen ? 'h-screen' : 'flex-1'} flex items-center justify-center p-4`}>
           <div className="relative max-w-full max-h-full">
-            
+
             {/* Stream Display */}
             {stream.status === 'active' ? (
               <div className="relative bg-black rounded-lg overflow-hidden shadow-2xl">
@@ -230,7 +230,7 @@ export default function StreamViewerPage() {
                     <span>Refresh</span>
                   </button>
                 </div>
-                
+
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={toggleFullscreen}
@@ -238,7 +238,7 @@ export default function StreamViewerPage() {
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={
-                        isFullscreen 
+                        isFullscreen
                           ? "M6 10a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v2a2 2 0 002 2h2zM14 10a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2h2zM6 20a2 2 0 002-2v-2a2 2 0 00-2-2H4a2 2 0 00-2 2v2a2 2 0 002 2h2zM14 20a2 2 0 002-2v-2a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2h2z"
                           : "M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
                       } />

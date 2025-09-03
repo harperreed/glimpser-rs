@@ -216,7 +216,7 @@ fn validate_yt_config(config: &Map<String, Value>) -> Result<(), String> {
 pub async fn list_templates(
     query: web::Query<ListTemplatesQuery>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
@@ -236,7 +236,7 @@ pub async fn list_templates(
         )));
     }
 
-    let repo = TemplateRepository::new(db.pool());
+    let repo = TemplateRepository::new(state.db.pool());
     let offset = (query.page as i64) * (query.page_size as i64);
     let limit = query.page_size as i64;
 
@@ -286,7 +286,7 @@ pub async fn list_templates(
 pub async fn get_template(
     path: web::Path<String>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
@@ -299,7 +299,7 @@ pub async fn get_template(
         "Getting template"
     );
 
-    let repo = TemplateRepository::new(db.pool());
+    let repo = TemplateRepository::new(state.db.pool());
     let template = repo.find_by_id(&template_id).await.map_err(|e| {
         warn!(error = %e, "Failed to find template");
         actix_web::error::ErrorInternalServerError("Database error")
@@ -343,7 +343,7 @@ pub async fn get_template(
 pub async fn create_template(
     payload: web::Json<CreateTemplateApiRequest>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
@@ -378,7 +378,7 @@ pub async fn create_template(
         is_default: payload.is_default,
     };
 
-    let repo = TemplateRepository::new(db.pool());
+    let repo = TemplateRepository::new(state.db.pool());
     let template = repo.create(request).await.map_err(|e| {
         warn!(error = %e, "Failed to create template");
         actix_web::error::ErrorInternalServerError("Database error")
@@ -397,7 +397,7 @@ pub async fn update_template(
     path: web::Path<String>,
     payload: web::Json<UpdateTemplateApiRequest>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
@@ -416,7 +416,7 @@ pub async fn update_template(
         actix_web::error::ErrorBadRequest(format!("Validation error: {}", e))
     })?;
 
-    let repo = TemplateRepository::new(db.pool());
+    let repo = TemplateRepository::new(state.db.pool());
 
     // Check if template exists and user has access
     let existing = repo.find_by_id(&template_id).await.map_err(|e| {
@@ -496,7 +496,7 @@ pub async fn update_template(
 pub async fn delete_template(
     path: web::Path<String>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
@@ -509,7 +509,7 @@ pub async fn delete_template(
         "Deleting template"
     );
 
-    let repo = TemplateRepository::new(db.pool());
+    let repo = TemplateRepository::new(state.db.pool());
 
     // Check if template exists and user has access
     let existing = repo.find_by_id(&template_id).await.map_err(|e| {
@@ -550,55 +550,55 @@ pub async fn delete_template(
     Ok(HttpResponse::NoContent().finish())
 }
 
-/// List templates handler for actix service macro
-#[actix_web::get("/templates")]
+/// List templates handler for actix service macro (no trailing slash)
+#[actix_web::get("")]
 pub async fn list_templates_service(
     query: web::Query<ListTemplatesQuery>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    list_templates(query, req, db).await
+    list_templates(query, req, state).await
 }
 
 /// Get template handler for actix service macro
-#[actix_web::get("/templates/{id}")]
+#[actix_web::get("/{id}")]
 pub async fn get_template_service(
     path: web::Path<String>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    get_template(path, req, db).await
+    get_template(path, req, state).await
 }
 
-/// Create template handler for actix service macro
-#[actix_web::post("/templates")]
+/// Create template handler for actix service macro (no trailing slash)
+#[actix_web::post("")]
 pub async fn create_template_service(
     payload: web::Json<CreateTemplateApiRequest>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    create_template(payload, req, db).await
+    create_template(payload, req, state).await
 }
 
 /// Update template handler for actix service macro
-#[actix_web::put("/templates/{id}")]
+#[actix_web::put("/{id}")]
 pub async fn update_template_service(
     path: web::Path<String>,
     payload: web::Json<UpdateTemplateApiRequest>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    update_template(path, payload, req, db).await
+    update_template(path, payload, req, state).await
 }
 
 /// Delete template handler for actix service macro
-#[actix_web::delete("/templates/{id}")]
+#[actix_web::delete("/{id}")]
 pub async fn delete_template_service(
     path: web::Path<String>,
     req: HttpRequest,
-    db: web::Data<gl_db::Db>,
+    state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    delete_template(path, req, db).await
+    delete_template(path, req, state).await
 }
 
 #[cfg(test)]

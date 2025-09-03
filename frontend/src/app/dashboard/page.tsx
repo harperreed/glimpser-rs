@@ -44,11 +44,11 @@ export default function DashboardPage() {
   const loadSystemStats = useCallback(async () => {
     try {
       setError(null);
-      
+
       // Check API health
       let apiStatus: 'online' | 'offline' = 'offline';
       let systemHealth: 'healthy' | 'warning' | 'error' = 'error';
-      
+
       try {
         const health = await apiClient.health();
         apiStatus = 'online';
@@ -93,7 +93,7 @@ export default function DashboardPage() {
   const loadRecentActivity = useCallback(async () => {
     try {
       const activities: Activity[] = [];
-      
+
       // Try to load alerts (placeholder)
       try {
         const alerts = await apiClient.alerts();
@@ -119,7 +119,7 @@ export default function DashboardPage() {
 
       // Sort by timestamp (newest first)
       activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      
+
       setActivities(activities.slice(0, 10));
     } catch (error) {
       console.error('Error loading recent activity:', error);
@@ -398,7 +398,7 @@ export default function DashboardPage() {
 
             {/* Recent Activity and Quick Actions */}
             <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
+
               {/* Recent Activity */}
               <div className="lg:col-span-2">
                 <div className="bg-white shadow rounded-lg">

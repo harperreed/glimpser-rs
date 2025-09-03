@@ -15,8 +15,10 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 
+use actix_web::HttpRequest;
 use routes::{admin, alerts, auth as auth_routes, public, static_files, stream, templates};
 use std::sync::Arc;
+use tracing::info;
 
 /// Application state shared across all handlers
 #[derive(Clone)]
@@ -70,6 +72,33 @@ pub fn create_app(
         InitError = (),
     >,
 > {
+    // Log a concise list of registered routes (one log per worker)
+    info!(
+        routes = %"\n\
+    GET  /api/auth/login\n\
+    GET  /api/me (auth)\n\
+    GET  /api/streams (auth)\n\
+    GET  /api/templates (auth)\n\
+    GET  /api/templates/{id} (auth)\n\
+    POST /api/templates (auth)\n\
+    PUT  /api/templates/{id} (auth)\n\
+    DEL  /api/templates/{id} (auth)\n\
+    GET  /api/settings/templates (auth)\n\
+    GET  /api/settings/templates/{id} (auth)\n\
+    POST /api/settings/templates (auth)\n\
+    POST /api/settings/templates/{id} (auth)\n\
+    DEL  /api/settings/templates/{id} (auth)\n\
+    GET  /api/settings/users (auth)\n\
+    GET  /api/settings/users/{id} (auth)\n\
+    POST /api/settings/users (auth)\n\
+    DEL  /api/settings/users/{id} (auth)\n\
+    GET  /api/settings/api-keys (auth)\n\
+    POST /api/settings/api-keys (auth)\n\
+    DEL  /api/settings/api-keys/{id} (auth)\n\
+    GET  /api/debug/test\n\
+    GET  /static/{filename}\n",
+        "message" = "Registered routes"
+    );
     let static_config = state.static_config.clone();
     let rate_limit_config = state.rate_limit_config.clone();
 
@@ -83,12 +112,25 @@ pub fn create_app(
         .app_data(web::Data::new(state))
         .app_data(web::Data::new(static_config.clone()))
         .wrap(actix_web::middleware::Logger::default())
+        // Normalize paths so both `/path` and `/path/` resolve consistently
+        // .wrap(actix_web::middleware::NormalizePath::new(
+        //     actix_web::middleware::TrailingSlash::Always,
+        // ))
         .wrap(static_files::security_headers())
         // Apply body size limits globally
         .wrap(middleware::bodylimits::BodyLimits::new(body_limits_config))
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .service(
             web::scope("/api")
+                .service(
+                    web::resource("/templates")
+                        .wrap(middleware::ratelimit::RateLimit::new(
+                            rate_limit_config.clone(),
+                        ))
+                        .wrap(middleware::auth::RequireAuth::new())
+                        .route(web::get().to(templates::list_templates))
+                        .route(web::post().to(templates::create_template)),
+                )
                 .service(
                     web::scope("/auth")
                         // Apply rate limiting to auth endpoints (no auth required)
@@ -118,9 +160,9 @@ pub fn create_app(
                         ))
                         .wrap(middleware::auth::RequireAuth::new())
                         .service(public::me)
-                        .service(public::health)
                         .service(public::streams)
-                        .service(public::alerts),
+                        .service(public::alerts)
+                        .service(public::health),
                 )
                 .service(
                     web::scope("/templates")
@@ -156,6 +198,15 @@ pub fn create_app(
                         .service(admin::create_api_key)
                         .service(admin::delete_api_key),
                 )
+                // Helpful 404 for unmatched API paths
+                .default_service(web::to(|req: HttpRequest| async move {
+                    let p = req.path().to_string();
+                    info!(path = %p, "Unmatched API route");
+                    HttpResponse::NotFound().json(serde_json::json!({
+                        "error": "Not Found",
+                        "path": p
+                    }))
+                }))
                 .configure(alerts::configure_alert_routes)
                 .service(web::scope("/debug").route(
                     "/test",
@@ -169,6 +220,8 @@ pub fn create_app(
     // TODO: Re-enable SPA fallback after fixing admin routes
     // .default_service(web::route().to(static_files::spa_fallback))
 }
+
+// (removed) templates_alias_get: explicit alias not needed; templates base routes are mounted under /api/templates.
 
 /// Start the web server
 pub async fn start_server(bind_addr: &str, state: AppState) -> Result<()> {
@@ -230,6 +283,8 @@ mod tests {
             .await
             .expect("Failed to create test user")
     }
+
+    // Note: no dedicated test for /api/templates without trailing slash; base-path handlers are mounted.
 
     #[actix_web::test]
     async fn test_login_success() {
