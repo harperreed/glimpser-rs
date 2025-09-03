@@ -329,7 +329,6 @@ mod tests {
                 username: "testuser".to_string(),
                 email: "test@example.com".to_string(),
                 password_hash: "hashed_password".to_string(),
-                role: "admin".to_string(),
             })
             .await
             .expect("Failed to create test user");

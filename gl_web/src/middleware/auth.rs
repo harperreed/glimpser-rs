@@ -1,5 +1,5 @@
-//! ABOUTME: Authentication middleware for JWT and API key verification
-//! ABOUTME: Extracts and validates authentication credentials from requests
+//! ABOUTME: Authentication middleware for JWT token verification only
+//! ABOUTME: Extracts and validates JWT credentials from requests
 
 use crate::{auth::JwtAuth, models::Claims, AppState};
 use actix_web::{
@@ -8,11 +8,10 @@ use actix_web::{
     Error, HttpMessage,
 };
 use futures_util::future::{ready, LocalBoxFuture, Ready};
-use gl_db::{ApiKeyRepository, UserRepository};
 use std::rc::Rc;
 use tracing::{debug, warn};
 
-/// Authentication middleware that extracts JWT or API key
+/// Authentication middleware that extracts JWT tokens
 pub struct RequireAuth;
 
 impl RequireAuth {
@@ -96,7 +95,7 @@ where
             // Verify JWT token if found
             if let Some(token) = jwt_token {
                 if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
-                    match JwtAuth::verify_token(token, &app_state.jwt_secret) {
+                    match JwtAuth::verify_token(token, &app_state.security_config.jwt_secret) {
                         Ok(claims) => {
                             debug!(
                                 "JWT authentication successful for user: {} (via {})",
@@ -118,49 +117,7 @@ where
                 }
             }
 
-            // Try API key authentication
-            if let Some(api_key_header) = req.headers().get("x-api-key") {
-                if let Ok(api_key_str) = api_key_header.to_str() {
-                    if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
-                        let api_key_repo = ApiKeyRepository::new(app_state.db.pool());
-                        let user_repo = UserRepository::new(app_state.db.pool());
-
-                        match api_key_repo.find_by_hash(api_key_str).await {
-                            Ok(Some(api_key)) => {
-                                if api_key.is_active {
-                                    match user_repo.find_by_id(&api_key.user_id).await {
-                                        Ok(Some(user)) => {
-                                            if user.is_active {
-                                                debug!("API key authentication successful for user: {}", user.id);
-                                                req.extensions_mut()
-                                                    .insert(AuthUser::from_api_key(user));
-                                                return service.call(req).await;
-                                            }
-                                        }
-                                        Ok(None) => {
-                                            warn!(
-                                                "API key references non-existent user: {}",
-                                                api_key.user_id
-                                            );
-                                        }
-                                        Err(e) => {
-                                            warn!("Database error looking up user: {}", e);
-                                        }
-                                    }
-                                } else {
-                                    warn!("Inactive API key used: {}", api_key.id);
-                                }
-                            }
-                            Ok(None) => {
-                                warn!("Unknown API key used");
-                            }
-                            Err(e) => {
-                                warn!("Database error looking up API key: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
+            // API key authentication removed - JWT only for simplified auth
 
             // No valid authentication found
             Err(ErrorUnauthorized("Authentication required"))
@@ -168,20 +125,11 @@ where
     }
 }
 
-/// Authenticated user information
+/// Authenticated user information (JWT only)
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub id: String,
     pub email: String,
-    pub role: String,
-    pub auth_type: AuthType,
-}
-
-/// Type of authentication used
-#[derive(Debug, Clone)]
-pub enum AuthType {
-    Jwt,
-    ApiKey,
 }
 
 impl AuthUser {
@@ -189,17 +137,6 @@ impl AuthUser {
         Self {
             id: claims.sub,
             email: claims.email,
-            role: claims.role,
-            auth_type: AuthType::Jwt,
-        }
-    }
-
-    fn from_api_key(user: gl_db::User) -> Self {
-        Self {
-            id: user.id,
-            email: user.email,
-            role: user.role,
-            auth_type: AuthType::ApiKey,
         }
     }
 }

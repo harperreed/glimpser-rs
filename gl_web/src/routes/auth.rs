@@ -45,7 +45,7 @@ pub async fn login(
     // Find user by email
     match user_repo.find_by_email(&payload.email).await {
         Ok(Some(user)) => {
-            if !user.is_active {
+            if !user.is_active.unwrap_or(false) {
                 warn!("Login attempt for inactive user: {}", user.id);
                 return Ok(HttpResponse::Unauthorized().json(ErrorResponse::new(
                     "account_disabled",
@@ -62,8 +62,7 @@ pub async fn login(
                     match JwtAuth::create_token(
                         &user.id,
                         &user.email,
-                        &user.role,
-                        &state.jwt_secret,
+                        &state.security_config.jwt_secret,
                     ) {
                         Ok(token) => {
                             debug!("JWT token created for user: {}", user.id);
@@ -76,8 +75,7 @@ pub async fn login(
                                     id: user.id,
                                     username: user.username,
                                     email: user.email,
-                                    role: user.role,
-                                    is_active: user.is_active,
+                                    is_active: user.is_active.unwrap_or(false),
                                     created_at: user.created_at,
                                 },
                             };
@@ -89,7 +87,7 @@ pub async fn login(
                                     JwtAuth::token_expiration_secs() as i64,
                                 ))
                                 .http_only(true)
-                                .secure(false) // Set to true in production with HTTPS
+                                .secure(state.security_config.secure_cookies)
                                 .same_site(actix_web::cookie::SameSite::Lax)
                                 .finish();
 

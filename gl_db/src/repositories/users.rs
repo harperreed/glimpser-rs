@@ -13,8 +13,7 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub password_hash: String,
-    pub role: String,
-    pub is_active: bool,
+    pub is_active: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -25,7 +24,6 @@ pub struct CreateUserRequest {
     pub username: String,
     pub email: String,
     pub password_hash: String,
-    pub role: String,
 }
 
 /// Request to update a user
@@ -34,7 +32,6 @@ pub struct UpdateUserRequest {
     pub username: Option<String>,
     pub email: Option<String>,
     pub password_hash: Option<String>,
-    pub role: Option<String>,
     pub is_active: Option<bool>,
 }
 
@@ -58,16 +55,15 @@ impl<'a> UserRepository<'a> {
 
         let user = sqlx::query_as::<_, User>(
             r#"
-            INSERT INTO users (id, username, email, password_hash, role, is_active, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, true, ?6, ?7)
-            RETURNING *
+            INSERT INTO users (id, username, email, password_hash, is_active, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, true, ?5, ?6)
+            RETURNING id, username, email, password_hash, is_active, created_at, updated_at
             "#,
         )
         .bind(id)
         .bind(request.username)
         .bind(request.email)
         .bind(request.password_hash)
-        .bind(request.role)
         .bind(&now)
         .bind(&now)
         .fetch_one(self.pool)
@@ -83,7 +79,9 @@ impl<'a> UserRepository<'a> {
     pub async fn find_by_id(&self, id: &str) -> Result<Option<User>> {
         debug!("Finding user by id: {}", id);
 
-        let user = sqlx::query_as!(User, "SELECT * FROM users WHERE id = ?1", id)
+        let user = sqlx::query_as!(User,
+            "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE id = ?1",
+            id)
             .fetch_optional(self.pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to find user by id: {}", e)))?;
@@ -96,7 +94,9 @@ impl<'a> UserRepository<'a> {
     pub async fn find_by_username(&self, username: &str) -> Result<Option<User>> {
         debug!("Finding user by username: {}", username);
 
-        let user = sqlx::query_as!(User, "SELECT * FROM users WHERE username = ?1", username)
+        let user = sqlx::query_as!(User,
+            "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE username = ?1",
+            username)
             .fetch_optional(self.pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to find user by username: {}", e)))?;
@@ -109,7 +109,9 @@ impl<'a> UserRepository<'a> {
     pub async fn find_by_email(&self, email: &str) -> Result<Option<User>> {
         debug!("Finding user by email: {}", email);
 
-        let user = sqlx::query_as!(User, "SELECT * FROM users WHERE email = ?1", email)
+        let user = sqlx::query_as!(User,
+            "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE email = ?1",
+            email)
             .fetch_optional(self.pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to find user by email: {}", e)))?;
@@ -124,7 +126,7 @@ impl<'a> UserRepository<'a> {
 
         let users = sqlx::query_as!(
             User,
-            "SELECT * FROM users WHERE is_active = true ORDER BY created_at DESC"
+            "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE is_active = true ORDER BY created_at DESC"
         )
         .fetch_all(self.pool)
         .await
@@ -162,12 +164,6 @@ impl<'a> UserRepository<'a> {
             param_idx += 1;
         }
 
-        if let Some(role) = &request.role {
-            set_clauses.push(format!("role = ?{}", param_idx));
-            params.push(Box::new(role.clone()));
-            param_idx += 1;
-        }
-
         if let Some(is_active) = request.is_active {
             set_clauses.push(format!("is_active = ?{}", param_idx));
             params.push(Box::new(is_active));
@@ -190,7 +186,7 @@ impl<'a> UserRepository<'a> {
                 UPDATE users
                 SET username = ?1, updated_at = ?2
                 WHERE id = ?3
-                RETURNING *
+                RETURNING id, username, email, password_hash, is_active, created_at, updated_at
                 "#,
                 username,
                 now,

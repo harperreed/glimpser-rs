@@ -1,13 +1,12 @@
 //! ABOUTME: Rate limiting middleware for IP and API key-based buckets
 //! ABOUTME: Prevents abuse by limiting requests per IP and per API key
 
-use crate::middleware::auth::AuthUser;
 use crate::models::ProblemDetails;
 use actix_web::{
     body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     http::header::{HeaderName, HeaderValue},
-    Error, HttpMessage, HttpResponse,
+    Error, HttpResponse,
 };
 use futures_util::future::{ready, LocalBoxFuture, Ready};
 use std::collections::HashMap;
@@ -16,13 +15,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
-/// Rate limiting configuration
+/// Rate limiting configuration (IP-based only)
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
     /// Maximum requests per IP per window
-    pub ip_requests_per_minute: u32,
-    /// Maximum requests per API key per window
-    pub api_key_requests_per_minute: u32,
+    pub requests_per_minute: u32,
     /// Time window duration
     pub window_duration: Duration,
 }
@@ -30,8 +27,7 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            ip_requests_per_minute: 100,
-            api_key_requests_per_minute: 1000,
+            requests_per_minute: 100,
             window_duration: Duration::from_secs(60),
         }
     }
@@ -90,23 +86,14 @@ impl SimpleRateLimiter {
 /// Rate limiting middleware transform
 pub struct RateLimit {
     config: RateLimitConfig,
-    ip_limiter: SimpleRateLimiter,
-    api_key_limiter: SimpleRateLimiter,
+    limiter: SimpleRateLimiter,
 }
 
 impl RateLimit {
     pub fn new(config: RateLimitConfig) -> Self {
-        let ip_limiter =
-            SimpleRateLimiter::new(config.ip_requests_per_minute, config.window_duration);
+        let limiter = SimpleRateLimiter::new(config.requests_per_minute, config.window_duration);
 
-        let api_key_limiter =
-            SimpleRateLimiter::new(config.api_key_requests_per_minute, config.window_duration);
-
-        Self {
-            config,
-            ip_limiter,
-            api_key_limiter,
-        }
+        Self { config, limiter }
     }
 }
 
@@ -126,18 +113,16 @@ where
         ready(Ok(RateLimitMiddleware {
             service: Rc::new(service),
             config: self.config.clone(),
-            ip_limiter: self.ip_limiter.clone(),
-            api_key_limiter: self.api_key_limiter.clone(),
+            limiter: self.limiter.clone(),
         }))
     }
 }
 
-#[allow(dead_code)]
 pub struct RateLimitMiddleware<S> {
     service: Rc<S>,
+    #[allow(dead_code)]
     config: RateLimitConfig,
-    ip_limiter: SimpleRateLimiter,
-    api_key_limiter: SimpleRateLimiter,
+    limiter: SimpleRateLimiter,
 }
 
 impl<S, B> Service<ServiceRequest> for RateLimitMiddleware<S>
@@ -154,50 +139,28 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
-        let ip_limiter = self.ip_limiter.clone();
-        let api_key_limiter = self.api_key_limiter.clone();
+        let limiter = self.limiter.clone();
 
         Box::pin(async move {
-            // Extract client IP
+            // Extract client IP for rate limiting (simplified to IP-only)
             let client_ip = get_client_ip(&req);
 
-            // Check if user is authenticated with API key or JWT
-            let auth_user = req.extensions().get::<AuthUser>().cloned();
+            debug!("Rate limit check: ip={}", client_ip);
 
-            // Determine which limiter to use and create key
-            let (limiter, key, limit_type) = if let Some(user) = &auth_user {
-                match user.auth_type {
-                    crate::middleware::auth::AuthType::ApiKey => {
-                        // Use API key-based limiting with user ID as key
-                        (api_key_limiter, user.id.clone(), "api_key")
-                    }
-                    crate::middleware::auth::AuthType::Jwt => {
-                        // Use IP-based limiting for JWT users
-                        (ip_limiter, client_ip.clone(), "ip")
-                    }
-                }
-            } else {
-                // Use IP-based limiting for unauthenticated requests
-                (ip_limiter, client_ip.clone(), "ip")
-            };
-
-            debug!(
-                "Rate limit check: key={}, type={}, ip={}",
-                key, limit_type, client_ip
-            );
-
-            // Check rate limit
-            let (allowed, remaining, reset_time) = limiter.check_rate_limit(&key);
+            // Check rate limit using IP address as key
+            let (allowed, remaining, reset_time) = limiter.check_rate_limit(&client_ip);
 
             if allowed {
-                debug!("Rate limit passed: key={}, remaining={}", key, remaining);
+                debug!(
+                    "Rate limit passed: ip={}, remaining={}",
+                    client_ip, remaining
+                );
                 let res = service.call(req).await?;
                 Ok(res.map_into_left_body())
             } else {
                 warn!(
-                    "Rate limit exceeded: key={}, type={}, reset_in={}s",
-                    key,
-                    limit_type,
+                    "Rate limit exceeded: ip={}, reset_in={}s",
+                    client_ip,
                     reset_time.as_secs()
                 );
 
@@ -205,10 +168,6 @@ where
                 let retry_after = reset_time.as_secs();
 
                 let problem = ProblemDetails::rate_limit_error(Some(retry_after))
-                    .with_extension(
-                        "limit_type",
-                        serde_json::Value::String(limit_type.to_string()),
-                    )
                     .with_extension("client_ip", serde_json::Value::String(client_ip));
 
                 let mut response = HttpResponse::TooManyRequests()

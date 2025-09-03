@@ -9,6 +9,28 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info};
 
+/// Helper trait for string title case conversion
+trait ToTitleCase {
+    fn to_title_case(&self) -> String;
+}
+
+impl ToTitleCase for str {
+    fn to_title_case(&self) -> String {
+        self.split_whitespace()
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => {
+                        first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 pub mod pipeline;
 pub mod processors;
 pub mod rule_engine;
@@ -193,6 +215,8 @@ pub struct AnalysisConfig {
     pub storage: StorageConfig,
     /// Notification configuration
     pub notifications: NotificationConfig,
+    /// AI client configuration
+    pub ai: Option<gl_ai::AiConfig>,
 }
 
 /// Storage configuration for events
@@ -251,6 +275,7 @@ impl Default for AnalysisConfig {
                 dedup_window_minutes: 5,
                 quiet_hours: None,
             },
+            ai: None, // Default to no AI configuration
         }
     }
 }
@@ -260,15 +285,19 @@ pub struct AnalysisService {
     pipeline: AnalysisPipeline,
     rule_engine: RuleEngine,
     config: AnalysisConfig,
+    db_repo: Option<gl_db::AnalysisEventRepository>,
+    notification_manager: Option<gl_notify::NotificationManager>,
 }
 
 impl AnalysisService {
     /// Create a new analysis service
     pub fn new(config: AnalysisConfig) -> Result<Self> {
         let rule_engine = RuleEngine::new(config.rules.clone());
-        let pipeline = AnalysisPipeline::new(
+        let ai_config = config.ai.clone().unwrap_or_default();
+        let pipeline = AnalysisPipeline::with_ai_config(
             config.enabled_processors.clone(),
             config.processor_configs.clone(),
+            ai_config,
         )?;
 
         info!(
@@ -280,6 +309,38 @@ impl AnalysisService {
             pipeline,
             rule_engine,
             config,
+            db_repo: None,
+            notification_manager: None,
+        })
+    }
+
+    /// Create a new analysis service with database and notification support
+    pub fn with_persistence(
+        config: AnalysisConfig,
+        db: gl_db::Db,
+        notification_manager: gl_notify::NotificationManager,
+    ) -> Result<Self> {
+        let rule_engine = RuleEngine::new(config.rules.clone());
+        let ai_config = config.ai.clone().unwrap_or_default();
+        let pipeline = AnalysisPipeline::with_ai_config(
+            config.enabled_processors.clone(),
+            config.processor_configs.clone(),
+            ai_config,
+        )?;
+
+        let db_repo = gl_db::AnalysisEventRepository::new(db);
+
+        info!(
+            "Created analysis service with {} processors, database, and notifications",
+            config.enabled_processors.len()
+        );
+
+        Ok(Self {
+            pipeline,
+            rule_engine,
+            config,
+            db_repo: Some(db_repo),
+            notification_manager: Some(notification_manager),
         })
     }
 
@@ -355,8 +416,37 @@ impl AnalysisService {
     async fn store_events(&self, events: &[AnalysisEvent]) -> Result<()> {
         debug!("Storing {} events to database", events.len());
 
-        // TODO: Implement database storage
-        // This would use gl_db to store events in the events table
+        if let Some(repo) = &self.db_repo {
+            for event in events {
+                let create_request = gl_db::CreateAnalysisEvent {
+                    template_id: event.template_id.clone(),
+                    event_type: event.event_type.clone(),
+                    severity: event.severity.as_str().to_string(),
+                    confidence: event.confidence,
+                    description: event.description.clone(),
+                    metadata: Some(event.metadata.clone()),
+                    processor_name: event.processor_name.clone(),
+                    source_id: event.source_id.clone(),
+                    should_notify: event.should_notify,
+                    suggested_actions: Some(event.suggested_actions.clone()),
+                };
+
+                if let Err(e) = repo.create(create_request).await {
+                    tracing::error!(
+                        event_id = %event.id,
+                        error = %e,
+                        "Failed to store analysis event"
+                    );
+                    return Err(gl_core::Error::Database(format!(
+                        "Failed to store event {}: {}",
+                        event.id, e
+                    )));
+                }
+            }
+            debug!("Successfully stored {} events", events.len());
+        } else {
+            debug!("No database repository configured, skipping event storage");
+        }
 
         Ok(())
     }
@@ -371,8 +461,64 @@ impl AnalysisService {
 
         debug!("Enqueueing {} notifications", notify_events.len());
 
-        // TODO: Implement notification enqueueing
-        // This would use gl_notify to send alerts
+        if let Some(manager) = &self.notification_manager {
+            let notify_count = notify_events.len();
+            for event in notify_events {
+                // Convert event severity to notification kind
+                let kind = match event.severity {
+                    EventSeverity::Critical => gl_notify::NotificationKind::Error,
+                    EventSeverity::High => gl_notify::NotificationKind::Error,
+                    EventSeverity::Medium => gl_notify::NotificationKind::Warning,
+                    EventSeverity::Low => gl_notify::NotificationKind::Info,
+                    EventSeverity::Info => gl_notify::NotificationKind::Info,
+                };
+
+                // Create notification title
+                let title = format!(
+                    "{} Alert: {}",
+                    event.severity.as_str().to_uppercase(),
+                    event.event_type.replace("_", " ").to_title_case()
+                );
+
+                // Create notification body
+                let mut body = format!(
+                    "Source: {}\nDescription: {}",
+                    event.source_id, event.description
+                );
+
+                if !event.suggested_actions.is_empty() {
+                    body.push_str("\n\nSuggested Actions:\n");
+                    for (i, action) in event.suggested_actions.iter().enumerate() {
+                        body.push_str(&format!("{}. {}\n", i + 1, action));
+                    }
+                }
+
+                // For now, we'll create a notification without channels
+                // In a real implementation, channels would be configured per template or user
+                let notification = gl_notify::Notification::new(
+                    kind,
+                    title,
+                    body,
+                    vec![], // No channels configured yet - this would come from template/user settings
+                )
+                .with_metadata("event_id".to_string(), event.id.clone())
+                .with_metadata("template_id".to_string(), event.template_id.clone())
+                .with_metadata("source_id".to_string(), event.source_id.clone());
+
+                // Send notification (will be no-op if no channels configured)
+                if let Err(e) = manager.send(&notification).await {
+                    tracing::warn!(
+                        event_id = %event.id,
+                        error = %e,
+                        "Failed to send notification for event"
+                    );
+                    // Continue processing other notifications rather than failing completely
+                }
+            }
+            debug!("Processed {} notifications", notify_count);
+        } else {
+            debug!("No notification manager configured, skipping notification enqueueing");
+        }
 
         Ok(())
     }

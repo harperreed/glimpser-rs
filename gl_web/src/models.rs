@@ -2,7 +2,6 @@
 //! ABOUTME: Defines request/response structures with serde and validation
 
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use utoipa::ToSchema;
 use validator::Validate;
 
@@ -31,7 +30,6 @@ pub struct UserInfo {
     pub id: String,
     pub username: String,
     pub email: String,
-    pub role: String,
     pub is_active: bool,
     pub created_at: String,
 }
@@ -114,47 +112,11 @@ impl ErrorResponse {
 pub struct Claims {
     pub sub: String, // user ID
     pub email: String,
-    pub role: String,
     pub exp: usize, // expiration timestamp
     pub iat: usize, // issued at timestamp
 }
 
-/// User roles enumeration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Role {
-    Admin,
-    Operator,
-    Viewer,
-}
-
-impl FromStr for Role {
-    type Err = String;
-
-    fn from_str(role: &str) -> Result<Self, Self::Err> {
-        match role.to_lowercase().as_str() {
-            "admin" => Ok(Role::Admin),
-            "operator" => Ok(Role::Operator),
-            "viewer" => Ok(Role::Viewer),
-            _ => Err(format!("Invalid role: {}", role)),
-        }
-    }
-}
-
-impl Role {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Admin => "admin",
-            Role::Operator => "operator",
-            Role::Viewer => "viewer",
-        }
-    }
-}
-
-impl std::fmt::Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
+// Role enum removed - using simple is_admin boolean instead
 
 /// RFC 7807 Problem Details response
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

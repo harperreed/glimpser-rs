@@ -240,12 +240,8 @@ pub async fn list_templates(
     let offset = (query.page as i64) * (query.page_size as i64);
     let limit = query.page_size as i64;
 
-    // Admin can filter by user_id, others see their own templates
-    let filter_user_id = if user.role == "admin" {
-        query.user_id.as_deref()
-    } else {
-        Some(user.id.as_str())
-    };
+    // All users see their own templates
+    let filter_user_id = Some(user.id.as_str());
 
     let (templates, total) = if let Some(search) = &query.search {
         // Search by name - note: this doesn't respect user filtering in current impl
@@ -317,8 +313,8 @@ pub async fn get_template(
         }
     };
 
-    // Check access: admin can see all, users can see their own
-    if user.role != "admin" && template.user_id != user.id {
+    // Check access: users can only see their own templates
+    if template.user_id != user.id {
         return Ok(
             HttpResponse::Forbidden().json(ApiResponse::<()>::error("Access denied".to_string()))
         );
@@ -437,7 +433,7 @@ pub async fn update_template(
     };
 
     // Check access: admin can update all, users can update their own
-    if user.role != "admin" && existing.user_id != user.id {
+    if existing.user_id != user.id {
         return Ok(
             HttpResponse::Forbidden().json(ApiResponse::<()>::error("Access denied".to_string()))
         );
@@ -530,7 +526,7 @@ pub async fn delete_template(
     };
 
     // Check access: admin can delete all, users can delete their own
-    if user.role != "admin" && existing.user_id != user.id {
+    if existing.user_id != user.id {
         return Ok(
             HttpResponse::Forbidden().json(ApiResponse::<()>::error("Access denied".to_string()))
         );

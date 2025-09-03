@@ -74,8 +74,8 @@ impl E2ETestSetup {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, role, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'admin', true, ?5, ?6)"
+            "INSERT INTO users (id, username, email, password_hash, is_active, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, true, ?5, ?6)"
         )
         .bind(&user_id)
         .bind(username)
@@ -163,12 +163,11 @@ impl E2ETestSetup {
 
         let _web_app_state = AppState {
             db: self.db.clone(),
-            jwt_secret: self.config.security.jwt_secret.clone(),
+            security_config: self.config.security.clone(),
             static_config,
             capture_manager,
             rate_limit_config: gl_web::middleware::ratelimit::RateLimitConfig {
-                ip_requests_per_minute: 100,
-                api_key_requests_per_minute: 1000,
+                requests_per_minute: 100,
                 window_duration: Duration::from_secs(60),
             },
             body_limits_config: gl_web::middleware::bodylimits::BodyLimitsConfig::new(1024 * 1024)
@@ -338,8 +337,8 @@ async fn test_e2e_smoke_workflow() {
         .expect("User not found");
 
     assert_eq!(retrieved_user.email, "admin@test.com");
-    assert_eq!(retrieved_user.role, "admin");
-    assert!(retrieved_user.is_active);
+    // No admin roles needed
+    assert!(retrieved_user.is_active.unwrap_or(false));
     println!("✅ User verification completed");
 
     // Test capture creation (database level)

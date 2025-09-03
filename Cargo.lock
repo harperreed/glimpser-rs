@@ -2119,6 +2119,7 @@ dependencies = [
  "futures-util",
  "gl_cap",
  "gl_capture",
+ "gl_config",
  "gl_core",
  "gl_db",
  "gl_notify",

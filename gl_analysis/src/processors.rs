@@ -156,6 +156,10 @@ impl Default for AiDescriptionProcessorConfig {
 
 impl AiDescriptionProcessor {
     pub fn new(config: Option<serde_json::Value>) -> Result<Self> {
+        Self::with_ai_config(config, AiConfig::default())
+    }
+
+    pub fn with_ai_config(config: Option<serde_json::Value>, ai_config: AiConfig) -> Result<Self> {
         let config: AiDescriptionProcessorConfig = if let Some(config_value) = config {
             serde_json::from_value(config_value).map_err(|e| {
                 gl_core::Error::Validation(format!(
@@ -167,13 +171,12 @@ impl AiDescriptionProcessor {
             AiDescriptionProcessorConfig::default()
         };
 
-        // Create AI client with default configuration (stub by default)
-        let ai_config = AiConfig::default();
-        let ai_client = create_client(ai_config);
+        // Create AI client with provided configuration
+        let ai_client = create_client(ai_config.clone());
 
         debug!(
-            "Created AI description processor with focus: {}",
-            config.focus
+            "Created AI description processor with focus: {}, use_online: {}",
+            config.focus, ai_config.use_online
         );
         Ok(Self { ai_client, config })
     }
@@ -321,6 +324,10 @@ impl Default for SummaryProcessorConfig {
 
 impl SummaryProcessor {
     pub fn new(config: Option<serde_json::Value>) -> Result<Self> {
+        Self::with_ai_config(config, AiConfig::default())
+    }
+
+    pub fn with_ai_config(config: Option<serde_json::Value>, ai_config: AiConfig) -> Result<Self> {
         let config: SummaryProcessorConfig = if let Some(config_value) = config {
             serde_json::from_value(config_value).map_err(|e| {
                 gl_core::Error::Validation(format!("Invalid summary processor config: {}", e))
@@ -329,13 +336,12 @@ impl SummaryProcessor {
             SummaryProcessorConfig::default()
         };
 
-        // Create AI client with default configuration (stub by default)
-        let ai_config = AiConfig::default();
-        let ai_client = create_client(ai_config);
+        // Create AI client with provided configuration
+        let ai_client = create_client(ai_config.clone());
 
         debug!(
-            "Created summary processor with max length: {}",
-            config.max_length
+            "Created summary processor with max length: {}, use_online: {}",
+            config.max_length, ai_config.use_online
         );
         Ok(Self { ai_client, config })
     }

@@ -115,10 +115,31 @@ impl CaptureSource for WebsiteSource {
     #[instrument(skip(self))]
     async fn start(&self) -> Result<CaptureHandle> {
         info!(url = %self.config.url, "Starting website capture");
-        // Fallback to mock client if embedded chrome is not available
+
+        // Try to use real WebDriver first, fallback to mock if not available
+        #[cfg(feature = "website")]
+        let client = {
+            match ThirtyfourClient::new(self.config.webdriver_url.clone()).await {
+                Ok(real_client) => {
+                    info!("Using real ThirtyfourClient for website capture");
+                    Box::new(real_client) as Box<dyn WebDriverClient>
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create real WebDriver client, falling back to mock");
+                    MockWebDriverClient::new_boxed()
+                }
+            }
+        };
+
+        #[cfg(not(feature = "website"))]
+        let client = {
+            warn!("Website feature not enabled, using mock WebDriver client");
+            MockWebDriverClient::new_boxed()
+        };
+
         Ok(CaptureHandle::new(std::sync::Arc::new(WebsiteSource {
             config: self.config.clone(),
-            client: MockWebDriverClient::new_boxed(),
+            client,
         })))
     }
 

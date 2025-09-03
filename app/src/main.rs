@@ -317,18 +317,20 @@ async fn start_server(config: Config, db: Db) {
         },
     };
 
-    // Initialize capture manager
-    let capture_manager = std::sync::Arc::new(gl_web::capture_manager::CaptureManager::new(
-        db.pool().clone(),
-    ));
+    // Initialize capture manager with configured storage
+    let capture_manager = std::sync::Arc::new(
+        gl_web::capture_manager::CaptureManager::with_storage_config(
+            db.pool().clone(),
+            config.storage.clone(),
+        ),
+    );
 
     let web_app_state = AppState {
         db: db.clone(),
-        jwt_secret: config.security.jwt_secret.clone(),
+        security_config: config.security.clone(),
         static_config,
         rate_limit_config: gl_web::middleware::ratelimit::RateLimitConfig {
-            ip_requests_per_minute: config.server.rate_limit.ip_requests_per_minute,
-            api_key_requests_per_minute: config.server.rate_limit.api_key_requests_per_minute,
+            requests_per_minute: config.server.rate_limit.requests_per_minute,
             window_duration: std::time::Duration::from_secs(
                 config.server.rate_limit.window_seconds,
             ),
@@ -336,7 +338,6 @@ async fn start_server(config: Config, db: Db) {
         body_limits_config: gl_web::middleware::bodylimits::BodyLimitsConfig::new(
             config.server.body_limits.global_json_limit,
         )
-        .with_override("/api/admin", config.server.body_limits.admin_json_limit)
         .with_override("/api/upload", config.server.body_limits.upload_limit),
         capture_manager,
     };

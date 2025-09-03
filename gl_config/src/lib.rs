@@ -65,12 +65,9 @@ impl Default for ServerConfig {
 /// Rate limiting configuration
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
 pub struct RateLimitConfig {
-    /// Maximum requests per IP per minute
+    /// Maximum requests per minute (IP-based only)
     #[validate(range(min = 1, max = 10000))]
-    pub ip_requests_per_minute: u32,
-    /// Maximum requests per API key per minute
-    #[validate(range(min = 1, max = 100000))]
-    pub api_key_requests_per_minute: u32,
+    pub requests_per_minute: u32,
     /// Rate limiting window duration in seconds
     #[validate(range(min = 1, max = 3600))]
     pub window_seconds: u64,
@@ -79,8 +76,7 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            ip_requests_per_minute: 100,
-            api_key_requests_per_minute: 1000,
+            requests_per_minute: 100,
             window_seconds: 60,
         }
     }
@@ -92,9 +88,6 @@ pub struct BodyLimitsConfig {
     /// Global JSON body size limit in bytes
     #[validate(range(min = 1024, max = 104857600))] // 1KB to 100MB
     pub global_json_limit: usize,
-    /// Admin endpoints JSON limit in bytes
-    #[validate(range(min = 1024, max = 104857600))]
-    pub admin_json_limit: usize,
     /// Upload endpoints limit in bytes
     #[validate(range(min = 1024, max = 1073741824))] // 1KB to 1GB
     pub upload_limit: usize,
@@ -104,7 +97,6 @@ impl Default for BodyLimitsConfig {
     fn default() -> Self {
         Self {
             global_json_limit: 1048576, // 1MB default
-            admin_json_limit: 10485760, // 10MB for admin operations
             upload_limit: 104857600,    // 100MB for uploads
         }
     }
@@ -136,6 +128,8 @@ pub struct SecurityConfig {
     #[validate(length(min = 32))]
     pub jwt_secret: String,
     pub argon2_params: Argon2Config,
+    /// Whether to use secure cookies (requires HTTPS)
+    pub secure_cookies: bool,
 }
 
 impl Default for SecurityConfig {
@@ -150,6 +144,7 @@ impl Default for SecurityConfig {
         Self {
             jwt_secret: format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", timestamp),
             argon2_params: Argon2Config::default(),
+            secure_cookies: false, // Default to false for development
         }
     }
 }
@@ -257,11 +252,25 @@ impl fmt::Debug for SmtpConfig {
 }
 
 /// Storage configuration
-#[derive(Debug, Clone, Deserialize, Serialize, Validate, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
 #[serde(default)]
 pub struct StorageConfig {
+    /// Local filesystem storage directory for artifacts
+    pub artifacts_dir: String,
+    /// Object store URL for S3-compatible storage
     pub object_store_url: Option<String>,
+    /// S3 bucket name
     pub bucket: Option<String>,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            artifacts_dir: "./data/artifacts".to_string(),
+            object_store_url: None,
+            bucket: None,
+        }
+    }
 }
 
 impl Config {
@@ -277,11 +286,9 @@ impl Config {
             .set_default("server.static_dir", "./static")?
             .set_default("server.enable_csp", true)?
             .set_default("server.static_max_age", 86400)?
-            .set_default("server.rate_limit.ip_requests_per_minute", 100)?
-            .set_default("server.rate_limit.api_key_requests_per_minute", 1000)?
+            .set_default("server.rate_limit.requests_per_minute", 100)?
             .set_default("server.rate_limit.window_seconds", 60)?
             .set_default("server.body_limits.global_json_limit", 1048576)?
-            .set_default("server.body_limits.admin_json_limit", 10485760)?
             .set_default("server.body_limits.upload_limit", 104857600)?
             .set_default("database.path", "glimpser.db")?
             .set_default("database.pool_size", 10)?
@@ -289,8 +296,10 @@ impl Config {
             .set_default("security.argon2_params.memory_cost", 19456)?
             .set_default("security.argon2_params.time_cost", 2)?
             .set_default("security.argon2_params.parallelism", 1)?
+            .set_default("security.secure_cookies", false)?
             .set_default("features.enable_rtsp", false)?
-            .set_default("features.enable_ai", false)?;
+            .set_default("features.enable_ai", false)?
+            .set_default("storage.artifacts_dir", "./data/artifacts")?;
 
         // Handle nested environment variables that don't work with the standard separator
         // JWT secret
@@ -365,6 +374,7 @@ mod tests {
             "GLIMPSER_DATABASE_PATH",
             "GLIMPSER_DATABASE_POOL_SIZE",
             "GLIMPSER_SECURITY_JWT_SECRET",
+            "GLIMPSER_SECURITY_SECURE_COOKIES",
         ];
 
         let original_values: Vec<_> = vars_to_clear.iter().map(|key| env::var(key).ok()).collect();

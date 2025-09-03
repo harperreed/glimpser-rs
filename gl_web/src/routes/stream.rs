@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::IntervalStream;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use utoipa::OpenApi;
 
 use crate::{models::ErrorResponse, AppState};
@@ -379,8 +379,28 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
                     website_config.basic_auth_password = Some(password.to_string());
                 }
 
-                // Use mock client for now - in production this would use real WebDriver
-                let client = gl_capture::website_source::MockWebDriverClient::new_boxed();
+                // Try to use real WebDriver first, fallback to mock if not available
+                #[cfg(feature = "website")]
+                let client = {
+                    match gl_capture::website_source::ThirtyfourClient::new(None).await {
+                        Ok(real_client) => {
+                            info!("Using real ThirtyfourClient for stream snapshot");
+                            Box::new(real_client)
+                                as Box<dyn gl_capture::website_source::WebDriverClient>
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "Failed to create real WebDriver client, falling back to mock");
+                            gl_capture::website_source::MockWebDriverClient::new_boxed()
+                        }
+                    }
+                };
+
+                #[cfg(not(feature = "website"))]
+                let client = {
+                    warn!("Website feature not enabled, using mock WebDriver client");
+                    gl_capture::website_source::MockWebDriverClient::new_boxed()
+                };
+
                 let website_source = WebsiteSource::new(website_config, client);
                 let handle = website_source.start().await?;
                 handle.snapshot().await?

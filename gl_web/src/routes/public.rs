@@ -44,7 +44,7 @@ pub async fn me(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResp
     // Fetch fresh user data from database
     match user_repo.find_by_id(&auth_user.id).await {
         Ok(Some(user)) => {
-            if !user.is_active {
+            if !user.is_active.unwrap_or(false) {
                 warn!("Inactive user attempted to access /me: {}", user.id);
                 return Ok(HttpResponse::Unauthorized().json(ErrorResponse::new(
                     "account_disabled",
@@ -56,8 +56,7 @@ pub async fn me(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResp
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                role: user.role,
-                is_active: user.is_active,
+                is_active: user.is_active.unwrap_or(false),
                 created_at: user.created_at,
             };
 

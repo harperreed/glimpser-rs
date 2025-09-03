@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_db = { path = "../gl_db" }
+gl_config = { path = "../gl_config" }
 gl_capture = { path = "../gl_capture", features = ["website_embedded"] }
 gl_storage = { path = "../gl_storage" }
 gl_stream = { path = "../gl_stream" }

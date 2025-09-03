@@ -10,7 +10,7 @@ use gl_notify::{
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::{middleware::rbac::RequireRole, models::ApiResponse};
+use crate::models::ApiResponse;
 
 /// Request payload for testing notifications
 #[derive(Debug, Deserialize)]
@@ -344,16 +344,8 @@ pub fn configure_alert_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/alerts")
             .route("/health", web::get().to(notification_health))
-            .route(
-                "/test",
-                web::post()
-                    .to(test_notification)
-                    .wrap(RequireRole::operator()), // Require admin or operator role
-            )
-            .route(
-                "/cap/preview",
-                web::post().to(cap_preview).wrap(RequireRole::operator()), // Require admin or operator role
-            ),
+            .route("/test", web::post().to(test_notification))
+            .route("/cap/preview", web::post().to(cap_preview)),
     );
 }
 

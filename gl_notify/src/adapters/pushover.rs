@@ -8,6 +8,9 @@ use tracing::{debug, info, warn};
 
 use crate::{Notification, NotificationChannel, NotificationError, Notifier, Result};
 
+// Re-export for convenience when using resilient constructor
+pub use crate::{circuit_breaker::CircuitBreakerConfig, retry::RetryConfig};
+
 /// Pushover notification adapter
 #[derive(Debug)]
 pub struct PushoverAdapter {
@@ -27,6 +30,26 @@ impl PushoverAdapter {
     /// Create Pushover adapter with custom client
     pub fn with_client(client: Client, app_token: String) -> Self {
         Self { client, app_token }
+    }
+
+    /// Create a resilient Pushover adapter with retry and circuit breaker
+    pub fn with_resilience(
+        app_token: String,
+    ) -> crate::CircuitBreakerWrapper<crate::RetryWrapper<Self>> {
+        let base_adapter = Self::new(app_token);
+        let retry_adapter = crate::RetryWrapper::new(base_adapter);
+        crate::CircuitBreakerWrapper::new(retry_adapter)
+    }
+
+    /// Create a resilient Pushover adapter with custom configurations
+    pub fn with_custom_resilience(
+        app_token: String,
+        retry_config: crate::retry::RetryConfig,
+        circuit_breaker_config: crate::circuit_breaker::CircuitBreakerConfig,
+    ) -> crate::CircuitBreakerWrapper<crate::RetryWrapper<Self>> {
+        let base_adapter = Self::new(app_token);
+        let retry_adapter = crate::RetryWrapper::with_config(base_adapter, retry_config);
+        crate::CircuitBreakerWrapper::with_config(retry_adapter, circuit_breaker_config)
     }
 
     /// Build the Pushover API payload
@@ -96,7 +119,6 @@ impl Notifier for PushoverAdapter {
                     sound.as_deref(),
                 );
 
-                // TODO: Add retry logic and circuit breaker
                 match self
                     .client
                     .post("https://api.pushover.net/1/messages.json")

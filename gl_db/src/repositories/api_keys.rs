@@ -107,4 +107,28 @@ impl<'a> ApiKeyRepository<'a> {
         debug!("Found {} API keys for user", api_keys.len());
         Ok(api_keys)
     }
+
+    /// List all API keys (admin only)
+    /// TODO: Remove this entire method as part of API key system removal
+    #[instrument(skip(self))]
+    pub async fn list_all(&self, _limit: i64, _offset: i64) -> Result<Vec<ApiKey>> {
+        // Temporarily disabled - will be removed with API key system
+        Ok(vec![])
+    }
+
+    /// Delete an API key by ID
+    /// TODO: Remove this entire method as part of API key system removal
+    #[instrument(skip(self))]
+    pub async fn delete(&self, _id: &str) -> Result<()> {
+        // Temporarily disabled - will be removed with API key system
+        Ok(())
+    }
+
+    /// Update last used timestamp
+    /// TODO: Remove this entire method as part of API key system removal
+    #[instrument(skip(self))]
+    pub async fn update_last_used(&self, _id: &str) -> Result<()> {
+        // Temporarily disabled - will be removed with API key system
+        Ok(())
+    }
 }

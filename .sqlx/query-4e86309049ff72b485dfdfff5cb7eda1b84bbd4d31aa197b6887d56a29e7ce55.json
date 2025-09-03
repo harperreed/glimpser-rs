@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n                UPDATE users\n                SET username = ?1, updated_at = ?2\n                WHERE id = ?3\n                RETURNING *\n                ",
+  "query": "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE id = ?1",
   "describe": {
     "columns": [
       {
@@ -24,39 +24,33 @@
         "type_info": "Text"
       },
       {
-        "name": "role",
-        "ordinal": 4,
-        "type_info": "Text"
-      },
-      {
         "name": "is_active",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Bool"
       },
       {
         "name": "created_at",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Text"
       },
       {
         "name": "updated_at",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 1
     },
     "nullable": [
       false,
       false,
       false,
       false,
-      false,
-      false,
+      true,
       false,
       false
     ]
   },
-  "hash": "6867249407838cb12be965049aa8c48a5c04e7c754da3b28b3f8bfd96b147a06"
+  "hash": "4e86309049ff72b485dfdfff5cb7eda1b84bbd4d31aa197b6887d56a29e7ce55"
 }

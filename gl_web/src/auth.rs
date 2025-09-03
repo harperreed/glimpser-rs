@@ -65,7 +65,7 @@ impl JwtAuth {
 
     /// Create a new JWT token for a user
     #[instrument(skip(secret))]
-    pub fn create_token(user_id: &str, email: &str, role: &str, secret: &str) -> Result<String> {
+    pub fn create_token(user_id: &str, email: &str, secret: &str) -> Result<String> {
         debug!("Creating JWT token for user: {}", user_id);
 
         let now = SystemTime::now()
@@ -76,7 +76,6 @@ impl JwtAuth {
         let claims = Claims {
             sub: user_id.to_string(),
             email: email.to_string(),
-            role: role.to_string(),
             exp: now + Self::TOKEN_EXPIRATION_SECS as usize,
             iat: now,
         };
@@ -117,8 +116,6 @@ impl JwtAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Role;
-    use std::str::FromStr;
 
     #[test]
     fn test_password_hash_and_verify() {
@@ -143,19 +140,17 @@ mod tests {
     fn test_jwt_create_and_verify() {
         let user_id = "user_123";
         let email = "test@example.com";
-        let role = "admin";
         let secret = "test_secret_key";
 
         // Create token
-        let token =
-            JwtAuth::create_token(user_id, email, role, secret).expect("Should create token");
+        let token = JwtAuth::create_token(user_id, email, secret).expect("Should create token");
         assert!(!token.is_empty());
 
         // Verify token
         let claims = JwtAuth::verify_token(&token, secret).expect("Should verify token");
         assert_eq!(claims.sub, user_id);
         assert_eq!(claims.email, email);
-        assert_eq!(claims.role, role);
+        // No role field anymore - simplified auth
         assert!(claims.exp > claims.iat);
     }
 
@@ -163,29 +158,14 @@ mod tests {
     fn test_jwt_invalid_secret() {
         let user_id = "user_123";
         let email = "test@example.com";
-        let role = "admin";
         let secret = "test_secret_key";
         let wrong_secret = "wrong_secret";
 
         // Create token with one secret
-        let token =
-            JwtAuth::create_token(user_id, email, role, secret).expect("Should create token");
+        let token = JwtAuth::create_token(user_id, email, secret).expect("Should create token");
 
         // Try to verify with different secret
         let result = JwtAuth::verify_token(&token, wrong_secret);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_role_enum() {
-        assert_eq!(Role::from_str("admin"), Ok(Role::Admin));
-        assert_eq!(Role::from_str("ADMIN"), Ok(Role::Admin));
-        assert_eq!(Role::from_str("operator"), Ok(Role::Operator));
-        assert_eq!(Role::from_str("viewer"), Ok(Role::Viewer));
-        assert!(Role::from_str("invalid").is_err());
-
-        assert_eq!(Role::Admin.as_str(), "admin");
-        assert_eq!(Role::Operator.as_str(), "operator");
-        assert_eq!(Role::Viewer.as_str(), "viewer");
     }
 }

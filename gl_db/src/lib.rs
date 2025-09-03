@@ -207,7 +207,6 @@ mod tests {
             username: "testuser".to_string(),
             email: "test@example.com".to_string(),
             password_hash: "hashed_password".to_string(),
-            role: "user".to_string(),
         };
 
         let user = repo
@@ -218,8 +217,8 @@ mod tests {
         assert!(!user.id.is_empty());
         assert_eq!(user.username, "testuser");
         assert_eq!(user.email, "test@example.com");
-        assert_eq!(user.role, "user");
-        assert!(user.is_active);
+        // No admin roles needed
+        assert!(user.is_active.unwrap_or(false));
 
         // Find by ID
         let found_user = repo
@@ -266,7 +265,6 @@ mod tests {
             username: "activeuser".to_string(),
             email: "active@example.com".to_string(),
             password_hash: "hashed_password".to_string(),
-            role: "user".to_string(),
         };
 
         let _user = repo
@@ -293,7 +291,6 @@ mod tests {
             username: "keyuser".to_string(),
             email: "keyuser@example.com".to_string(),
             password_hash: "hashed_password".to_string(),
-            role: "user".to_string(),
         };
         let user = user_repo
             .create(user_request)

@@ -2,6 +2,7 @@
 //! ABOUTME: Chains together motion detection, AI analysis, and summarization processors
 
 use crate::{processors::*, AnalysisEvent, Processor, ProcessorInput};
+use gl_ai::AiConfig;
 use gl_core::Result;
 use std::collections::HashMap;
 use tracing::{debug, warn};
@@ -17,6 +18,15 @@ impl AnalysisPipeline {
         processor_names: Vec<String>,
         processor_configs: HashMap<String, serde_json::Value>,
     ) -> Result<Self> {
+        Self::with_ai_config(processor_names, processor_configs, AiConfig::default())
+    }
+
+    /// Create a new analysis pipeline with custom AI configuration
+    pub fn with_ai_config(
+        processor_names: Vec<String>,
+        processor_configs: HashMap<String, serde_json::Value>,
+        ai_config: AiConfig,
+    ) -> Result<Self> {
         let mut processors: Vec<Box<dyn Processor>> = Vec::new();
 
         for name in processor_names {
@@ -28,12 +38,18 @@ impl AnalysisPipeline {
                     Box::new(MotionProcessor::new(config.cloned())?)
                 }
                 "ai_description" => {
-                    debug!("Creating AI description processor");
-                    Box::new(AiDescriptionProcessor::new(config.cloned())?)
+                    debug!("Creating AI description processor with AI config");
+                    Box::new(AiDescriptionProcessor::with_ai_config(
+                        config.cloned(),
+                        ai_config.clone(),
+                    )?)
                 }
                 "summary" => {
-                    debug!("Creating summary processor");
-                    Box::new(SummaryProcessor::new(config.cloned())?)
+                    debug!("Creating summary processor with AI config");
+                    Box::new(SummaryProcessor::with_ai_config(
+                        config.cloned(),
+                        ai_config.clone(),
+                    )?)
                 }
                 _ => {
                     warn!("Unknown processor type: {}, skipping", name);

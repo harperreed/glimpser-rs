@@ -2,6 +2,7 @@
 //! ABOUTME: Provides REST endpoints and OpenAPI documentation
 
 use actix_web::{web, App, HttpResponse, HttpServer};
+use gl_config::SecurityConfig;
 use gl_core::Result;
 use gl_db::Db;
 use utoipa::OpenApi;
@@ -14,14 +15,14 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 
-use routes::{admin, alerts, auth as auth_routes, public, static_files, stream, templates};
+use routes::{alerts, auth as auth_routes, public, static_files, stream, templates};
 use std::sync::Arc;
 
 /// Application state shared across all handlers
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
-    pub jwt_secret: String,
+    pub security_config: SecurityConfig,
     pub static_config: static_files::StaticConfig,
     pub rate_limit_config: middleware::ratelimit::RateLimitConfig,
     pub body_limits_config: middleware::bodylimits::BodyLimitsConfig,
@@ -73,17 +74,10 @@ pub fn create_app(
     let rate_limit_config = state.rate_limit_config.clone();
 
     // Create body limits config with per-endpoint overrides
-    let body_limits_config = state
-        .body_limits_config
-        .clone()
-        .with_override(
-            "/api/admin",
-            state.body_limits_config.default_json_limit * 10,
-        ) // Allow larger admin payloads
-        .with_override(
-            "/api/upload",
-            state.body_limits_config.default_json_limit * 100,
-        ); // Allow large uploads
+    let body_limits_config = state.body_limits_config.clone().with_override(
+        "/api/upload",
+        state.body_limits_config.default_json_limit * 100,
+    ); // Allow large uploads
 
     App::new()
         .app_data(web::Data::new(state))
@@ -102,25 +96,6 @@ pub fn create_app(
                             rate_limit_config.clone(),
                         ))
                         .service(auth_routes::login),
-                )
-                .service(
-                    web::scope("/admin")
-                        .wrap(middleware::ratelimit::RateLimit::new(
-                            rate_limit_config.clone(),
-                        ))
-                        .wrap(middleware::auth::RequireAuth::new())
-                        .service(admin::test_route)
-                        .service(admin::list_templates)
-                        .service(admin::list_users)
-                        .service(admin::create_user)
-                        .service(admin::delete_user)
-                        .service(admin::list_api_keys)
-                        .service(admin::delete_api_key)
-                        .service(admin::check_updates)
-                        .service(admin::apply_update)
-                        .service(admin::update_status)
-                        .service(admin::cancel_update)
-                        .service(admin::update_history),
                 )
                 .service(
                     web::scope("/stream")
@@ -205,9 +180,12 @@ mod tests {
 
         let capture_manager = Arc::new(capture_manager::CaptureManager::new(db.pool().clone()));
 
+        let mut test_security_config = SecurityConfig::default();
+        test_security_config.jwt_secret = "test_secret_key_32_characters_minimum".to_string();
+
         AppState {
             db,
-            jwt_secret: "test_secret_key_32_characters_minimum".to_string(),
+            security_config: test_security_config,
             static_config: static_files::StaticConfig::default(),
             rate_limit_config: middleware::ratelimit::RateLimitConfig::default(),
             body_limits_config: middleware::bodylimits::BodyLimitsConfig::default(),
@@ -215,12 +193,7 @@ mod tests {
         }
     }
 
-    async fn create_test_user(
-        state: &AppState,
-        email: &str,
-        password: &str,
-        role: &str,
-    ) -> gl_db::User {
+    async fn create_test_user(state: &AppState, email: &str, password: &str) -> gl_db::User {
         let user_repo = UserRepository::new(state.db.pool());
         let password_hash = PasswordAuth::hash_password(password).expect("Failed to hash password");
 
@@ -228,7 +201,6 @@ mod tests {
             username: email.split('@').next().unwrap().to_string(),
             email: email.to_string(),
             password_hash,
-            role: role.to_string(),
         };
 
         user_repo
@@ -240,7 +212,7 @@ mod tests {
     #[actix_web::test]
     async fn test_login_success() {
         let state = create_test_app_state().await;
-        let _user = create_test_user(&state, "test@example.com", "password123", "admin").await;
+        let _user = create_test_user(&state, "test@example.com", "password123").await;
 
         let app = test::init_service(create_app(state)).await;
 
@@ -266,7 +238,7 @@ mod tests {
     #[actix_web::test]
     async fn test_login_invalid_credentials() {
         let state = create_test_app_state().await;
-        let _user = create_test_user(&state, "test@example.com", "password123", "admin").await;
+        let _user = create_test_user(&state, "test@example.com", "password123").await;
 
         let app = test::init_service(create_app(state)).await;
 
@@ -287,14 +259,13 @@ mod tests {
     #[actix_web::test]
     async fn test_me_endpoint_authenticated() {
         let state = create_test_app_state().await;
-        let user = create_test_user(&state, "test@example.com", "password123", "admin").await;
+        let user = create_test_user(&state, "test@example.com", "password123").await;
 
         // Create JWT token
         let token = crate::auth::JwtAuth::create_token(
             &user.id,
             &user.email,
-            &user.role,
-            &state.jwt_secret,
+            &state.security_config.jwt_secret,
         )
         .expect("Failed to create token");
 
@@ -310,7 +281,7 @@ mod tests {
 
         let body: UserInfo = test::read_body_json(resp).await;
         assert_eq!(body.email, "test@example.com");
-        assert_eq!(body.role, "admin");
+        // Role field removed - simplified auth system
     }
 
     #[actix_web::test]
@@ -329,14 +300,13 @@ mod tests {
     #[ignore = "Pre-existing test failure - needs investigation"]
     async fn test_admin_endpoint_requires_admin() {
         let state = create_test_app_state().await;
-        let user = create_test_user(&state, "viewer@example.com", "password123", "viewer").await;
+        let user = create_test_user(&state, "viewer@example.com", "password123").await;
 
         // Create JWT token for viewer
         let token = crate::auth::JwtAuth::create_token(
             &user.id,
             &user.email,
-            &user.role,
-            &state.jwt_secret,
+            &state.security_config.jwt_secret,
         )
         .expect("Failed to create token");
 
@@ -355,14 +325,13 @@ mod tests {
     #[ignore = "Pre-existing test failure - needs investigation"]
     async fn test_admin_endpoint_allows_admin() {
         let state = create_test_app_state().await;
-        let user = create_test_user(&state, "admin@example.com", "password123", "admin").await;
+        let user = create_test_user(&state, "admin@example.com", "password123").await;
 
         // Create JWT token for admin
         let token = crate::auth::JwtAuth::create_token(
             &user.id,
             &user.email,
-            &user.role,
-            &state.jwt_secret,
+            &state.security_config.jwt_secret,
         )
         .expect("Failed to create token");
 
@@ -384,7 +353,7 @@ mod tests {
     async fn test_rate_limiting_ip_based() {
         let mut state = create_test_app_state().await;
         // Set a very low rate limit for testing
-        state.rate_limit_config.ip_requests_per_minute = 2;
+        state.rate_limit_config.requests_per_minute = 2;
         state.rate_limit_config.window_duration = std::time::Duration::from_secs(60);
 
         let app = test::init_service(create_app(state)).await;
@@ -476,49 +445,7 @@ mod tests {
         assert!(body["max_size"].is_number()); // Extensions are flattened
     }
 
-    #[actix_web::test]
-    async fn test_body_size_limit_admin_override() {
-        let mut state = create_test_app_state().await;
-        let user = create_test_user(&state, "admin@example.com", "password123", "admin").await;
-
-        // Set small global limit but admin override should allow larger payloads
-        state.body_limits_config.default_json_limit = 50; // 50 bytes
-
-        let app = test::init_service(create_app(state.clone())).await;
-
-        // Create JWT token for admin
-        let token = crate::auth::JwtAuth::create_token(
-            &user.id,
-            &user.email,
-            &user.role,
-            &state.jwt_secret,
-        )
-        .expect("Failed to create token");
-
-        // Admin endpoint should have higher limit (10x default = 500 bytes)
-        let medium_payload = serde_json::json!({
-            "name": "test_template_with_medium_length_name",
-            "description": "This is a medium length description that should pass the admin override limit but would fail the global limit"
-        });
-
-        let req = test::TestRequest::post()
-            .uri("/api/admin/templates")
-            .insert_header(("authorization", format!("Bearer {}", token)))
-            .insert_header(("content-type", "application/json"))
-            .insert_header((
-                "content-length",
-                serde_json::to_string(&medium_payload)
-                    .unwrap()
-                    .len()
-                    .to_string(),
-            ))
-            .set_json(&medium_payload)
-            .to_request();
-
-        let resp = test::call_service(&app, req).await;
-        // Should not be 413 (body too large) - admin endpoints have higher limits
-        assert_ne!(resp.status(), 413);
-    }
+    // Admin body size limit test removed - admin functionality no longer exists
 
     #[actix_web::test]
     async fn test_validation_error_rfc7807_format() {
@@ -574,68 +501,5 @@ mod tests {
         assert!(!body_str.is_empty());
     }
 
-    #[actix_web::test]
-    async fn test_api_key_rate_limiting() {
-        use gl_db::{ApiKeyRepository, CreateApiKeyRequest};
-
-        let mut state = create_test_app_state().await;
-        let user = create_test_user(&state, "apiuser@example.com", "password123", "admin").await;
-
-        // Set very low API key rate limit
-        state.rate_limit_config.api_key_requests_per_minute = 2;
-
-        // Create an API key for the user
-        let api_key_repo = ApiKeyRepository::new(state.db.pool());
-        let raw_key = "test_api_key_12345";
-        let key_hash = raw_key; // For simplicity in tests, we'll use the raw key as hash
-
-        let create_request = CreateApiKeyRequest {
-            user_id: user.id,
-            key_hash: key_hash.to_string(),
-            name: "test_key".to_string(),
-            permissions: "[]".to_string(),
-            expires_at: None,
-        };
-
-        let _api_key = api_key_repo
-            .create(create_request)
-            .await
-            .expect("Failed to create API key");
-
-        let app = test::init_service(create_app(state)).await;
-
-        // First request should succeed
-        let req1 = test::TestRequest::get()
-            .uri("/api/me")
-            .insert_header(("x-api-key", raw_key))
-            .to_request();
-
-        let resp1 = test::call_service(&app, req1).await;
-        assert_eq!(resp1.status(), 200);
-
-        // Second request should succeed
-        let req2 = test::TestRequest::get()
-            .uri("/api/me")
-            .insert_header(("x-api-key", raw_key))
-            .to_request();
-
-        let resp2 = test::call_service(&app, req2).await;
-        assert_eq!(resp2.status(), 200);
-
-        // Third request should be rate limited
-        let req3 = test::TestRequest::get()
-            .uri("/api/me")
-            .insert_header(("x-api-key", raw_key))
-            .to_request();
-
-        let resp3 = test::call_service(&app, req3).await;
-        let status = resp3.status();
-
-        // Check RFC 7807 Problem Details response
-        let body: serde_json::Value = test::read_body_json(resp3).await;
-
-        assert_eq!(status, 429);
-        assert_eq!(body["title"], "Too Many Requests");
-        assert_eq!(body["limit_type"], "api_key"); // Extensions are flattened
-    }
+    // API key rate limiting test removed - API keys no longer exist in simplified auth
 }

@@ -11,7 +11,7 @@ use gl_capture::{
 use gl_capture::{WebsiteConfig, WebsiteSource};
 use gl_core::{time::now_iso8601, Error, Result};
 use gl_db::{CreateSnapshotRequest, SnapshotRepository, Template, TemplateRepository};
-use gl_storage::{StorageConfig, StorageManager};
+use gl_storage::StorageManager;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -81,8 +81,18 @@ pub struct CaptureManager {
 impl CaptureManager {
     /// Create a new CaptureManager
     pub fn new(db_pool: sqlx::SqlitePool) -> Self {
+        // Use default storage configuration (backward compatibility)
+        let storage_config = gl_config::StorageConfig::default();
+        Self::with_storage_config(db_pool, storage_config)
+    }
+
+    /// Create a new CaptureManager with custom storage configuration
+    pub fn with_storage_config(
+        db_pool: sqlx::SqlitePool,
+        storage_config: gl_config::StorageConfig,
+    ) -> Self {
         // Create storage configuration for filesystem storage
-        let artifacts_dir = PathBuf::from("./data/artifacts");
+        let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
 
         // Create the artifacts directory if it doesn't exist
         if !artifacts_dir.exists() {
@@ -91,16 +101,16 @@ impl CaptureManager {
             }
         }
 
-        let storage_config = StorageConfig {
+        let gl_storage_config = gl_storage::StorageConfig {
             base_dir: Some(artifacts_dir),
             ..Default::default()
         };
 
         let storage_manager =
-            StorageManager::new(storage_config).expect("Failed to create storage manager");
+            StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
 
         let artifact_config = ArtifactStorageConfig {
-            base_uri: "file://./data/artifacts".to_string(),
+            base_uri: format!("file://{}", storage_config.artifacts_dir),
             snapshot_extension: "jpg".to_string(),
             include_timestamp: true,
         };

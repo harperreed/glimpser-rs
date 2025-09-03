@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT * FROM users WHERE is_active = true ORDER BY created_at DESC",
+  "query": "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE email = ?1",
   "describe": {
     "columns": [
       {
@@ -24,39 +24,33 @@
         "type_info": "Text"
       },
       {
-        "name": "role",
-        "ordinal": 4,
-        "type_info": "Text"
-      },
-      {
         "name": "is_active",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Bool"
       },
       {
         "name": "created_at",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Text"
       },
       {
         "name": "updated_at",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
       false,
       false,
       false,
-      false,
-      false,
+      true,
       false,
       false
     ]
   },
-  "hash": "9d0e62738f728a5de832a52181a94b4cfd77d3590750c4b18bdc157c04bb10b3"
+  "hash": "fb3269a1bcfdf92140219063f321bdc3613f906e6244e083cf1ac42203188682"
 }

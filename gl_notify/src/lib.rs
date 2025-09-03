@@ -47,6 +47,14 @@ pub enum NotificationError {
     RetryExhausted(String),
 }
 
+// Add error conversions for web-push when feature is enabled
+#[cfg(feature = "webpush")]
+impl From<web_push::WebPushError> for NotificationError {
+    fn from(err: web_push::WebPushError) -> Self {
+        NotificationError::WebPushError(err.to_string())
+    }
+}
+
 /// Type of notification
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NotificationKind {
