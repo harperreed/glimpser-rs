@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use gl_config::Config;
 use gl_core::telemetry;
-use gl_db::{CreateTemplateRequest, Db, TemplateRepository, UserRepository};
+use gl_db::{CreateStreamRequest, Db, StreamRepository, UserRepository};
 use gl_obs::ObsState;
 use gl_web::AppState;
 use std::process;
@@ -142,7 +142,7 @@ async fn interactive_bootstrap(db: &Db) {
     let user_id = bootstrap_user(db, email, &password, username).await;
 
     println!();
-    println!("Creating example templates...");
+    println!("Creating example streams...");
     create_example_templates(db, &user_id).await;
 }
 
@@ -215,7 +215,7 @@ async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) ->
 }
 
 async fn create_example_templates(db: &Db, user_id: &str) {
-    let template_repo = TemplateRepository::new(db.pool());
+    let template_repo = StreamRepository::new(db.pool());
 
     // Create Wrigleyville EarthCam template
     let webcam_config = serde_json::json!({
@@ -228,7 +228,7 @@ async fn create_example_templates(db: &Db, user_id: &str) {
         "element_selector": ".cam-image"
     });
 
-    let webcam_template = CreateTemplateRequest {
+    let webcam_template = CreateStreamRequest {
         user_id: user_id.to_string(),
         name: "Wrigleyville EarthCam".to_string(),
         description: Some("Live webcam feed from Wrigleyville area in Chicago".to_string()),
@@ -238,15 +238,15 @@ async fn create_example_templates(db: &Db, user_id: &str) {
 
     match template_repo.create(webcam_template).await {
         Ok(template) => {
-            tracing::info!("✅ Created example webcam template: {}", template.name);
+            tracing::info!("✅ Created example webcam stream: {}", template.name);
             println!(
-                "   📹 Webcam Template: {} (ID: {})",
+                "   📹 Webcam Stream: {} (ID: {})",
                 template.name, template.id
             );
         }
         Err(e) => {
-            tracing::warn!("Failed to create webcam template: {}", e);
-            println!("   ⚠️  Failed to create webcam template");
+            tracing::warn!("Failed to create webcam stream: {}", e);
+            println!("   ⚠️  Failed to create webcam stream");
         }
     }
 
@@ -261,7 +261,7 @@ async fn create_example_templates(db: &Db, user_id: &str) {
         "element_selector": "main"
     });
 
-    let news_template = CreateTemplateRequest {
+    let news_template = CreateStreamRequest {
         user_id: user_id.to_string(),
         name: "NPR News Site".to_string(),
         description: Some("NPR main page for news monitoring".to_string()),
@@ -271,23 +271,20 @@ async fn create_example_templates(db: &Db, user_id: &str) {
 
     match template_repo.create(news_template).await {
         Ok(template) => {
-            tracing::info!("✅ Created example news template: {}", template.name);
-            println!(
-                "   📰 News Template: {} (ID: {})",
-                template.name, template.id
-            );
+            tracing::info!("✅ Created example news stream: {}", template.name);
+            println!("   📰 News Stream: {} (ID: {})", template.name, template.id);
         }
         Err(e) => {
-            tracing::warn!("Failed to create news template: {}", e);
-            println!("   ⚠️  Failed to create news template");
+            tracing::warn!("Failed to create news stream: {}", e);
+            println!("   ⚠️  Failed to create news stream");
         }
     }
 
     println!();
     println!("🎉 Bootstrap complete! You can now:");
     println!("   • Access the web interface at http://127.0.0.1:8080/static/");
-    println!("   • Use the example templates for testing");
-    println!("   • Take snapshots via API: /api/stream/<template_id>/snapshot");
+    println!("   • Use the example streams for testing");
+    println!("   • Take snapshots via API: /api/stream/<stream_id>/snapshot");
 }
 
 async fn start_server(config: Config, db: Db) {

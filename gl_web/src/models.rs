@@ -34,15 +34,15 @@ pub struct UserInfo {
     pub created_at: String,
 }
 
-/// Template information for admin endpoints
+/// Stream information for admin endpoints (settings UI)
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct TemplateInfo {
+pub struct AdminStreamInfo {
     pub id: String,
     pub user_id: String,
     pub name: String,
     pub description: Option<String>,
     #[serde(rename = "type")]
-    pub template_type: String,
+    pub stream_type: String,
     pub is_default: bool,
     pub created_at: String,
     pub updated_at: String,

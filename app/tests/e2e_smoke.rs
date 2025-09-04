@@ -3,7 +3,7 @@
 
 use gl_config::Config;
 use gl_core::telemetry;
-use gl_db::{CaptureRepository, CreateTemplateRequest, Db, TemplateRepository, UserRepository};
+use gl_db::{CaptureRepository, CreateStreamRequest, Db, StreamRepository, UserRepository};
 use gl_obs::ObsState;
 use gl_web::{auth::PasswordAuth, AppState};
 use reqwest::Client;
@@ -89,12 +89,12 @@ impl E2ETestSetup {
         Ok(user_id)
     }
 
-    /// Create a synthetic file-based template for testing
+    /// Create a synthetic file-based stream for testing
     async fn create_test_template(
         &self,
         user_id: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let template_repo = TemplateRepository::new(self.db.pool());
+        let template_repo = StreamRepository::new(self.db.pool());
 
         // Create a synthetic template with FileSource configuration
         let config = json!({
@@ -103,7 +103,7 @@ impl E2ETestSetup {
             "format": "test"
         });
 
-        let template_request = CreateTemplateRequest {
+        let template_request = CreateStreamRequest {
             user_id: user_id.to_string(),
             name: "E2E Test Template".to_string(),
             description: Some("Synthetic template for E2E testing".to_string()),
@@ -317,16 +317,16 @@ async fn test_e2e_smoke_workflow() {
     // 3. Test the complete workflow
 
     // Verify database state
-    let template_repo = TemplateRepository::new(setup.db.pool());
-    let retrieved_template = template_repo
+    let stream_repo = StreamRepository::new(setup.db.pool());
+    let retrieved_stream = stream_repo
         .find_by_id(&template_id)
         .await
-        .expect("Failed to query template")
-        .expect("Template not found");
+        .expect("Failed to query stream")
+        .expect("Stream not found");
 
-    assert_eq!(retrieved_template.name, "E2E Test Template");
-    assert_eq!(retrieved_template.user_id, user_id);
-    println!("✅ Template verification completed");
+    assert_eq!(retrieved_stream.name, "E2E Test Template");
+    assert_eq!(retrieved_stream.user_id, user_id);
+    println!("✅ Stream verification completed");
 
     // Verify user can be retrieved
     let user_repo = UserRepository::new(setup.db.pool());

@@ -9,5 +9,5 @@ pub mod events;
 pub mod jobs;
 pub mod notification_deliveries;
 pub mod snapshots;
-pub mod templates;
+pub mod streams;
 pub mod users;

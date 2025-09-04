@@ -175,7 +175,7 @@ pub struct WebsiteTemplate {
 
 The REST API contract (**173+ endpoints**) remains **identical** to the Python version. This ensures seamless frontend compatibility. The only change is the underlying technology, which provides lower latency, higher throughput, and greater stability.
 
-*All endpoints listed in the original specification (e.g., `/api/auth/login`, `/api/templates`, `/api/stream/{template_id}/mjpeg`) are implemented in the Rust version.*
+*All endpoints listed in the original specification (e.g., `/api/auth/login`, `/api/streams`, `/api/stream/{stream_id}/mjpeg`) are implemented in the Rust version.*
 
 -----
 

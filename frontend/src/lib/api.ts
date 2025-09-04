@@ -8,7 +8,7 @@ export type LoginRequest = components['schemas']['LoginRequest'];
 export type LoginResponse = components['schemas']['LoginResponse'];
 export type UserInfo = components['schemas']['UserInfo'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
-export type TemplateInfo = components['schemas']['TemplateInfo'];
+export type AdminStreamInfo = any; // TODO: regenerate from OpenAPI spec
 
 const API_BASE_URL = process.env.NODE_ENV === 'production'
   ? '' // Use same origin in production
@@ -47,7 +47,7 @@ class ApiClient {
   ): Promise<T> {
     const url = `${this.baseURL}/api${endpoint}`;
 
-    const headers: HeadersInit = {
+    const headers: any = {
       ...options.headers,
     };
 
@@ -138,38 +138,38 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'DELETE' });
   }
 
-  // Template endpoints
-  async getTemplates(params?: { page?: number; page_size?: number; search?: string }) {
+  // Stream endpoints (listing)
+  async getStreams(params?: { page?: number; page_size?: number; search?: string }) {
     const query = params ? new URLSearchParams(
       Object.entries(params).filter(([_, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
     ).toString() : '';
-    return this.request(`/templates${query ? `?${query}` : ''}`);
+    return this.request(`/streams${query ? `?${query}` : ''}`);
   }
 
-  async getTemplate(id: string) {
-    return this.request(`/templates/${id}`);
+  async getStream(id: string) {
+    return this.request(`/streams/${id}`);
   }
 
-  async createTemplate(template: {
+  async createStream(stream: {
     name: string;
     description?: string;
     config: any;
     is_default?: boolean;
   }) {
-    return this.post('/templates', template);
+    return this.post('/streams', stream);
   }
 
-  async updateTemplate(id: string, template: {
+  async updateStream(id: string, stream: {
     name?: string;
     description?: string;
     config?: any;
     is_default?: boolean;
   }) {
-    return this.put(`/templates/${id}`, template);
+    return this.put(`/streams/${id}`, stream);
   }
 
-  async deleteTemplate(id: string) {
-    return this.delete(`/templates/${id}`);
+  async deleteStream(id: string) {
+    return this.delete(`/streams/${id}`);
   }
 
   // Stream control endpoints

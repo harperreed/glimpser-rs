@@ -51,15 +51,15 @@ else
     exit 1
 fi
 
-# Test 6: Templates API responds (should work now)
-echo -n "✓ Testing templates API... "
-TEMPLATES_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/templates)
-if [[ "$TEMPLATES_RESPONSE" == "[]" ]] || echo "$TEMPLATES_RESPONSE" | grep -q "\["; then
-    echo "✅ PASS (empty array or templates list)"
-elif echo "$TEMPLATES_RESPONSE" | grep -q "Authentication required"; then
+# Test 6: Streams API responds (should work now)
+echo -n "✓ Testing streams API... "
+STREAMS_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/streams)
+if [[ "$STREAMS_RESPONSE" == "[]" ]] || echo "$STREAMS_RESPONSE" | grep -q "\["; then
+    echo "✅ PASS (empty array or streams list)"
+elif echo "$STREAMS_RESPONSE" | grep -q "Authentication required"; then
     echo "⚠️  WARN (still auth required)"
 else
-    echo "❌ FAIL (response: $TEMPLATES_RESPONSE)"
+    echo "❌ FAIL (response: $STREAMS_RESPONSE)"
 fi
 
 echo ""

@@ -1,8 +1,8 @@
-//! ABOUTME: Template CRUD API endpoints with RBAC and validation
-//! ABOUTME: Provides full template management with pagination, filtering, and ETag support
+//! ABOUTME: Stream CRUD API endpoints with RBAC and validation
+//! ABOUTME: Provides full stream management with pagination, filtering, and ETag support
 
 use actix_web::{web, HttpRequest, HttpResponse, Result as ActixResult};
-use gl_db::{CreateTemplateRequest, Template, TemplateRepository, UpdateTemplateRequest};
+use gl_db::{CreateStreamRequest, Stream, StreamRepository, UpdateStreamRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tracing::{info, warn};
@@ -10,9 +10,9 @@ use validator::Validate;
 
 use crate::{middleware::auth::get_http_auth_user, models::ApiResponse};
 
-/// Query parameters for listing templates
+/// Query parameters for listing streams
 #[derive(Debug, Deserialize)]
-pub struct ListTemplatesQuery {
+pub struct ListStreamsQuery {
     /// Page number (0-indexed)
     #[serde(default)]
     pub page: u32,
@@ -29,9 +29,9 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// Request to create a new template
+/// Request to create a new stream
 #[derive(Debug, Deserialize, Validate)]
-pub struct CreateTemplateApiRequest {
+pub struct CreateStreamApiRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: String,
     #[validate(length(max = 500))]
@@ -41,9 +41,9 @@ pub struct CreateTemplateApiRequest {
     pub is_default: bool,
 }
 
-/// Request to update a template
+/// Request to update a stream
 #[derive(Debug, Deserialize, Validate)]
-pub struct UpdateTemplateApiRequest {
+pub struct UpdateStreamApiRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,
     #[validate(length(max = 500))]
@@ -52,10 +52,10 @@ pub struct UpdateTemplateApiRequest {
     pub is_default: Option<bool>,
 }
 
-/// Paginated response for templates
+/// Paginated response for streams
 #[derive(Debug, Serialize)]
-pub struct PaginatedTemplatesResponse {
-    pub templates: Vec<Template>,
+pub struct PaginatedStreamsResponse {
+    pub streams: Vec<Stream>,
     pub total: i64,
     pub page: u32,
     pub page_size: u32,
@@ -63,21 +63,21 @@ pub struct PaginatedTemplatesResponse {
 }
 
 /// ETag helper
-fn generate_etag(template: &Template) -> String {
-    format!("\"{}\"", template.updated_at)
+fn generate_etag(stream: &Stream) -> String {
+    format!("\"{}\"", stream.updated_at)
 }
 
-/// Validate template configuration JSON based on type
-fn validate_template_config(config: &Value) -> Result<(), String> {
+/// Validate stream configuration JSON based on type
+fn validate_stream_config(config: &Value) -> Result<(), String> {
     let config_obj = match config.as_object() {
         Some(obj) => obj,
-        None => return Err("Template config must be a JSON object".to_string()),
+        None => return Err("Stream config must be a JSON object".to_string()),
     };
 
     // Require 'kind' field
     let kind = match config_obj.get("kind").and_then(|v| v.as_str()) {
         Some(k) => k,
-        None => return Err("Template config must have a 'kind' field".to_string()),
+        None => return Err("Stream config must have a 'kind' field".to_string()),
     };
 
     // Validate based on kind
@@ -86,7 +86,7 @@ fn validate_template_config(config: &Value) -> Result<(), String> {
         "file" => validate_file_config(config_obj),
         "website" => validate_website_config(config_obj),
         "yt" => validate_yt_config(config_obj),
-        _ => Err(format!("Unknown template kind: {}", kind)),
+        _ => Err(format!("Unknown stream kind: {}", kind)),
     }
 }
 
@@ -212,9 +212,9 @@ fn validate_yt_config(config: &Map<String, Value>) -> Result<(), String> {
     Ok(())
 }
 
-/// GET /api/templates - List templates with pagination
-pub async fn list_templates(
-    query: web::Query<ListTemplatesQuery>,
+/// GET /api/streams - List streams with pagination
+pub async fn list_streams(
+    query: web::Query<ListStreamsQuery>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
@@ -226,7 +226,7 @@ pub async fn list_templates(
         page = query.page,
         page_size = query.page_size,
         search = ?query.search,
-        "Listing templates"
+        "Listing streams"
     );
 
     // Validate page size
@@ -236,43 +236,43 @@ pub async fn list_templates(
         )));
     }
 
-    let repo = TemplateRepository::new(state.db.pool());
+    let repo = StreamRepository::new(state.db.pool());
     let offset = (query.page as i64) * (query.page_size as i64);
     let limit = query.page_size as i64;
 
-    // All users see their own templates
+    // All users see their own streams
     let filter_user_id = Some(user.id.as_str());
 
-    let (templates, total) = if let Some(search) = &query.search {
+    let (streams, total) = if let Some(search) = &query.search {
         // Search by name - note: this doesn't respect user filtering in current impl
-        let templates = repo
+        let streams = repo
             .search_by_name(search, offset, limit)
             .await
             .map_err(|e| {
-                warn!(error = %e, "Failed to search templates");
+                warn!(error = %e, "Failed to search streams");
                 actix_web::error::ErrorInternalServerError("Database error")
             })?;
-        let total = templates.len() as i64; // Approximate for search
-        (templates, total)
+        let total = streams.len() as i64; // Approximate for search
+        (streams, total)
     } else {
-        let templates = repo
+        let streams = repo
             .list(filter_user_id, offset, limit)
             .await
             .map_err(|e| {
-                warn!(error = %e, "Failed to list templates");
+                warn!(error = %e, "Failed to list streams");
                 actix_web::error::ErrorInternalServerError("Database error")
             })?;
         let total = repo.count(filter_user_id).await.map_err(|e| {
-            warn!(error = %e, "Failed to count templates");
+            warn!(error = %e, "Failed to count streams");
             actix_web::error::ErrorInternalServerError("Database error")
         })?;
-        (templates, total)
+        (streams, total)
     };
 
     let total_pages = ((total as f64) / (query.page_size as f64)).ceil() as u32;
 
-    let response = PaginatedTemplatesResponse {
-        templates,
+    let response = PaginatedStreamsResponse {
+        streams,
         total,
         page: query.page,
         page_size: query.page_size,
@@ -282,8 +282,8 @@ pub async fn list_templates(
     Ok(HttpResponse::Ok().json(ApiResponse::success(response)))
 }
 
-/// GET /api/templates/{id} - Get template by ID
-pub async fn get_template(
+/// GET /api/streams/{id} - Get stream by ID
+pub async fn get_stream(
     path: web::Path<String>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
@@ -291,37 +291,37 @@ pub async fn get_template(
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
-    let template_id = path.into_inner();
+    let stream_id = path.into_inner();
 
     info!(
         user_id = %user.id,
-        template_id = %template_id,
-        "Getting template"
+        stream_id = %stream_id,
+        "Getting stream"
     );
 
-    let repo = TemplateRepository::new(state.db.pool());
-    let template = repo.find_by_id(&template_id).await.map_err(|e| {
-        warn!(error = %e, "Failed to find template");
+    let repo = StreamRepository::new(state.db.pool());
+    let stream = repo.find_by_id(&stream_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to find stream");
         actix_web::error::ErrorInternalServerError("Database error")
     })?;
 
-    let template = match template {
-        Some(t) => t,
+    let stream = match stream {
+        Some(s) => s,
         None => {
             return Ok(HttpResponse::NotFound()
-                .json(ApiResponse::<()>::error("Template not found".to_string())))
+                .json(ApiResponse::<()>::error("Stream not found".to_string())))
         }
     };
 
-    // Check access: users can only see their own templates
-    if template.user_id != user.id {
+    // Check access: users can only see their own streams
+    if stream.user_id != user.id {
         return Ok(
             HttpResponse::Forbidden().json(ApiResponse::<()>::error("Access denied".to_string()))
         );
     }
 
     // Generate ETag
-    let etag = generate_etag(&template);
+    let etag = generate_etag(&stream);
 
     // Check If-None-Match header for conditional requests
     if let Some(if_none_match) = req.headers().get("If-None-Match") {
@@ -336,12 +336,12 @@ pub async fn get_template(
 
     Ok(HttpResponse::Ok()
         .insert_header(("ETag", etag))
-        .json(ApiResponse::success(template)))
+        .json(ApiResponse::success(stream)))
 }
 
-/// POST /api/templates - Create new template
-pub async fn create_template(
-    payload: web::Json<CreateTemplateApiRequest>,
+/// POST /api/streams - Create new stream
+pub async fn create_stream(
+    payload: web::Json<CreateStreamApiRequest>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
@@ -351,17 +351,17 @@ pub async fn create_template(
     info!(
         user_id = %user.id,
         name = %payload.name,
-        "Creating template"
+        "Creating stream"
     );
 
     // Validate request
     payload.validate().map_err(|e| {
-        warn!(error = %e, "Template validation failed");
+        warn!(error = %e, "Stream validation failed");
         actix_web::error::ErrorBadRequest(format!("Validation error: {}", e))
     })?;
 
     // Validate config JSON
-    if let Err(msg) = validate_template_config(&payload.config) {
+    if let Err(msg) = validate_stream_config(&payload.config) {
         return Ok(HttpResponse::BadRequest().json(ApiResponse::<()>::error(msg)));
     }
 
@@ -370,7 +370,7 @@ pub async fn create_template(
         actix_web::error::ErrorBadRequest("Invalid config JSON")
     })?;
 
-    let request = CreateTemplateRequest {
+    let request = CreateStreamRequest {
         user_id: user.id.clone(),
         name: payload.name.clone(),
         description: payload.description.clone(),
@@ -378,57 +378,57 @@ pub async fn create_template(
         is_default: payload.is_default,
     };
 
-    let repo = TemplateRepository::new(state.db.pool());
-    let template = repo.create(request).await.map_err(|e| {
-        warn!(error = %e, "Failed to create template");
+    let repo = StreamRepository::new(state.db.pool());
+    let stream = repo.create(request).await.map_err(|e| {
+        warn!(error = %e, "Failed to create stream");
         actix_web::error::ErrorInternalServerError("Database error")
     })?;
 
     info!(
-        template_id = %template.id,
-        "Template created successfully"
+        stream_id = %stream.id,
+        "Stream created successfully"
     );
 
-    Ok(HttpResponse::Created().json(ApiResponse::success(template)))
+    Ok(HttpResponse::Created().json(ApiResponse::success(stream)))
 }
 
-/// PUT /api/templates/{id} - Update template
-pub async fn update_template(
+/// PUT /api/streams/{id} - Update stream
+pub async fn update_stream(
     path: web::Path<String>,
-    payload: web::Json<UpdateTemplateApiRequest>,
+    payload: web::Json<UpdateStreamApiRequest>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
-    let template_id = path.into_inner();
+    let stream_id = path.into_inner();
 
     info!(
         user_id = %user.id,
-        template_id = %template_id,
-        "Updating template"
+        stream_id = %stream_id,
+        "Updating stream"
     );
 
     // Validate request
     payload.validate().map_err(|e| {
-        warn!(error = %e, "Template validation failed");
+        warn!(error = %e, "Stream validation failed");
         actix_web::error::ErrorBadRequest(format!("Validation error: {}", e))
     })?;
 
-    let repo = TemplateRepository::new(state.db.pool());
+    let repo = StreamRepository::new(state.db.pool());
 
-    // Check if template exists and user has access
-    let existing = repo.find_by_id(&template_id).await.map_err(|e| {
-        warn!(error = %e, "Failed to find template");
+    // Check if stream exists and user has access
+    let existing = repo.find_by_id(&stream_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to find stream");
         actix_web::error::ErrorInternalServerError("Database error")
     })?;
 
     let existing = match existing {
-        Some(t) => t,
+        Some(s) => s,
         None => {
             return Ok(HttpResponse::NotFound()
-                .json(ApiResponse::<()>::error("Template not found".to_string())))
+                .json(ApiResponse::<()>::error("Stream not found".to_string())))
         }
     };
 
@@ -446,7 +446,7 @@ pub async fn update_template(
             if client_etag != current_etag {
                 return Ok(
                     HttpResponse::PreconditionFailed().json(ApiResponse::<()>::error(
-                        "Template has been modified by another request".to_string(),
+                        "Stream has been modified by another request".to_string(),
                     )),
                 );
             }
@@ -455,7 +455,7 @@ pub async fn update_template(
 
     // Validate config if provided
     let config_json = if let Some(config) = &payload.config {
-        if let Err(msg) = validate_template_config(config) {
+        if let Err(msg) = validate_stream_config(config) {
             return Ok(HttpResponse::BadRequest().json(ApiResponse::<()>::error(msg)));
         }
         Some(serde_json::to_string(config).map_err(|e| {
@@ -466,34 +466,34 @@ pub async fn update_template(
         None
     };
 
-    let request = UpdateTemplateRequest {
+    let request = UpdateStreamRequest {
         name: payload.name.clone(),
         description: payload.description.clone(),
         config: config_json,
         is_default: payload.is_default,
     };
 
-    let template = repo.update(&template_id, request).await.map_err(|e| {
-        warn!(error = %e, "Failed to update template");
+    let stream = repo.update(&stream_id, request).await.map_err(|e| {
+        warn!(error = %e, "Failed to update stream");
         actix_web::error::ErrorInternalServerError("Database error")
     })?;
 
-    let template = template.expect("Template should exist after update");
+    let stream = stream.expect("Stream should exist after update");
 
     info!(
-        template_id = %template.id,
-        "Template updated successfully"
+        stream_id = %stream.id,
+        "Stream updated successfully"
     );
 
-    let etag = generate_etag(&template);
+    let etag = generate_etag(&stream);
 
     Ok(HttpResponse::Ok()
         .insert_header(("ETag", etag))
-        .json(ApiResponse::success(template)))
+        .json(ApiResponse::success(stream)))
 }
 
-/// DELETE /api/templates/{id} - Delete template
-pub async fn delete_template(
+/// DELETE /api/streams/{id} - Delete stream
+pub async fn delete_stream(
     path: web::Path<String>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
@@ -501,27 +501,27 @@ pub async fn delete_template(
     let user = get_http_auth_user(&req)
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
 
-    let template_id = path.into_inner();
+    let stream_id = path.into_inner();
 
     info!(
         user_id = %user.id,
-        template_id = %template_id,
-        "Deleting template"
+        stream_id = %stream_id,
+        "Deleting stream"
     );
 
-    let repo = TemplateRepository::new(state.db.pool());
+    let repo = StreamRepository::new(state.db.pool());
 
-    // Check if template exists and user has access
-    let existing = repo.find_by_id(&template_id).await.map_err(|e| {
-        warn!(error = %e, "Failed to find template");
+    // Check if stream exists and user has access
+    let existing = repo.find_by_id(&stream_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to find stream");
         actix_web::error::ErrorInternalServerError("Database error")
     })?;
 
     let existing = match existing {
-        Some(t) => t,
+        Some(s) => s,
         None => {
             return Ok(HttpResponse::NotFound()
-                .json(ApiResponse::<()>::error("Template not found".to_string())))
+                .json(ApiResponse::<()>::error("Stream not found".to_string())))
         }
     };
 
@@ -532,78 +532,80 @@ pub async fn delete_template(
         );
     }
 
-    let deleted = repo.delete(&template_id).await.map_err(|e| {
-        warn!(error = %e, "Failed to delete template");
+    let deleted = repo.delete(&stream_id).await.map_err(|e| {
+        warn!(error = %e, "Failed to delete stream");
         actix_web::error::ErrorInternalServerError("Database error")
     })?;
 
     if !deleted {
-        return Ok(HttpResponse::NotFound()
-            .json(ApiResponse::<()>::error("Template not found".to_string())));
+        return Ok(
+            HttpResponse::NotFound().json(ApiResponse::<()>::error("Stream not found".to_string()))
+        );
     }
 
     info!(
-        template_id = %template_id,
-        "Template deleted successfully"
+        stream_id = %stream_id,
+        "Stream deleted successfully"
     );
 
     Ok(HttpResponse::NoContent().finish())
 }
 
-/// List templates handler for actix service macro (no trailing slash)
+/// List streams handler for actix service macro (no trailing slash)
 #[actix_web::get("")]
-pub async fn list_templates_service(
-    query: web::Query<ListTemplatesQuery>,
+pub async fn list_streams_service(
+    query: web::Query<ListStreamsQuery>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    list_templates(query, req, state).await
+    list_streams(query, req, state).await
 }
 
-/// Get template handler for actix service macro
+/// Get stream handler for actix service macro
 #[actix_web::get("/{id}")]
-pub async fn get_template_service(
+pub async fn get_stream_service(
     path: web::Path<String>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    get_template(path, req, state).await
+    get_stream(path, req, state).await
 }
 
-/// Create template handler for actix service macro (no trailing slash)
+/// Create stream handler for actix service macro (no trailing slash)
 #[actix_web::post("")]
-pub async fn create_template_service(
-    payload: web::Json<CreateTemplateApiRequest>,
+pub async fn create_stream_service(
+    payload: web::Json<CreateStreamApiRequest>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    create_template(payload, req, state).await
+    create_stream(payload, req, state).await
 }
 
-/// Update template handler for actix service macro
+/// Update stream handler for actix service macro
 #[actix_web::put("/{id}")]
-pub async fn update_template_service(
+pub async fn update_stream_service(
     path: web::Path<String>,
-    payload: web::Json<UpdateTemplateApiRequest>,
+    payload: web::Json<UpdateStreamApiRequest>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    update_template(path, payload, req, state).await
+    update_stream(path, payload, req, state).await
 }
 
-/// Delete template handler for actix service macro
+/// Delete stream handler for actix service macro
 #[actix_web::delete("/{id}")]
-pub async fn delete_template_service(
+pub async fn delete_stream_service(
     path: web::Path<String>,
     req: HttpRequest,
     state: web::Data<crate::AppState>,
 ) -> ActixResult<HttpResponse> {
-    delete_template(path, req, state).await
+    delete_stream(path, req, state).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gl_db::Stream;
     use serde_json::json;
 
     #[test]
@@ -612,12 +614,12 @@ mod tests {
             "kind": "ffmpeg",
             "source_url": "rtsp://camera/stream"
         });
-        assert!(validate_template_config(&valid_config).is_ok());
+        assert!(validate_stream_config(&valid_config).is_ok());
 
         let invalid_config = json!({
             "kind": "ffmpeg"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
     }
 
     #[test]
@@ -626,12 +628,12 @@ mod tests {
             "kind": "file",
             "file_path": "/path/to/video.mp4"
         });
-        assert!(validate_template_config(&valid_config).is_ok());
+        assert!(validate_stream_config(&valid_config).is_ok());
 
         let invalid_config = json!({
             "kind": "file"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
     }
 
     #[test]
@@ -645,20 +647,20 @@ mod tests {
             "height": 720,
             "element_selector": "#main"
         });
-        assert!(validate_template_config(&valid_config).is_ok());
+        assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url
         let invalid_config = json!({
             "kind": "website"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid url
         let invalid_config = json!({
             "kind": "website",
             "url": "not-a-url"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid field types
         let invalid_config = json!({
@@ -666,7 +668,7 @@ mod tests {
             "url": "https://example.com",
             "headless": "not-a-boolean"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
     }
 
     #[test]
@@ -681,20 +683,20 @@ mod tests {
                 "cookies": "/path/to/cookies.txt"
             }
         });
-        assert!(validate_template_config(&valid_config).is_ok());
+        assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url
         let invalid_config = json!({
             "kind": "yt"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid url
         let invalid_config = json!({
             "kind": "yt",
             "url": "not-a-url"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid field types
         let invalid_config = json!({
@@ -702,21 +704,21 @@ mod tests {
             "url": "https://youtube.com/watch?v=test",
             "is_live": "not-a-boolean"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
 
         let invalid_config = json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "timeout": "not-a-number"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
 
         let invalid_config = json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "options": "not-an-object"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
     }
 
     #[test]
@@ -724,12 +726,12 @@ mod tests {
         let invalid_config = json!({
             "kind": "unknown"
         });
-        assert!(validate_template_config(&invalid_config).is_err());
+        assert!(validate_stream_config(&invalid_config).is_err());
     }
 
     #[test]
     fn test_etag_generation() {
-        let template = Template {
+        let stream = Stream {
             id: "test".to_string(),
             user_id: "user".to_string(),
             name: "Test".to_string(),
@@ -743,7 +745,7 @@ mod tests {
             updated_at: "2023-01-01T00:00:00Z".to_string(),
         };
 
-        let etag = generate_etag(&template);
+        let etag = generate_etag(&stream);
         assert_eq!(etag, "\"2023-01-01T00:00:00Z\"");
     }
 }

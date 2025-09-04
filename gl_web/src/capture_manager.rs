@@ -10,7 +10,7 @@ use gl_capture::{
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
 use gl_core::{time::now_iso8601, Error, Result};
-use gl_db::{CreateSnapshotRequest, SnapshotRepository, Template, TemplateRepository};
+use gl_db::{CreateSnapshotRequest, SnapshotRepository, Stream, StreamRepository};
 use gl_storage::StorageManager;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -129,7 +129,7 @@ impl CaptureManager {
         info!(template_id = %template_id, "Starting template capture");
 
         // Get template from database first
-        let template_repo = TemplateRepository::new(&self.db_pool);
+        let template_repo = StreamRepository::new(&self.db_pool);
         let template = template_repo
             .find_by_id(template_id)
             .await?
@@ -181,7 +181,7 @@ impl CaptureManager {
             }
 
             // Update database status based on result
-            let template_repo = TemplateRepository::new(&db_pool);
+            let template_repo = StreamRepository::new(&db_pool);
             match result {
                 Ok(_) => {
                     if let Err(e) = template_repo
@@ -229,7 +229,7 @@ impl CaptureManager {
 
         if let Some(task) = task {
             // Update status to stopping (no timestamp update needed)
-            let template_repo = TemplateRepository::new(&self.db_pool);
+            let template_repo = StreamRepository::new(&self.db_pool);
             template_repo
                 .update_execution_status(template_id, "stopping", None)
                 .await?;
@@ -283,7 +283,7 @@ impl CaptureManager {
         }
 
         // Get template from database to recreate capture source
-        let template_repo = TemplateRepository::new(&self.db_pool);
+        let template_repo = StreamRepository::new(&self.db_pool);
         let template = template_repo
             .find_by_id(template_id)
             .await?
@@ -314,7 +314,7 @@ impl CaptureManager {
     /// Internal method to run a capture task
     async fn run_capture_task(
         db_pool: sqlx::SqlitePool,
-        template: Template,
+        template: Stream,
         template_id: String,
     ) -> Result<()> {
         info!(template_id = %template_id, "Running capture task");
@@ -329,7 +329,7 @@ impl CaptureManager {
             .ok_or_else(|| Error::Config("Template config missing 'kind' field".to_string()))?;
 
         // Update status to active with timestamp
-        let template_repo = TemplateRepository::new(&db_pool);
+        let template_repo = StreamRepository::new(&db_pool);
         template_repo
             .update_execution_status(
                 &template_id,

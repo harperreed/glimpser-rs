@@ -1,4 +1,4 @@
-//! ABOUTME: Admin panel for managing users, API keys, templates, and system
+//! ABOUTME: Admin panel for managing users, API keys, streams, and system
 //! ABOUTME: Replaces static/js/admin.js with React components
 
 'use client';
@@ -25,7 +25,7 @@ interface ApiKey {
   updated_at: string;
 }
 
-interface Template {
+interface Stream {
   id: string;
   user_id: string;
   name: string;
@@ -36,13 +36,13 @@ interface Template {
   updated_at: string;
 }
 
-type ActiveTab = 'users' | 'api-keys' | 'templates' | 'system';
+type ActiveTab = 'users' | 'api-keys' | 'streams' | 'system';
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
+  const [streams, setStreams] = useState<Stream[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,13 +69,13 @@ export default function AdminPage() {
     }
   }, []);
 
-  const loadTemplates = useCallback(async () => {
+  const loadStreams = useCallback(async () => {
     try {
       setError(null);
-      const data = await apiClient.get('/settings/templates');
-      setTemplates(Array.isArray(data) ? data : []);
+      const data = await apiClient.get('/settings/streams');
+      setStreams(Array.isArray(data) ? data : []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load templates');
+      setError(err instanceof Error ? err.message : 'Failed to load streams');
     }
   }, []);
 
@@ -89,8 +89,8 @@ export default function AdminPage() {
         case 'api-keys':
           await loadApiKeys();
           break;
-        case 'templates':
-          await loadTemplates();
+        case 'streams':
+          await loadStreams();
           break;
         case 'system':
           // System tab doesn't need API calls
@@ -99,7 +99,7 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
-  }, [loadUsers, loadApiKeys, loadTemplates]);
+  }, [loadUsers, loadApiKeys, loadStreams]);
 
   useEffect(() => {
     loadTabData(activeTab);
@@ -136,14 +136,14 @@ export default function AdminPage() {
     }
   };
 
-  const deleteTemplate = async (templateId: string) => {
-    if (!confirm('Are you sure you want to delete this template?')) return;
+  const deleteStream = async (streamId: string) => {
+    if (!confirm('Are you sure you want to delete this stream?')) return;
 
     try {
-      await apiClient.delete(`/settings/templates/${templateId}`);
-      await loadTemplates();
+      await apiClient.delete(`/settings/streams/${streamId}`);
+      await loadStreams();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete template');
+      setError(err instanceof Error ? err.message : 'Failed to delete stream');
     }
   };
 
@@ -195,7 +195,7 @@ export default function AdminPage() {
             {[
               { key: 'users', label: 'Users' },
               { key: 'api-keys', label: 'API Keys' },
-              { key: 'templates', label: 'Templates' },
+              { key: 'streams', label: 'Streams' },
               { key: 'system', label: 'System' }
             ].map((tab) => (
               <button
@@ -323,13 +323,13 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* Templates Tab */}
-          {activeTab === 'templates' && (
+          {/* Streams Tab */}
+          {activeTab === 'streams' && (
             <div>
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-semibold text-gray-800">Template Management</h3>
+                <h3 className="text-lg font-semibold text-gray-800">Stream Management</h3>
                 <button className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all duration-200">
-                  Create Template
+                  Create Stream
                 </button>
               </div>
 
@@ -347,28 +347,28 @@ export default function AdminPage() {
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={5} className="px-4 py-4 text-center text-gray-500 italic">Loading templates...</td>
+                        <td colSpan={5} className="px-4 py-4 text-center text-gray-500 italic">Loading streams...</td>
                       </tr>
-                    ) : templates.length === 0 ? (
+                    ) : streams.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-4 py-4 text-center text-gray-500 italic">No templates found</td>
+                        <td colSpan={5} className="px-4 py-4 text-center text-gray-500 italic">No streams found</td>
                       </tr>
                     ) : (
-                      templates.map((template) => (
-                        <tr key={template.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-4 border-b border-gray-200">{template.name}</td>
-                          <td className="px-4 py-4 border-b border-gray-200">{template.type}</td>
+                      streams.map((stream) => (
+                        <tr key={stream.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-4 border-b border-gray-200">{stream.name}</td>
+                          <td className="px-4 py-4 border-b border-gray-200">{stream.type}</td>
                           <td className="px-4 py-4 border-b border-gray-200">
-                            {template.is_default ? (
+                            {stream.is_default ? (
                               <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">Default</span>
                             ) : (
                               <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-full text-xs">Custom</span>
                             )}
                           </td>
-                          <td className="px-4 py-4 border-b border-gray-200">{formatDate(template.created_at)}</td>
+                          <td className="px-4 py-4 border-b border-gray-200">{formatDate(stream.created_at)}</td>
                           <td className="px-4 py-4 border-b border-gray-200">
                             <button
-                              onClick={() => deleteTemplate(template.id)}
+                              onClick={() => deleteStream(stream.id)}
                               className="text-red-600 hover:text-red-800 font-medium mr-4"
                             >
                               Delete
@@ -424,8 +424,8 @@ export default function AdminPage() {
                       <span>{users.length}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Templates:</span>
-                      <span>{templates.length}</span>
+                      <span>Streams:</span>
+                      <span>{streams.length}</span>
                     </div>
                   </div>
                 </div>

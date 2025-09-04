@@ -33,7 +33,7 @@
         <div class="flex gap-1 mb-8 border-b border-gray-300">
             <button class="tab-btn px-6 py-3 font-medium cursor-pointer border-b-2 border-blue-600 text-blue-600 transition-all duration-200 active" data-tab="users">Users</button>
             <button class="tab-btn px-6 py-3 font-medium cursor-pointer border-b-2 border-transparent hover:text-blue-600 transition-all duration-200" data-tab="api-keys">API Keys</button>
-            <button class="tab-btn px-6 py-3 font-medium cursor-pointer border-b-2 border-transparent hover:text-blue-600 transition-all duration-200" data-tab="templates">Templates</button>
+            <button class="tab-btn px-6 py-3 font-medium cursor-pointer border-b-2 border-transparent hover:text-blue-600 transition-all duration-200" data-tab="streams">Streams</button>
             <button class="tab-btn px-6 py-3 font-medium cursor-pointer border-b-2 border-transparent hover:text-blue-600 transition-all duration-200" data-tab="system">System</button>
         </div>
 
@@ -90,14 +90,14 @@
             </div>
         </div>
 
-        <!-- Templates Tab -->
-        <div id="templates-tab" class="tab-content hidden">
+        <!-- Streams Tab -->
+        <div id="streams-tab" class="tab-content hidden">
             <div class="flex justify-between items-center mb-6">
-                <h3 class="text-lg font-semibold text-gray-800">Template Management</h3>
-                <button id="create-template-btn" class="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all duration-200">Create Template</button>
+                <h3 class="text-lg font-semibold text-gray-800">Stream Management</h3>
+                <button id="create-stream-btn" class="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all duration-200">Create Stream</button>
             </div>
 
-            <div id="templates-table" class="bg-white rounded-md shadow-sm overflow-hidden">
+            <div id="streams-table" class="bg-white rounded-md shadow-sm overflow-hidden">
                 <table class="w-full border-collapse">
                     <thead>
                         <tr>
@@ -107,9 +107,9 @@
                             <th class="px-4 py-4 text-left border-b border-gray-300 bg-slate-50 font-semibold text-gray-800">Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="templates-tbody">
+                    <tbody id="streams-tbody">
                         <tr>
-                            <td colspan="4" class="px-4 py-4 text-center text-gray-500 italic">Loading templates...</td>
+                        <td colspan="4" class="px-4 py-4 text-center text-gray-500 italic">Loading streams...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -187,26 +187,26 @@
         </div>
     </div>
 
-    <!-- Template Modal -->
-    <div id="template-modal" class="modal hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <!-- Stream Modal -->
+    <div id="stream-modal" class="modal hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-md shadow-lg w-full max-w-3xl max-h-90vh overflow-y-auto">
             <div class="flex justify-between items-center p-6 border-b border-gray-300">
-                <h3 class="text-lg font-semibold text-gray-800">Create Template</h3>
-                <button class="close-btn p-1 text-gray-500 hover:text-gray-800 text-xl" data-close-modal="template-modal">×</button>
+                <h3 class="text-lg font-semibold text-gray-800">Create Stream</h3>
+                <button class="close-btn p-1 text-gray-500 hover:text-gray-800 text-xl" data-close-modal="stream-modal">×</button>
             </div>
             <div class="p-6">
-                <form id="template-form" class="space-y-4">
+                <form id="stream-form" class="space-y-4">
                     <div>
-                        <label for="template-name" class="block mb-1 font-medium text-gray-800">Name</label>
-                        <input type="text" id="template-name" required class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                        <label for="stream-name" class="block mb-1 font-medium text-gray-800">Name</label>
+                        <input type="text" id="stream-name" required class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
                     </div>
                     <div>
-                        <label for="template-description" class="block mb-1 font-medium text-gray-800">Description</label>
-                        <textarea id="template-description" rows="3" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"></textarea>
+                        <label for="stream-description" class="block mb-1 font-medium text-gray-800">Description</label>
+                        <textarea id="stream-description" rows="3" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"></textarea>
                     </div>
                     <div>
-                        <label for="template-type" class="block mb-1 font-medium text-gray-800">Source Type</label>
-                        <select id="template-type" required class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                        <label for="stream-type" class="block mb-1 font-medium text-gray-800">Source Type</label>
+                        <select id="stream-type" required class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
                             <option value="">Select type...</option>
                             <option value="ffmpeg">RTSP/MJPEG Stream</option>
                             <option value="yt">YouTube Stream</option>
@@ -215,8 +215,8 @@
                         </select>
                     </div>
                     <div>
-                        <label for="template-url" class="block mb-1 font-medium text-gray-800">Source URL</label>
-                        <input type="text" id="template-url" placeholder="e.g. https://example.com" required class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                        <label for="stream-url" class="block mb-1 font-medium text-gray-800">Source URL</label>
+                        <input type="text" id="stream-url" placeholder="e.g. https://example.com" required class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
                     </div>
 
                     <!-- Website-specific options -->
@@ -224,22 +224,22 @@
                         <h4 class="text-base font-semibold text-blue-600 mb-3">Website Capture Options</h4>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <label for="template-width" class="block mb-1 font-medium text-gray-800">Width (pixels)</label>
-                                <input type="number" id="template-width" value="1920" min="320" max="3840" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                                <label for="stream-width" class="block mb-1 font-medium text-gray-800">Width (pixels)</label>
+                                <input type="number" id="stream-width" value="1920" min="320" max="3840" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
                             </div>
                             <div>
-                                <label for="template-height" class="block mb-1 font-medium text-gray-800">Height (pixels)</label>
-                                <input type="number" id="template-height" value="1080" min="240" max="2160" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                                <label for="stream-height" class="block mb-1 font-medium text-gray-800">Height (pixels)</label>
+                                <input type="number" id="stream-height" value="1080" min="240" max="2160" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
                             </div>
                         </div>
                         <div>
-                            <label for="template-element-selector" class="block mb-1 font-medium text-gray-800">Element Selector (optional)</label>
-                            <input type="text" id="template-element-selector" placeholder="e.g. #main-content, .video-player" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                            <label for="stream-element-selector" class="block mb-1 font-medium text-gray-800">Element Selector (optional)</label>
+                            <input type="text" id="stream-element-selector" placeholder="e.g. #main-content, .video-player" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
                             <small class="text-gray-500 text-sm">CSS selector to capture specific element instead of full page</small>
                         </div>
                         <div>
                             <label class="flex items-center gap-2">
-                                <input type="checkbox" id="template-headless" checked class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                <input type="checkbox" id="stream-headless" checked class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
                                 <span class="font-medium text-gray-800">Headless mode (recommended)</span>
                             </label>
                         </div>
@@ -249,8 +249,8 @@
                     <div id="ffmpeg-options" class="hidden space-y-4 p-4 bg-gray-50 rounded-md">
                         <h4 class="text-base font-semibold text-blue-600 mb-3">Stream Options</h4>
                         <div>
-                            <label for="template-hardware-accel" class="block mb-1 font-medium text-gray-800">Hardware Acceleration</label>
-                            <select id="template-hardware-accel" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                            <label for="stream-hardware-accel" class="block mb-1 font-medium text-gray-800">Hardware Acceleration</label>
+                            <select id="stream-hardware-accel" class="w-full px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
                                 <option value="none">None</option>
                                 <option value="vaapi">VAAPI (Intel/AMD)</option>
                                 <option value="cuda">NVIDIA CUDA</option>
@@ -261,13 +261,13 @@
 
                     <div>
                         <label class="flex items-center gap-2">
-                            <input type="checkbox" id="template-default" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-                            <span class="font-medium text-gray-800">Set as default template</span>
+                            <input type="checkbox" id="stream-default" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                            <span class="font-medium text-gray-800">Set as default stream</span>
                         </label>
                     </div>
                     <div class="flex gap-4 justify-end mt-6">
-                        <button type="button" class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200" data-close-modal="template-modal">Cancel</button>
-                        <button type="submit" class="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all duration-200">Create Template</button>
+                        <button type="button" class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200" data-close-modal="stream-modal">Cancel</button>
+                        <button type="submit" class="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all duration-200">Create Stream</button>
                     </div>
                 </form>
             </div>

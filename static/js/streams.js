@@ -89,10 +89,10 @@ function displayStreams(streams) {
     streamsGrid.innerHTML = streams.map(stream => {
         const statusClass = stream.status === 'active' ? 'online' : 'offline';
         const lastSeen = stream.last_frame_at ? formatTimeAgo(new Date(stream.last_frame_at)) : 'Never';
-        const templateId = stream.template_id || stream.id;
+        const streamId = stream.id;
 
         return `
-            <div class="stream-card" data-stream-id="${stream.id}" data-template-id="${templateId}" data-status="${stream.status}">
+            <div class="stream-card" data-stream-id="${streamId}" data-status="${stream.status}">
                 <div class="stream-preview" data-action="open-modal" data-stream-id="${stream.id}">
                     ${stream.status === 'active' ?
                         `<img src="/api/stream/${stream.id}/thumbnail" alt="${escapeHtml(stream.name)}" class="stream-thumbnail">`
@@ -112,8 +112,8 @@ function displayStreams(streams) {
                     </div>
                     <div class="stream-controls">
                         ${stream.status === 'active' ?
-                            `<button data-action="stop-stream" data-template-id="${templateId}" class="btn-danger btn-small">Stop</button>` :
-                            `<button data-action="start-stream" data-template-id="${templateId}" class="btn-primary btn-small">Start</button>`
+                            `<button data-action="stop-stream" data-stream-id="${streamId}" class="btn-danger btn-small">Stop</button>` :
+                            `<button data-action="start-stream" data-stream-id="${streamId}" class="btn-primary btn-small">Start</button>`
                         }
                     </div>
                 </div>
@@ -367,20 +367,20 @@ function handleStreamActions(event) {
         }
     } else if (action === 'start-stream') {
         event.stopPropagation();
-        const templateId = event.target.getAttribute('data-template-id');
-        if (templateId) {
-            startStream(templateId, event);
+        const streamId = event.target.getAttribute('data-stream-id');
+        if (streamId) {
+            startStream(streamId, event);
         }
     } else if (action === 'stop-stream') {
         event.stopPropagation();
-        const templateId = event.target.getAttribute('data-template-id');
-        if (templateId) {
-            stopStream(templateId, event);
+        const streamId = event.target.getAttribute('data-stream-id');
+        if (streamId) {
+            stopStream(streamId, event);
         }
     }
 }
 
-async function startStream(templateId, event) {
+async function startStream(streamId, event) {
     const button = event.target;
     const originalText = button.textContent;
 
@@ -388,7 +388,7 @@ async function startStream(templateId, event) {
         button.textContent = 'Starting...';
         button.disabled = true;
 
-        const response = await authManager.apiRequest(`/stream/${templateId}/start`, {
+        const response = await authManager.apiRequest(`/stream/${streamId}/start`, {
             method: 'POST'
         });
 
@@ -407,7 +407,7 @@ async function startStream(templateId, event) {
     }
 }
 
-async function stopStream(templateId, event) {
+async function stopStream(streamId, event) {
     const button = event.target;
     const originalText = button.textContent;
 
@@ -415,7 +415,7 @@ async function stopStream(templateId, event) {
         button.textContent = 'Stopping...';
         button.disabled = true;
 
-        const response = await authManager.apiRequest(`/stream/${templateId}/stop`, {
+        const response = await authManager.apiRequest(`/stream/${streamId}/stop`, {
             method: 'POST'
         });
 

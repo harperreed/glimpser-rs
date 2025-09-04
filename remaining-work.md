@@ -1,35 +1,41 @@
-Remaining Work — Admin CRUD and Templates API
+Remaining Work — Admin CRUD and Streams API
 
 Overview
 
-This document lists follow-ups to fully stabilize admin CRUD (templates, users, API keys) and align API/UX.
+This document lists follow-ups to fully stabilize admin CRUD (streams, users, API keys) and align API/UX.
 
 High‑priority
 
 - API keys repository (gl_db/src/repositories/api_keys.rs)
-  - Implement list_all(limit, offset): SELECT active keys ordered by created_at (limit/offset).
-  - Implement delete(id): soft delete (is_active=false, updated_at=now) for consistency with users.
-  - (Optional) Implement update_last_used(id) to record API key usage.
+  - [x] Implement list_all(limit, offset): SELECT active keys ordered by created_at (limit/offset).
+  - [x] Implement delete(id): soft delete (is_active=false, updated_at=now) for consistency with users.
+  - [x] (Optional) Implement update_last_used(id) to record API key usage.
 
 - Admin create handlers (gl_web/src/routes/admin.rs)
-  - Use JWT user id instead of hardcoded "admin" for create_template and create_api_key.
+  - [x] Use JWT user id instead of hardcoded "admin" for create_stream and create_api_key.
     - user_id = get_http_auth_user(&req).id
-  - Encode permissions as a JSON array string (e.g., ["read","write"]).
-  - Switch update_template to PUT (#[put("/templates/{id}")]) to match REST semantics and user-facing routes.
+  - [x] Encode permissions as a JSON array string (e.g., ["read","write"]).
+  - [x] Switch update_stream to PUT (#[put("/streams/{id}")]) to match REST semantics and user-facing routes.
 
-- Admin templates payload shape
-  - Accept config as serde_json::Value (not String) for create/update; validate Value and serialize to String for DB.
-  - Aligns /api/settings/templates with /api/templates expectations.
+- ✅ COMPLETED: Renamed Templates → Streams (API/UI)
+  - [x] Added /api/streams CRUD (templates kept for backward compatibility).
+  - [x] Expose /api/settings/streams in admin; UI migrated.
+  - [x] Added StreamRepository (view-backed) and migrated all routes.
+  - [x] Migrated all references to use streams terminology.
+
+- Admin streams payload shape
+  - [x] Accept config as serde_json::Value (not String) for create/update; validate Value and serialize to String for DB.
+  - [x] Aligns /api/settings/streams with /api/streams expectations.
 
 - Routing consistency
-  - Decide on global trailing slash policy (prefer no trailing slash) and enable NormalizePath accordingly.
-  - Remove temporary route aliases/logging after verification.
+  - [x] Decide on global trailing slash policy (prefer no trailing slash) and enable NormalizePath accordingly.
+  - [ ] Remove temporary route aliases/logging after verification.
 
 Medium‑priority
 
 - Tests
-  - Add integration tests for /api/settings CRUD happy paths (templates, users, API keys).
-  - Add test asserting both /api/templates and /api/templates/ resolve (or enforce one canonical form).
+  - Add integration tests for /api/settings CRUD happy paths (streams, users, API keys).
+  - Add test asserting both /api/streams and /api/streams/ resolve (or enforce one canonical form).
 
 - Frontend (admin UI)
   - Add create/edit UI for templates/users/api keys and wire to endpoints.

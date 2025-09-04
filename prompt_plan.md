@@ -128,7 +128,7 @@ Rust API Server (Port 8080)
 ├── Authentication (JWT)
 ├── Stream endpoints (/api/stream/*)
 ├── Admin endpoints (/api/settings/*)
-├── Template management (/api/templates/*)
+├── Stream management (/api/streams/*)
 └── Static file serving (during transition)
 ```
 

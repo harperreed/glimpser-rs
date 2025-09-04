@@ -1,227 +1,51 @@
-//! ABOUTME: Settings endpoints for template, user, and API key management
+//! ABOUTME: Settings endpoints for stream, user, and API key management
 //! ABOUTME: Simplified settings functionality without role-based access control
 
-use crate::{models::TemplateInfo, AppState};
+use crate::{models::AdminStreamInfo, AppState};
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Result};
+use chrono::{DateTime, TimeZone, Utc};
 use gl_db::{
-    ApiKeyRepository, CreateApiKeyRequest, CreateTemplateRequest, CreateUserRequest,
-    UpdateTemplateRequest, UserRepository,
+    ApiKeyRepository, CreateApiKeyRequest, CreateStreamRequest, CreateUserRequest,
+    StreamRepository, UpdateStreamRequest, UserRepository,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tracing::{debug, error, info, warn};
 
-/// List all templates
-#[get("/templates")]
-pub async fn list_templates(state: web::Data<AppState>, _req: HttpRequest) -> Result<HttpResponse> {
-    debug!("Listing templates for admin user");
-
-    // Get templates from database
-    let template_repo = gl_db::TemplateRepository::new(state.db.pool());
-
-    match template_repo.list(None, 0, 100).await {
-        Ok(templates) => {
-            debug!(
-                "Templates retrieved successfully, count: {}",
-                templates.len()
-            );
-
-            // Convert to TemplateInfo format expected by admin panel
-            let template_infos: Vec<TemplateInfo> = templates
-                .into_iter()
-                .map(|t| {
-                    // Extract type from config JSON
-                    let template_type = match serde_json::from_str::<serde_json::Value>(&t.config) {
-                        Ok(config) => config
-                            .get("kind")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        Err(_) => "unknown".to_string(),
-                    };
-
-                    TemplateInfo {
-                        id: t.id,
-                        user_id: t.user_id,
-                        name: t.name,
-                        description: t.description,
-                        template_type,
-                        is_default: t.is_default,
-                        created_at: t.created_at,
-                        updated_at: t.updated_at,
-                    }
-                })
-                .collect();
-
-            Ok(HttpResponse::Ok().json(template_infos))
-        }
-        Err(e) => {
-            error!("Failed to retrieve templates: {}", e);
-            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to retrieve templates",
-                "details": e.to_string()
-            })))
+fn parse_timestamp_to_utc(s: &str) -> DateTime<Utc> {
+    // Try RFC3339 first
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return dt.with_timezone(&Utc);
+    }
+    // Fallback: our simplified format "secs.nanos"
+    if let Some((secs_str, nanos_str)) = s.split_once('.') {
+        if let (Ok(secs), Ok(nanos)) = (secs_str.parse::<i64>(), nanos_str.parse::<u32>()) {
+            if let chrono::LocalResult::Single(dt) = Utc.timestamp_opt(secs, nanos) {
+                return dt;
+            }
         }
     }
+    // Last resort: now
+    Utc::now()
 }
+use crate::middleware::auth::get_http_auth_user;
 
-/// Create template request
+/// Create stream request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CreateTemplateRequestBody {
+pub struct CreateStreamRequestBody {
     pub name: String,
     pub description: Option<String>,
-    pub config: String,
+    pub config: serde_json::Value,
     pub is_default: Option<bool>,
 }
 
-/// Create a new template
-#[post("/templates")]
-pub async fn create_template(
-    state: web::Data<AppState>,
-    req: web::Json<CreateTemplateRequestBody>,
-) -> Result<HttpResponse> {
-    debug!("Creating new template: {}", req.name);
-
-    let template_repo = gl_db::TemplateRepository::new(state.db.pool());
-
-    // Validate JSON config
-    if serde_json::from_str::<serde_json::Value>(&req.config).is_err() {
-        return Ok(HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "Invalid JSON configuration"
-        })));
-    }
-
-    let create_req = CreateTemplateRequest {
-        user_id: "admin".to_string(), // For now, use admin as default user_id
-        name: req.name.clone(),
-        description: req.description.clone(),
-        config: req.config.clone(),
-        is_default: req.is_default.unwrap_or(false),
-    };
-
-    match template_repo.create(create_req).await {
-        Ok(template) => {
-            info!("Template created successfully: {}", template.id);
-            Ok(HttpResponse::Created().json(template))
-        }
-        Err(e) => {
-            error!("Failed to create template: {}", e);
-            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to create template",
-                "details": e.to_string()
-            })))
-        }
-    }
-}
-
-/// Update template request
+/// Update stream request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateTemplateRequestBody {
+pub struct UpdateStreamRequestBody {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub config: Option<String>,
+    pub config: Option<serde_json::Value>,
     pub is_default: Option<bool>,
-}
-
-/// Update an existing template
-#[post("/templates/{id}")]
-pub async fn update_template(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-    req: web::Json<UpdateTemplateRequestBody>,
-) -> Result<HttpResponse> {
-    let template_id = path.into_inner();
-    debug!("Updating template: {}", template_id);
-
-    let template_repo = gl_db::TemplateRepository::new(state.db.pool());
-
-    // Validate JSON config if provided
-    if let Some(ref config) = req.config {
-        if serde_json::from_str::<serde_json::Value>(config).is_err() {
-            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
-                "error": "Invalid JSON configuration"
-            })));
-        }
-    }
-
-    let update_req = UpdateTemplateRequest {
-        name: req.name.clone(),
-        description: req.description.clone(),
-        config: req.config.clone(),
-        is_default: req.is_default,
-    };
-
-    match template_repo.update(&template_id, update_req).await {
-        Ok(template) => {
-            info!("Template updated successfully: {}", template_id);
-            Ok(HttpResponse::Ok().json(template))
-        }
-        Err(e) => {
-            error!("Failed to update template {}: {}", template_id, e);
-            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to update template",
-                "details": e.to_string()
-            })))
-        }
-    }
-}
-
-/// Delete a template
-#[delete("/templates/{id}")]
-pub async fn delete_template(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-) -> Result<HttpResponse> {
-    let template_id = path.into_inner();
-    debug!("Deleting template: {}", template_id);
-
-    let template_repo = gl_db::TemplateRepository::new(state.db.pool());
-
-    match template_repo.delete(&template_id).await {
-        Ok(_) => {
-            info!("Template deleted successfully: {}", template_id);
-            Ok(HttpResponse::NoContent().finish())
-        }
-        Err(e) => {
-            error!("Failed to delete template {}: {}", template_id, e);
-            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to delete template",
-                "details": e.to_string()
-            })))
-        }
-    }
-}
-
-/// Get a specific template
-#[get("/templates/{id}")]
-pub async fn get_template(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-) -> Result<HttpResponse> {
-    let template_id = path.into_inner();
-    debug!("Getting template: {}", template_id);
-
-    let template_repo = gl_db::TemplateRepository::new(state.db.pool());
-
-    match template_repo.find_by_id(&template_id).await {
-        Ok(Some(template)) => {
-            debug!("Template retrieved successfully: {}", template_id);
-            Ok(HttpResponse::Ok().json(template))
-        }
-        Ok(None) => {
-            warn!("Template not found: {}", template_id);
-            Ok(HttpResponse::NotFound().json(serde_json::json!({
-                "error": "Template not found"
-            })))
-        }
-        Err(e) => {
-            error!("Failed to retrieve template {}: {}", template_id, e);
-            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to retrieve template",
-                "details": e.to_string()
-            })))
-        }
-    }
 }
 
 // User Management Endpoints
@@ -253,12 +77,8 @@ pub async fn list_users(state: web::Data<AppState>, _req: HttpRequest) -> Result
                     id: u.id,
                     username: u.username,
                     email: u.email,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&u.created_at)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&u.updated_at)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
+                    created_at: parse_timestamp_to_utc(&u.created_at),
+                    updated_at: parse_timestamp_to_utc(&u.updated_at),
                 })
                 .collect();
 
@@ -316,12 +136,8 @@ pub async fn create_user(
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                created_at: chrono::DateTime::parse_from_rfc3339(&user.created_at)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&user.updated_at)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                created_at: parse_timestamp_to_utc(&user.created_at),
+                updated_at: parse_timestamp_to_utc(&user.updated_at),
             };
             Ok(HttpResponse::Created().json(user_response))
         }
@@ -430,12 +246,8 @@ pub async fn list_api_keys(state: web::Data<AppState>, _req: HttpRequest) -> Res
                     id: k.id,
                     name: k.name,
                     key_hash: k.key_hash,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&k.created_at)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&k.updated_at)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
+                    created_at: parse_timestamp_to_utc(&k.created_at),
+                    updated_at: parse_timestamp_to_utc(&k.updated_at),
                 })
                 .collect();
 
@@ -462,21 +274,32 @@ pub struct CreateApiKeyRequestBody {
 pub async fn create_api_key(
     state: web::Data<AppState>,
     req: web::Json<CreateApiKeyRequestBody>,
+    http: HttpRequest,
 ) -> Result<HttpResponse> {
     debug!("Creating new API key: {}", req.name);
 
     let api_key_repo = ApiKeyRepository::new(state.db.pool());
+
+    // Validate authenticated user
+    let user = match get_http_auth_user(&http) {
+        Some(u) => u,
+        None => {
+            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                "error": "Authentication required"
+            })));
+        }
+    };
 
     // Generate a new API key
     let api_key = gl_core::Id::new().to_string();
     let key_hash = format!("{:x}", sha2::Sha256::digest(&api_key));
 
     let create_req = CreateApiKeyRequest {
-        user_id: "admin".to_string(), // For now, use admin as default user_id
+        user_id: user.id,
         name: req.name.clone(),
         key_hash: key_hash.clone(),
-        permissions: "read,write".to_string(), // Default permissions
-        expires_at: None,                      // No expiration
+        permissions: serde_json::to_string(&["read", "write"]).unwrap(),
+        expires_at: None, // No expiration
     };
 
     match api_key_repo.create(create_req).await {
@@ -503,6 +326,467 @@ pub async fn create_api_key(
 /// Delete an API key
 #[delete("/api-keys/{id}")]
 pub async fn delete_api_key(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse> {
+    let api_key_id = path.into_inner();
+    debug!("Deleting API key: {}", api_key_id);
+
+    let api_key_repo = ApiKeyRepository::new(state.db.pool());
+
+    match api_key_repo.delete(&api_key_id).await {
+        Ok(_) => {
+            info!("API key deleted successfully: {}", api_key_id);
+            Ok(HttpResponse::NoContent().finish())
+        }
+        Err(e) => {
+            error!("Failed to delete API key {}: {}", api_key_id, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to delete API key",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+// Plain handler wrappers (for explicit resource mapping)
+// These call into the attribute-annotated endpoints above.
+
+pub async fn list_streams_handler(
+    state: web::Data<AppState>,
+    _req: HttpRequest,
+) -> Result<HttpResponse> {
+    debug!("Listing streams for admin user");
+
+    let stream_repo = StreamRepository::new(state.db.pool());
+
+    match stream_repo.list(None, 0, 100).await {
+        Ok(streams) => {
+            debug!("Streams retrieved successfully, count: {}", streams.len());
+
+            let stream_infos: Vec<AdminStreamInfo> = streams
+                .into_iter()
+                .map(|t| {
+                    let stream_type = match serde_json::from_str::<serde_json::Value>(&t.config) {
+                        Ok(config) => config
+                            .get("kind")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        Err(_) => "unknown".to_string(),
+                    };
+
+                    AdminStreamInfo {
+                        id: t.id,
+                        user_id: t.user_id,
+                        name: t.name,
+                        description: t.description,
+                        stream_type,
+                        is_default: t.is_default,
+                        created_at: t.created_at,
+                        updated_at: t.updated_at,
+                    }
+                })
+                .collect();
+
+            Ok(HttpResponse::Ok().json(stream_infos))
+        }
+        Err(e) => {
+            error!("Failed to retrieve streams: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to retrieve streams",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn get_stream_handler(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse> {
+    let stream_id = path.into_inner();
+    debug!("Getting stream: {}", stream_id);
+
+    let stream_repo = StreamRepository::new(state.db.pool());
+
+    match stream_repo.find_by_id(&stream_id).await {
+        Ok(Some(stream)) => {
+            debug!("Stream retrieved successfully: {}", stream_id);
+            Ok(HttpResponse::Ok().json(stream))
+        }
+        Ok(None) => {
+            warn!("Stream not found: {}", stream_id);
+            Ok(HttpResponse::NotFound().json(serde_json::json!({
+                "error": "Stream not found"
+            })))
+        }
+        Err(e) => {
+            error!("Failed to retrieve stream {}: {}", stream_id, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to retrieve stream",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn create_stream_handler(
+    state: web::Data<AppState>,
+    req: web::Json<CreateStreamRequestBody>,
+    http: HttpRequest,
+) -> Result<HttpResponse> {
+    debug!("Creating new stream: {}", req.name);
+
+    let stream_repo = StreamRepository::new(state.db.pool());
+
+    let user = match get_http_auth_user(&http) {
+        Some(u) => u,
+        None => {
+            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                "error": "Authentication required"
+            })));
+        }
+    };
+
+    if !req.config.is_object() {
+        return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "Invalid JSON configuration: expected an object"
+        })));
+    }
+
+    let create_req = CreateStreamRequest {
+        user_id: user.id,
+        name: req.name.clone(),
+        description: req.description.clone(),
+        config: match serde_json::to_string(&req.config) {
+            Ok(s) => s,
+            Err(_) => {
+                return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": "Invalid JSON configuration"
+                })));
+            }
+        },
+        is_default: req.is_default.unwrap_or(false),
+    };
+
+    match stream_repo.create(create_req).await {
+        Ok(stream) => {
+            info!("Stream created successfully: {}", stream.id);
+            Ok(HttpResponse::Created().json(stream))
+        }
+        Err(e) => {
+            error!("Failed to create stream: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to create stream",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn update_stream_handler(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    req: web::Json<UpdateStreamRequestBody>,
+) -> Result<HttpResponse> {
+    let stream_id = path.into_inner();
+    debug!("Updating stream: {}", stream_id);
+
+    let stream_repo = StreamRepository::new(state.db.pool());
+
+    if let Some(ref config) = req.config {
+        if !config.is_object() {
+            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Invalid JSON configuration: expected an object"
+            })));
+        }
+    }
+
+    let update_req = UpdateStreamRequest {
+        name: req.name.clone(),
+        description: req.description.clone(),
+        config: match &req.config {
+            Some(v) => Some(match serde_json::to_string(v) {
+                Ok(s) => s,
+                Err(_) => {
+                    return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                        "error": "Invalid JSON configuration"
+                    })));
+                }
+            }),
+            None => None,
+        },
+        is_default: req.is_default,
+    };
+
+    match stream_repo.update(&stream_id, update_req).await {
+        Ok(stream) => {
+            info!("Stream updated successfully: {}", stream_id);
+            Ok(HttpResponse::Ok().json(stream))
+        }
+        Err(e) => {
+            error!("Failed to update stream {}: {}", stream_id, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to update stream",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn delete_stream_handler(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse> {
+    let stream_id = path.into_inner();
+    debug!("Deleting stream: {}", stream_id);
+
+    let stream_repo = StreamRepository::new(state.db.pool());
+
+    match stream_repo.delete(&stream_id).await {
+        Ok(_) => {
+            info!("Stream deleted successfully: {}", stream_id);
+            Ok(HttpResponse::NoContent().finish())
+        }
+        Err(e) => {
+            error!("Failed to delete stream {}: {}", stream_id, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to delete stream",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn list_users_handler(
+    state: web::Data<AppState>,
+    _req: HttpRequest,
+) -> Result<HttpResponse> {
+    debug!("Listing users");
+
+    let user_repo = UserRepository::new(state.db.pool());
+
+    match user_repo.list_active().await {
+        Ok(users) => {
+            debug!("Users retrieved successfully, count: {}", users.len());
+
+            let user_responses: Vec<UserResponse> = users
+                .into_iter()
+                .map(|u| UserResponse {
+                    id: u.id,
+                    username: u.username,
+                    email: u.email,
+                    created_at: parse_timestamp_to_utc(&u.created_at),
+                    updated_at: parse_timestamp_to_utc(&u.updated_at),
+                })
+                .collect();
+
+            Ok(HttpResponse::Ok().json(user_responses))
+        }
+        Err(e) => {
+            error!("Failed to retrieve users: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to retrieve users",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn get_user_handler(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse> {
+    let user_id = path.into_inner();
+    debug!("Getting user: {}", user_id);
+
+    let user_repo = UserRepository::new(state.db.pool());
+
+    match user_repo.find_by_id(&user_id).await {
+        Ok(Some(user)) => {
+            debug!("User retrieved successfully: {}", user_id);
+            let user_response = UserResponse {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                created_at: parse_timestamp_to_utc(&user.created_at),
+                updated_at: parse_timestamp_to_utc(&user.updated_at),
+            };
+            Ok(HttpResponse::Ok().json(user_response))
+        }
+        Ok(None) => {
+            warn!("User not found: {}", user_id);
+            Ok(HttpResponse::NotFound().json(serde_json::json!({
+                "error": "User not found"
+            })))
+        }
+        Err(e) => {
+            error!("Failed to retrieve user {}: {}", user_id, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to retrieve user",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn create_user_handler(
+    state: web::Data<AppState>,
+    req: web::Json<CreateUserRequestBody>,
+) -> Result<HttpResponse> {
+    debug!("Creating new user: {}", req.username);
+
+    let user_repo = UserRepository::new(state.db.pool());
+
+    let password_hash = match crate::auth::PasswordAuth::hash_password(&req.password) {
+        Ok(hash) => hash,
+        Err(e) => {
+            error!("Failed to hash password: {}", e);
+            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to hash password"
+            })));
+        }
+    };
+
+    let create_req = CreateUserRequest {
+        username: req.username.clone(),
+        email: req.email.clone(),
+        password_hash,
+    };
+
+    match user_repo.create(create_req).await {
+        Ok(user) => {
+            info!("User created successfully: {}", user.id);
+            let user_response = UserResponse {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                created_at: parse_timestamp_to_utc(&user.created_at),
+                updated_at: parse_timestamp_to_utc(&user.updated_at),
+            };
+            Ok(HttpResponse::Created().json(user_response))
+        }
+        Err(e) => {
+            error!("Failed to create user: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to create user",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn delete_user_handler(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse> {
+    let user_id = path.into_inner();
+    debug!("Deleting user: {}", user_id);
+
+    let user_repo = UserRepository::new(state.db.pool());
+
+    match user_repo.delete(&user_id).await {
+        Ok(_) => {
+            info!("User deleted successfully: {}", user_id);
+            Ok(HttpResponse::NoContent().finish())
+        }
+        Err(e) => {
+            error!("Failed to delete user {}: {}", user_id, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to delete user",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn list_api_keys_handler(
+    state: web::Data<AppState>,
+    _req: HttpRequest,
+) -> Result<HttpResponse> {
+    debug!("Listing API keys");
+
+    let api_key_repo = ApiKeyRepository::new(state.db.pool());
+
+    match api_key_repo.list_all(100, 0).await {
+        Ok(api_keys) => {
+            debug!("API keys retrieved successfully, count: {}", api_keys.len());
+
+            let api_key_responses: Vec<ApiKeyResponse> = api_keys
+                .into_iter()
+                .map(|k| ApiKeyResponse {
+                    id: k.id,
+                    name: k.name,
+                    key_hash: k.key_hash,
+                    created_at: parse_timestamp_to_utc(&k.created_at),
+                    updated_at: parse_timestamp_to_utc(&k.updated_at),
+                })
+                .collect();
+
+            Ok(HttpResponse::Ok().json(api_key_responses))
+        }
+        Err(e) => {
+            error!("Failed to retrieve API keys: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to retrieve API keys",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn create_api_key_handler(
+    state: web::Data<AppState>,
+    req: web::Json<CreateApiKeyRequestBody>,
+    http: HttpRequest,
+) -> Result<HttpResponse> {
+    debug!("Creating new API key: {}", req.name);
+
+    let api_key_repo = ApiKeyRepository::new(state.db.pool());
+
+    let user = match get_http_auth_user(&http) {
+        Some(u) => u,
+        None => {
+            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                "error": "Authentication required"
+            })));
+        }
+    };
+
+    let api_key = gl_core::Id::new().to_string();
+    let key_hash = format!("{:x}", sha2::Sha256::digest(&api_key));
+
+    let create_req = CreateApiKeyRequest {
+        user_id: user.id,
+        name: req.name.clone(),
+        key_hash: key_hash.clone(),
+        permissions: serde_json::to_string(&["read", "write"]).unwrap(),
+        expires_at: None,
+    };
+
+    match api_key_repo.create(create_req).await {
+        Ok(created_key) => {
+            info!("API key created successfully: {}", created_key.id);
+            Ok(HttpResponse::Created().json(serde_json::json!({
+                "id": created_key.id,
+                "name": created_key.name,
+                "api_key": api_key,
+                "created_at": created_key.created_at,
+                "updated_at": created_key.updated_at
+            })))
+        }
+        Err(e) => {
+            error!("Failed to create API key: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to create API key",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+pub async fn delete_api_key_handler(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> Result<HttpResponse> {

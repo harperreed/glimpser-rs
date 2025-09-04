@@ -1,5 +1,5 @@
 //! ABOUTME: Stream-related API endpoints for snapshot capture
-//! ABOUTME: Handles video stream snapshot generation from templates
+//! ABOUTME: Handles video stream snapshot generation from streams
 
 use actix_web::{web, HttpResponse, Result as ActixResult};
 use bytes::Bytes;
@@ -11,7 +11,7 @@ use gl_capture::{
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
 use gl_core::{Error, Result};
-use gl_db::TemplateRepository;
+use gl_db::StreamRepository;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -127,12 +127,12 @@ pub async fn stream_details(
     let stream_id = path.into_inner();
 
     // Get all streams and find the one with matching ID
-    let template_repo = gl_db::TemplateRepository::new(state.db.pool());
+    let stream_repo = gl_db::StreamRepository::new(state.db.pool());
 
-    match template_repo.find_by_id(&stream_id).await {
-        Ok(Some(template)) => {
-            // Convert template to StreamInfo format
-            let config: serde_json::Value = match serde_json::from_str(&template.config) {
+    match stream_repo.find_by_id(&stream_id).await {
+        Ok(Some(stream)) => {
+            // Convert stream to StreamInfo format
+            let config: serde_json::Value = match serde_json::from_str(&stream.config) {
                 Ok(config) => config,
                 Err(_) => {
                     return Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
@@ -162,7 +162,7 @@ pub async fn stream_details(
                 _ => "unknown".to_string(),
             };
 
-            let status = match template.execution_status.as_deref() {
+            let status = match stream.execution_status.as_deref() {
                 Some("active") => "active",
                 Some("starting") => "starting",
                 Some("stopping") => "stopping",
@@ -187,13 +187,13 @@ pub async fn stream_details(
             };
 
             let stream_info = serde_json::json!({
-                "id": template.id,
-                "name": template.name,
+                "id": stream.id,
+                "name": stream.name,
                 "source": source,
                 "status": status,
                 "resolution": resolution,
                 "fps": fps,
-                "template_id": template.id
+                "stream_id": stream.id
             });
 
             Ok(HttpResponse::Ok().json(stream_info))
@@ -250,7 +250,7 @@ pub async fn live_stream(
 async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec<u8>> {
     // Get the template from the database
     let template = {
-        let repo = TemplateRepository::new(state.db.pool());
+        let repo = StreamRepository::new(state.db.pool());
         repo.find_by_id(&template_id)
             .await?
             .ok_or_else(|| Error::NotFound(format!("Template {} not found", template_id)))?

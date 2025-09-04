@@ -7,4 +7,4 @@ pub mod auth;
 pub mod public;
 pub mod static_files;
 pub mod stream;
-pub mod templates;
+pub mod streams;

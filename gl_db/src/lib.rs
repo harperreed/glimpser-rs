@@ -99,13 +99,7 @@ impl Db {
         debug!("Gathering database statistics");
 
         let tables = vec![
-            "users",
-            "api_keys",
-            "templates",
-            "captures",
-            "jobs",
-            "alerts",
-            "events",
+            "users", "api_keys", "streams", "captures", "jobs", "alerts", "events",
         ];
 
         let mut table_counts = std::collections::HashMap::new();
@@ -150,7 +144,7 @@ pub use repositories::{
         NotificationDeliveryRepository, UpdateDeliveryStatus,
     },
     snapshots::{CreateSnapshotRequest, Snapshot, SnapshotMetadata, SnapshotRepository},
-    templates::{CreateTemplateRequest, Template, TemplateRepository, UpdateTemplateRequest},
+    streams::{CreateStreamRequest, Stream, StreamRepository, UpdateStreamRequest},
     users::{CreateUserRequest, UpdateUserRequest, User, UserRepository},
 };
 
@@ -350,13 +344,7 @@ mod tests {
         let stats = db.stats().await.expect("Stats should be available");
 
         let expected_tables = vec![
-            "users",
-            "api_keys",
-            "templates",
-            "captures",
-            "jobs",
-            "alerts",
-            "events",
+            "users", "api_keys", "streams", "captures", "jobs", "alerts", "events",
         ];
         for table in expected_tables {
             assert!(

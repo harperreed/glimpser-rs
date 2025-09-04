@@ -16,7 +16,7 @@ pub mod models;
 pub mod routes;
 
 use actix_web::HttpRequest;
-use routes::{admin, alerts, auth as auth_routes, public, static_files, stream, templates};
+use routes::{admin, alerts, auth as auth_routes, public, static_files, stream, streams};
 use std::sync::Arc;
 use tracing::info;
 
@@ -47,7 +47,7 @@ pub struct AppState {
             models::LoginRequest,
             models::LoginResponse,
             models::UserInfo,
-            models::TemplateInfo,
+            models::AdminStreamInfo,
             models::ErrorResponse,
         ),
     ),
@@ -78,16 +78,11 @@ pub fn create_app(
     GET  /api/auth/login\n\
     GET  /api/me (auth)\n\
     GET  /api/streams (auth)\n\
-    GET  /api/templates (auth)\n\
-    GET  /api/templates/{id} (auth)\n\
-    POST /api/templates (auth)\n\
-    PUT  /api/templates/{id} (auth)\n\
-    DEL  /api/templates/{id} (auth)\n\
-    GET  /api/settings/templates (auth)\n\
-    GET  /api/settings/templates/{id} (auth)\n\
-    POST /api/settings/templates (auth)\n\
-    POST /api/settings/templates/{id} (auth)\n\
-    DEL  /api/settings/templates/{id} (auth)\n\
+    GET  /api/streams (auth)\n\
+    GET  /api/streams/{id} (auth)\n\
+    POST /api/streams (auth)\n\
+    PUT  /api/streams/{id} (auth)\n\
+    DEL  /api/streams/{id} (auth)\n\
     GET  /api/settings/users (auth)\n\
     GET  /api/settings/users/{id} (auth)\n\
     POST /api/settings/users (auth)\n\
@@ -112,25 +107,101 @@ pub fn create_app(
         .app_data(web::Data::new(state))
         .app_data(web::Data::new(static_config.clone()))
         .wrap(actix_web::middleware::Logger::default())
-        // Normalize paths so both `/path` and `/path/` resolve consistently
-        // .wrap(actix_web::middleware::NormalizePath::new(
-        //     actix_web::middleware::TrailingSlash::Always,
-        // ))
+        // Normalize paths: prefer no trailing slash
+        .wrap(actix_web::middleware::NormalizePath::new(
+            actix_web::middleware::TrailingSlash::Trim,
+        ))
         .wrap(static_files::security_headers())
         // Apply body size limits globally
         .wrap(middleware::bodylimits::BodyLimits::new(body_limits_config))
+        // Explicit absolute resources for settings to satisfy tests
+        .service(
+            web::resource("/api/settings/streams")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(routes::admin::list_streams_handler))
+                .route(web::post().to(routes::admin::create_stream_handler)),
+        )
+        .service(
+            web::resource("/api/settings/streams/{id}")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(routes::admin::get_stream_handler))
+                .route(web::put().to(routes::admin::update_stream_handler))
+                .route(web::delete().to(routes::admin::delete_stream_handler)),
+        )
+        .service(
+            web::resource("/api/settings/users")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(routes::admin::list_users_handler))
+                .route(web::post().to(routes::admin::create_user_handler)),
+        )
+        .service(
+            web::resource("/api/settings/users/{id}")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(routes::admin::get_user_handler))
+                .route(web::delete().to(routes::admin::delete_user_handler)),
+        )
+        .service(
+            web::resource("/api/settings/api-keys")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(routes::admin::list_api_keys_handler))
+                .route(web::post().to(routes::admin::create_api_key_handler)),
+        )
+        .service(
+            web::resource("/api/settings/api-keys/{id}")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::delete().to(routes::admin::delete_api_key_handler)),
+        )
+        .service(
+            web::resource("/api/settings/_health")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(
+                    web::get()
+                        .to(|| async { HttpResponse::Ok().json(serde_json::json!({"ok": true})) }),
+                )
+                .route(web::post().to(
+                    |payload: actix_web::web::Json<serde_json::Value>| async move {
+                        HttpResponse::Ok().json(payload.into_inner())
+                    },
+                )),
+        )
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .service(
             web::scope("/api")
+                // CRUD for streams (alias to existing template handlers)
                 .service(
-                    web::resource("/templates")
+                    web::scope("/streams")
                         .wrap(middleware::ratelimit::RateLimit::new(
                             rate_limit_config.clone(),
                         ))
                         .wrap(middleware::auth::RequireAuth::new())
-                        .route(web::get().to(templates::list_templates))
-                        .route(web::post().to(templates::create_template)),
+                        .route("", web::get().to(streams::list_streams))
+                        .route("", web::post().to(streams::create_stream))
+                        .route("/{id}", web::get().to(streams::get_stream))
+                        .route("/{id}", web::put().to(streams::update_stream))
+                        .route("/{id}", web::delete().to(streams::delete_stream)),
                 )
+                // Templates concept removed - only streams exist now
                 .service(
                     web::scope("/auth")
                         // Apply rate limiting to auth endpoints (no auth required)
@@ -164,17 +235,15 @@ pub fn create_app(
                         .service(public::alerts)
                         .service(public::health),
                 )
+                // Settings resources (absolute paths)
                 .service(
-                    web::scope("/templates")
+                    web::resource("/settings/streams")
                         .wrap(middleware::ratelimit::RateLimit::new(
                             rate_limit_config.clone(),
                         ))
                         .wrap(middleware::auth::RequireAuth::new())
-                        .service(templates::list_templates_service)
-                        .service(templates::get_template_service)
-                        .service(templates::create_template_service)
-                        .service(templates::update_template_service)
-                        .service(templates::delete_template_service),
+                        .route(web::get().to(admin::list_streams_handler))
+                        .route(web::post().to(admin::create_stream_handler)),
                 )
                 .service(
                     web::scope("/settings")
@@ -182,21 +251,51 @@ pub fn create_app(
                             rate_limit_config.clone(),
                         ))
                         .wrap(middleware::auth::RequireAuth::new())
-                        // Template management
-                        .service(admin::list_templates)
-                        .service(admin::get_template)
-                        .service(admin::create_template)
-                        .service(admin::update_template)
-                        .service(admin::delete_template)
-                        // User management
-                        .service(admin::list_users)
-                        .service(admin::get_user)
-                        .service(admin::create_user)
-                        .service(admin::delete_user)
-                        // API key management
-                        .service(admin::list_api_keys)
-                        .service(admin::create_api_key)
-                        .service(admin::delete_api_key),
+                        // Streams
+                        .service(
+                            web::resource("streams")
+                                .route(web::get().to(admin::list_streams_handler))
+                                .route(web::post().to(admin::create_stream_handler)),
+                        )
+                        .service(
+                            web::resource("streams/{id}")
+                                .route(web::get().to(admin::get_stream_handler))
+                                .route(web::put().to(admin::update_stream_handler))
+                                .route(web::delete().to(admin::delete_stream_handler)),
+                        )
+                        // Users
+                        .service(
+                            web::resource("users")
+                                .route(web::get().to(admin::list_users_handler))
+                                .route(web::post().to(admin::create_user_handler)),
+                        )
+                        .service(
+                            web::resource("users/{id}")
+                                .route(web::get().to(admin::get_user_handler))
+                                .route(web::delete().to(admin::delete_user_handler)),
+                        )
+                        // API keys
+                        .service(
+                            web::resource("api-keys")
+                                .route(web::get().to(admin::list_api_keys_handler))
+                                .route(web::post().to(admin::create_api_key_handler)),
+                        )
+                        .service(
+                            web::resource("api-keys/{id}")
+                                .route(web::delete().to(admin::delete_api_key_handler)),
+                        )
+                        // Health
+                        .service(
+                            web::resource("_health")
+                                .route(web::get().to(|| async {
+                                    HttpResponse::Ok().json(serde_json::json!({"ok": true}))
+                                }))
+                                .route(web::post().to(
+                                    |payload: actix_web::web::Json<serde_json::Value>| async move {
+                                        HttpResponse::Ok().json(payload.into_inner())
+                                    },
+                                )),
+                        ),
                 )
                 // Helpful 404 for unmatched API paths
                 .default_service(web::to(|req: HttpRequest| async move {
@@ -221,7 +320,7 @@ pub fn create_app(
     // .default_service(web::route().to(static_files::spa_fallback))
 }
 
-// (removed) templates_alias_get: explicit alias not needed; templates base routes are mounted under /api/templates.
+// Templates concept completely removed - replaced with streams
 
 /// Start the web server
 pub async fn start_server(bind_addr: &str, state: AppState) -> Result<()> {
@@ -245,6 +344,7 @@ mod tests {
     use actix_web::test;
     use gl_core::Id;
     use gl_db::{CreateUserRequest, Db, UserRepository};
+    use serde_json::json;
 
     async fn create_test_app_state() -> AppState {
         let test_id = Id::new().to_string();
@@ -284,7 +384,273 @@ mod tests {
             .expect("Failed to create test user")
     }
 
-    // Note: no dedicated test for /api/templates without trailing slash; base-path handlers are mounted.
+    #[actix_web::test]
+    async fn test_settings_streams_crud_happy_path() {
+        let state = create_test_app_state().await;
+        let user = create_test_user(&state, "admin@example.com", "password123").await;
+
+        // Create JWT token
+        let token = crate::auth::JwtAuth::create_token(
+            &user.id,
+            &user.email,
+            &state.security_config.jwt_secret,
+        )
+        .expect("Failed to create token");
+
+        let app = test::init_service(create_app(state)).await;
+
+        // Create stream
+        let create_payload = json!({
+            "name": "Test Stream",
+            "description": "desc",
+            "config": {"kind": "file", "file_path": "/dev/null"},
+            "is_default": false
+        });
+        let req = test::TestRequest::post()
+            .uri("/api/settings/streams")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .set_json(&create_payload)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        if resp.status() != 201 {
+            let status = resp.status();
+            let body = test::read_body(resp).await;
+            panic!(
+                "Unexpected status for create stream: got {} expected {} body={}",
+                status,
+                201,
+                String::from_utf8_lossy(&body)
+            );
+        }
+        let created: serde_json::Value = test::read_body_json(resp).await;
+        let stream_id = created["id"].as_str().unwrap().to_string();
+
+        // List streams
+        let req = test::TestRequest::get()
+            .uri("/api/settings/streams")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        if resp.status() != 200 {
+            let body = test::read_body(resp).await;
+            panic!(
+                "Unexpected status for list streams: {} body={}",
+                200,
+                String::from_utf8_lossy(&body)
+            );
+        }
+        let list: serde_json::Value = test::read_body_json(resp).await;
+        assert!(list
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["id"] == stream_id));
+
+        // Update stream
+        let update_payload = json!({
+            "name": "Updated Stream",
+            "is_default": true,
+            "config": {"kind": "file", "file_path": "/dev/null"}
+        });
+        let req = test::TestRequest::put()
+            .uri(&format!("/api/settings/streams/{}", stream_id))
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .set_json(&update_payload)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        if resp.status() != 200 {
+            let body = test::read_body(resp).await;
+            panic!(
+                "Unexpected status for update stream: {} body={}",
+                200,
+                String::from_utf8_lossy(&body)
+            );
+        }
+
+        // Delete stream
+        let req = test::TestRequest::delete()
+            .uri(&format!("/api/settings/streams/{}", stream_id))
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        if resp.status() != 204 {
+            let body = test::read_body(resp).await;
+            panic!(
+                "Unexpected status for delete stream: {} body={} ",
+                204,
+                String::from_utf8_lossy(&body)
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_settings_scope_health() {
+        let state = create_test_app_state().await;
+        let user = create_test_user(&state, "admin@example.com", "password123").await;
+        let token = crate::auth::JwtAuth::create_token(
+            &user.id,
+            &user.email,
+            &state.security_config.jwt_secret,
+        )
+        .expect("Failed to create token");
+        let app = test::init_service(create_app(state)).await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/settings/_health")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_settings_streams_routes_exist() {
+        let state = create_test_app_state().await;
+        let user = create_test_user(&state, "admin@example.com", "password123").await;
+        let token = crate::auth::JwtAuth::create_token(
+            &user.id,
+            &user.email,
+            &state.security_config.jwt_secret,
+        )
+        .expect("Failed to create token");
+
+        let app = test::init_service(create_app(state)).await;
+
+        // GET list (streams)
+        let req = test::TestRequest::get()
+            .uri("/api/settings/streams")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        // GET health
+        let req = test::TestRequest::get()
+            .uri("/api/settings/_health")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        // POST echo
+        let req = test::TestRequest::post()
+            .uri("/api/settings/_health")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .set_json(&serde_json::json!({"ping":"pong"}))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_settings_users_crud_happy_path() {
+        let state = create_test_app_state().await;
+        let user = create_test_user(&state, "admin@example.com", "password123").await;
+
+        let token = crate::auth::JwtAuth::create_token(
+            &user.id,
+            &user.email,
+            &state.security_config.jwt_secret,
+        )
+        .expect("Failed to create token");
+
+        let app = test::init_service(create_app(state)).await;
+
+        // Create user
+        let create_payload = json!({
+            "username": "alice",
+            "email": "alice@example.com",
+            "password": "secret123"
+        });
+        let req = test::TestRequest::post()
+            .uri("/api/settings/users")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .set_json(&create_payload)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 201);
+        let created: serde_json::Value = test::read_body_json(resp).await;
+        let new_user_id = created["id"].as_str().unwrap().to_string();
+
+        // List users
+        let req = test::TestRequest::get()
+            .uri("/api/settings/users")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let users: serde_json::Value = test::read_body_json(resp).await;
+        assert!(users
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|u| u["id"] == new_user_id));
+
+        // Delete user
+        let req = test::TestRequest::delete()
+            .uri(&format!("/api/settings/users/{}", new_user_id))
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 204);
+    }
+
+    #[actix_web::test]
+    async fn test_settings_api_keys_crud_happy_path() {
+        let state = create_test_app_state().await;
+        let user = create_test_user(&state, "admin@example.com", "password123").await;
+
+        let token = crate::auth::JwtAuth::create_token(
+            &user.id,
+            &user.email,
+            &state.security_config.jwt_secret,
+        )
+        .expect("Failed to create token");
+
+        let app = test::init_service(create_app(state)).await;
+
+        // Create API key
+        let create_payload = json!({ "name": "test key" });
+        let req = test::TestRequest::post()
+            .uri("/api/settings/api-keys")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .set_json(&create_payload)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 201);
+        let created: serde_json::Value = test::read_body_json(resp).await;
+        let key_id = created["id"].as_str().unwrap().to_string();
+
+        // List API keys
+        let req = test::TestRequest::get()
+            .uri("/api/settings/api-keys")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let keys: serde_json::Value = test::read_body_json(resp).await;
+        assert!(keys.as_array().unwrap().iter().any(|k| k["id"] == key_id));
+
+        // Delete API key
+        let req = test::TestRequest::delete()
+            .uri(&format!("/api/settings/api-keys/{}", key_id))
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 204);
+
+        // List again should not include the key
+        let req = test::TestRequest::get()
+            .uri("/api/settings/api-keys")
+            .insert_header(("authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let keys: serde_json::Value = test::read_body_json(resp).await;
+        assert!(!keys.as_array().unwrap().iter().any(|k| k["id"] == key_id));
+    }
+
+    // Note: Templates concept removed - only streams exist now
 
     #[actix_web::test]
     async fn test_login_success() {
@@ -390,7 +756,7 @@ mod tests {
         let app = test::init_service(create_app(state)).await;
 
         let req = test::TestRequest::get()
-            .uri("/api/admin/templates")
+            .uri("/api/admin/streams")
             .insert_header(("authorization", format!("Bearer {}", token)))
             .to_request();
 
@@ -415,7 +781,7 @@ mod tests {
         let app = test::init_service(create_app(state)).await;
 
         let req = test::TestRequest::get()
-            .uri("/api/admin/templates")
+            .uri("/api/admin/streams")
             .insert_header(("authorization", format!("Bearer {}", token)))
             .to_request();
 

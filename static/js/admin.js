@@ -1,5 +1,5 @@
 // ABOUTME: Admin panel functionality for user and system management
-// ABOUTME: Handles CRUD operations for users, API keys, templates, and system info
+// ABOUTME: Handles CRUD operations for users, API keys, streams, and system info
 
 document.addEventListener('DOMContentLoaded', function() {
     if (!requireAdmin()) return;
@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateNavigation();
     setupTabs();
     setupModals();
-    setupTemplateTypeHandling();
+    setupStreamTypeHandling();
     loadInitialData();
 });
 
@@ -33,16 +33,16 @@ function setupTabs() {
     });
 }
 
-function setupTemplateTypeHandling() {
-    const templateTypeSelect = document.getElementById('template-type');
-    if (templateTypeSelect) {
-        templateTypeSelect.addEventListener('change', function() {
-            handleTemplateTypeChange(this.value);
+function setupStreamTypeHandling() {
+    const streamTypeSelect = document.getElementById('stream-type');
+    if (streamTypeSelect) {
+        streamTypeSelect.addEventListener('change', function() {
+            handleStreamTypeChange(this.value);
         });
     }
 }
 
-function handleTemplateTypeChange(templateType) {
+function handleStreamTypeChange(streamType) {
     const websiteOptions = document.getElementById('website-options');
     const ffmpegOptions = document.getElementById('ffmpeg-options');
 
@@ -51,7 +51,7 @@ function handleTemplateTypeChange(templateType) {
     if (ffmpegOptions) ffmpegOptions.classList.add('hidden');
 
     // Show relevant sections based on type
-    switch (templateType) {
+    switch (streamType) {
         case 'website':
             if (websiteOptions) websiteOptions.classList.remove('hidden');
             break;
@@ -64,7 +64,7 @@ function handleTemplateTypeChange(templateType) {
 function setupModals() {
     const createUserBtn = document.getElementById('create-user-btn');
     const createApiKeyBtn = document.getElementById('create-api-key-btn');
-    const createTemplateBtn = document.getElementById('create-template-btn');
+    const createStreamBtn = document.getElementById('create-stream-btn');
     const refreshSystemBtn = document.getElementById('refresh-system-btn');
 
     if (createUserBtn) {
@@ -75,8 +75,8 @@ function setupModals() {
         createApiKeyBtn.addEventListener('click', () => openModal('api-key-modal'));
     }
 
-    if (createTemplateBtn) {
-        createTemplateBtn.addEventListener('click', () => openModal('template-modal'));
+    if (createStreamBtn) {
+        createStreamBtn.addEventListener('click', () => openModal('stream-modal'));
     }
 
     if (refreshSystemBtn) {
@@ -89,9 +89,9 @@ function setupModals() {
         userForm.addEventListener('submit', handleCreateUser);
     }
 
-    const templateForm = document.getElementById('template-form');
-    if (templateForm) {
-        templateForm.addEventListener('submit', handleCreateTemplate);
+    const streamForm = document.getElementById('stream-form');
+    if (streamForm) {
+        streamForm.addEventListener('submit', handleCreateStream);
     }
 
     // Close modals when clicking outside
@@ -121,8 +121,8 @@ async function loadTabData(tabName) {
         case 'api-keys':
             await loadApiKeys();
             break;
-        case 'templates':
-            await loadTemplates();
+        case 'streams':
+            await loadStreams();
             break;
         case 'system':
             await loadSystemInfo();
@@ -221,47 +221,47 @@ async function loadApiKeys() {
     }
 }
 
-async function loadTemplates() {
-    const tbody = document.getElementById('templates-tbody');
+async function loadStreams() {
+    const tbody = document.getElementById('streams-tbody');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading templates...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading streams...</td></tr>';
 
     try {
-        const templates = await authManager.apiRequest('/admin/templates');
+        const streams = await authManager.apiRequest('/admin/streams');
 
-        if (!templates || templates.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="empty">No templates found</td></tr>';
+        if (!streams || streams.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="empty">No streams found</td></tr>';
             return;
         }
 
-        tbody.innerHTML = templates.map(template => `
+        tbody.innerHTML = streams.map(stream => `
             <tr>
-                <td>${escapeHtml(template.name)}</td>
-                <td>${escapeHtml(template.type || 'Unknown')}</td>
-                <td>${formatDate(template.created_at)}</td>
+                <td>${escapeHtml(stream.name)}</td>
+                <td>${escapeHtml(stream.type || 'Unknown')}</td>
+                <td>${formatDate(stream.created_at)}</td>
                 <td>
-                    <button data-edit-template="${template.id}" class="btn-secondary">Edit</button>
-                    <button data-delete-template="${template.id}" class="btn-danger">Delete</button>
+                    <button data-edit-stream="${stream.id}" class="btn-secondary">Edit</button>
+                    <button data-delete-stream="${stream.id}" class="btn-danger">Delete</button>
                 </td>
             </tr>
         `).join('');
 
-        // Add event listeners for template actions
-        tbody.querySelectorAll('[data-edit-template]').forEach(btn => {
+        // Add event listeners for stream actions
+        tbody.querySelectorAll('[data-edit-stream]').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                editTemplate(e.target.dataset.editTemplate);
+                editStream(e.target.dataset.editStream);
             });
         });
-        tbody.querySelectorAll('[data-delete-template]').forEach(btn => {
+        tbody.querySelectorAll('[data-delete-stream]').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                deleteTemplate(e.target.dataset.deleteTemplate);
+                deleteStream(e.target.dataset.deleteStream);
             });
         });
 
     } catch (error) {
-        console.error('Error loading templates:', error);
-        tbody.innerHTML = '<tr><td colspan="4" class="error">Failed to load templates</td></tr>';
+        console.error('Error loading streams:', error);
+        tbody.innerHTML = '<tr><td colspan="4" class="error">Failed to load streams</td></tr>';
     }
 }
 
@@ -358,27 +358,27 @@ async function handleCreateUser(e) {
     }
 }
 
-async function handleCreateTemplate(e) {
+async function handleCreateStream(e) {
     e.preventDefault();
 
-    const form = document.getElementById('template-form');
+    const form = document.getElementById('stream-form');
     const editingId = form.dataset.editingId;
     const isEditing = !!editingId;
 
-    const name = document.getElementById('template-name').value;
-    const description = document.getElementById('template-description').value;
-    const type = document.getElementById('template-type').value;
-    const url = document.getElementById('template-url').value;
-    const isDefault = document.getElementById('template-default').checked;
+    const name = document.getElementById('stream-name').value;
+    const description = document.getElementById('stream-description').value;
+    const type = document.getElementById('stream-type').value;
+    const url = document.getElementById('stream-url').value;
+    const isDefault = document.getElementById('stream-default').checked;
 
-    // Build the config object based on template type
+    // Build the config object based on stream type
     let config;
     switch (type) {
         case 'website':
-            const width = parseInt(document.getElementById('template-width').value) || 1920;
-            const height = parseInt(document.getElementById('template-height').value) || 1080;
-            const elementSelector = document.getElementById('template-element-selector').value.trim();
-            const headless = document.getElementById('template-headless').checked;
+            const width = parseInt(document.getElementById('stream-width').value) || 1920;
+            const height = parseInt(document.getElementById('stream-height').value) || 1080;
+            const elementSelector = document.getElementById('stream-element-selector').value.trim();
+            const headless = document.getElementById('stream-headless').checked;
 
             config = {
                 kind: 'website',
@@ -395,7 +395,7 @@ async function handleCreateTemplate(e) {
             }
             break;
         case 'ffmpeg':
-            const hardwareAccel = document.getElementById('template-hardware-accel').value;
+            const hardwareAccel = document.getElementById('stream-hardware-accel').value;
             config = {
                 kind: 'ffmpeg',
                 source_url: url,
@@ -420,7 +420,7 @@ async function handleCreateTemplate(e) {
             };
             break;
         default:
-            showError('Unknown template type: ' + type);
+            showError('Unknown stream type: ' + type);
             return;
     }
 
@@ -433,7 +433,7 @@ async function handleCreateTemplate(e) {
         };
 
         const response = await fetch(
-            isEditing ? `/api/templates/${editingId}` : '/api/templates',
+            isEditing ? `/api/streams/${editingId}` : '/api/streams',
             {
                 method: isEditing ? 'PUT' : 'POST',
                 headers: {
@@ -445,45 +445,45 @@ async function handleCreateTemplate(e) {
         );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        closeModal('template-modal');
-        resetTemplateForm();
-        await loadTemplates();
-        showSuccess(isEditing ? 'Template updated successfully' : 'Template created successfully');
+        closeModal('stream-modal');
+        resetStreamForm();
+        await loadStreams();
+        showSuccess(isEditing ? 'Stream updated successfully' : 'Stream created successfully');
 
     } catch (error) {
-        showError(`Failed to ${isEditing ? 'update' : 'create'} template: ` + error.message);
+        showError(`Failed to ${isEditing ? 'update' : 'create'} stream: ` + error.message);
     }
 }
 
-function resetTemplateForm() {
-    const form = document.getElementById('template-form');
+function resetStreamForm() {
+    const form = document.getElementById('stream-form');
     form.reset();
 
     // Clear editing state
     delete form.dataset.editingId;
 
     // Reset form title and button text to default
-    const modalTitle = document.querySelector('#template-modal h3');
-    const submitButton = document.querySelector('#template-form button[type="submit"]');
-    modalTitle.textContent = 'Create Template';
-    submitButton.textContent = 'Create Template';
+    const modalTitle = document.querySelector('#stream-modal h3');
+    const submitButton = document.querySelector('#stream-form button[type="submit"]');
+    modalTitle.textContent = 'Create Stream';
+    submitButton.textContent = 'Create Stream';
 
     // Reset to default values
-    document.getElementById('template-width').value = 1920;
-    document.getElementById('template-height').value = 1080;
-    document.getElementById('template-headless').checked = true;
-    document.getElementById('template-hardware-accel').value = 'none';
+    document.getElementById('stream-width').value = 1920;
+    document.getElementById('stream-height').value = 1080;
+    document.getElementById('stream-headless').checked = true;
+    document.getElementById('stream-hardware-accel').value = 'none';
 
     // Hide all optional sections
-    handleTemplateTypeChange('');
+    handleStreamTypeChange('');
 }
 
 function openModal(modalId) {
     const modal = document.getElementById(modalId);
     if (modal) {
-        // Reset template form if opening template modal for creation
-        if (modalId === 'template-modal' && !document.getElementById('template-form').dataset.editingId) {
-            resetTemplateForm();
+        // Reset stream form if opening stream modal for creation
+        if (modalId === 'stream-modal' && !document.getElementById('stream-form').dataset.editingId) {
+            resetStreamForm();
         }
 
         modal.classList.remove('hidden');
@@ -541,48 +541,48 @@ async function revokeApiKey(keyId) {
     }
 }
 
-async function editTemplate(templateId) {
+async function editStream(streamId) {
     try {
-        // Fetch the template data
-        const response = await fetch(`/api/templates/${templateId}`, {
+        // Fetch the stream data
+        const response = await fetch(`/api/streams/${streamId}`, {
             headers: authManager.getAuthHeaders()
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const template = await response.json();
+        const stream = await response.json();
 
-        // Populate the form with existing template data
-        document.getElementById('template-name').value = template.name || '';
-        document.getElementById('template-description').value = template.description || '';
-        document.getElementById('template-default').checked = template.is_default || false;
+        // Populate the form with existing stream data
+        document.getElementById('stream-name').value = stream.name || '';
+        document.getElementById('stream-description').value = stream.description || '';
+        document.getElementById('stream-default').checked = stream.is_default || false;
 
         // Parse the config to determine type and URL
         let config;
         try {
-            config = typeof template.config === 'string' ? JSON.parse(template.config) : template.config;
+            config = typeof stream.config === 'string' ? JSON.parse(stream.config) : stream.config;
         } catch (e) {
-            console.error('Error parsing template config:', e);
+            console.error('Error parsing stream config:', e);
             config = {};
         }
 
         // Set the type and URL based on config
-        const typeSelect = document.getElementById('template-type');
-        const urlInput = document.getElementById('template-url');
+        const typeSelect = document.getElementById('stream-type');
+        const urlInput = document.getElementById('stream-url');
 
         if (config.kind === 'website') {
             typeSelect.value = 'website';
             urlInput.value = config.url || '';
 
             // Populate website-specific fields
-            document.getElementById('template-width').value = config.width || 1920;
-            document.getElementById('template-height').value = config.height || 1080;
-            document.getElementById('template-element-selector').value = config.element_selector || '';
-            document.getElementById('template-headless').checked = config.headless !== false;
+            document.getElementById('stream-width').value = config.width || 1920;
+            document.getElementById('stream-height').value = config.height || 1080;
+            document.getElementById('stream-element-selector').value = config.element_selector || '';
+            document.getElementById('stream-headless').checked = config.headless !== false;
         } else if (config.kind === 'ffmpeg') {
             typeSelect.value = 'ffmpeg';
             urlInput.value = config.source_url || config.rtsp_url || config.url || '';
 
             // Populate ffmpeg-specific fields
-            document.getElementById('template-hardware-accel').value = config.hardware_acceleration || 'none';
+            document.getElementById('stream-hardware-accel').value = config.hardware_acceleration || 'none';
         } else if (config.kind === 'file') {
             typeSelect.value = 'file';
             urlInput.value = config.file_path || config.path || '';
@@ -595,47 +595,47 @@ async function editTemplate(templateId) {
             urlInput.value = '';
 
             // Set default values for website fields
-            document.getElementById('template-width').value = 1920;
-            document.getElementById('template-height').value = 1080;
-            document.getElementById('template-element-selector').value = '';
-            document.getElementById('template-headless').checked = true;
+            document.getElementById('stream-width').value = 1920;
+            document.getElementById('stream-height').value = 1080;
+            document.getElementById('stream-element-selector').value = '';
+            document.getElementById('stream-headless').checked = true;
         }
 
         // Show/hide appropriate sections based on selected type
-        handleTemplateTypeChange(typeSelect.value);
+        handleStreamTypeChange(typeSelect.value);
 
         // Update form title and button text for editing
-        const modalTitle = document.querySelector('#template-modal h3');
-        const submitButton = document.querySelector('#template-form button[type="submit"]');
-        modalTitle.textContent = 'Edit Template';
-        submitButton.textContent = 'Update Template';
+        const modalTitle = document.querySelector('#stream-modal h3');
+        const submitButton = document.querySelector('#stream-form button[type="submit"]');
+        modalTitle.textContent = 'Edit Stream';
+        submitButton.textContent = 'Update Stream';
 
-        // Store the template ID in the form for later use
-        document.getElementById('template-form').dataset.editingId = templateId;
+        // Store the stream ID in the form for later use
+        document.getElementById('stream-form').dataset.editingId = streamId;
 
         // Open the modal
-        openModal('template-modal');
+        openModal('stream-modal');
 
     } catch (error) {
-        showError('Failed to load template: ' + error.message);
+        showError('Failed to load stream: ' + error.message);
     }
 }
 
-async function deleteTemplate(templateId) {
-    if (!confirm('Are you sure you want to delete this template?')) return;
+async function deleteStream(streamId) {
+    if (!confirm('Are you sure you want to delete this stream?')) return;
 
     try {
-        const response = await fetch(`/api/templates/${templateId}`, {
+        const response = await fetch(`/api/streams/${streamId}`, {
             method: 'DELETE',
             headers: authManager.getAuthHeaders()
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        await loadTemplates();
-        showSuccess('Template deleted successfully');
+        await loadStreams();
+        showSuccess('Stream deleted successfully');
 
     } catch (error) {
-        showError('Failed to delete template: ' + error.message);
+        showError('Failed to delete stream: ' + error.message);
     }
 }
 

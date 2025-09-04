@@ -7,7 +7,7 @@ use crate::{
     AppState,
 };
 use actix_web::{get, web, HttpRequest, HttpResponse, Result};
-use gl_db::{TemplateRepository, UserRepository};
+use gl_db::{StreamRepository, UserRepository};
 use serde_json::{json, Value};
 use tracing::{debug, error, warn};
 
@@ -88,7 +88,7 @@ pub async fn health() -> Result<HttpResponse> {
     })))
 }
 
-/// Get streams endpoint - transforms templates into active streams
+/// Get streams endpoint - returns active streams
 #[utoipa::path(
     get,
     path = "/api/streams",
@@ -104,34 +104,34 @@ pub async fn health() -> Result<HttpResponse> {
 pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
     debug!("Getting streams list");
 
-    let template_repo = TemplateRepository::new(state.db.pool());
+    let stream_repo = StreamRepository::new(state.db.pool());
 
-    match template_repo.list(None, 0, 1000).await {
-        Ok(templates) => {
-            let template_count = templates.len();
-            let mut streams: Vec<StreamInfo> = Vec::new();
+    match stream_repo.list(None, 0, 1000).await {
+        Ok(streams) => {
+            let stream_count = streams.len();
+            let mut stream_infos: Vec<StreamInfo> = Vec::new();
 
-            for template in templates {
+            for stream in streams {
                 // Parse the config JSON string
-                let config: Value = match serde_json::from_str(&template.config) {
+                let config: Value = match serde_json::from_str(&stream.config) {
                     Ok(config) => config,
                     Err(e) => {
                         error!(
-                            "Failed to parse template config for template '{}' (id: {}): {}. Config: {}",
-                            template.name, template.id, e, template.config
+                            "Failed to parse stream config for stream '{}' (id: {}): {}. Config: {}",
+                            stream.name, stream.id, e, stream.config
                         );
                         continue;
                     }
                 };
 
-                // Extract source URL from template config
-                let source = match extract_source_from_template_config(&config) {
+                // Extract source URL from stream config
+                let source = match extract_source_from_stream_config(&config) {
                     Some(source) => source,
                     None => {
                         error!(
-                            "Failed to extract source from template '{}' (id: {}). Config: {}",
-                            template.name,
-                            template.id,
+                            "Failed to extract source from stream '{}' (id: {}). Config: {}",
+                            stream.name,
+                            stream.id,
                             serde_json::to_string_pretty(&config).unwrap_or_default()
                         );
                         continue;
@@ -139,14 +139,10 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
                 };
 
                 // Check actual execution status from database and capture manager
-                let status = match template.execution_status.as_deref() {
+                let status = match stream.execution_status.as_deref() {
                     Some("active") => {
                         // Double check with capture manager if it's really running
-                        if state
-                            .capture_manager
-                            .is_template_running(&template.id)
-                            .await
-                        {
+                        if state.capture_manager.is_template_running(&stream.id).await {
                             StreamStatus::Active
                         } else {
                             StreamStatus::Inactive
@@ -162,39 +158,39 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
                 let resolution = extract_resolution_from_config(&config)
                     .unwrap_or_else(|| "1920x1080".to_string());
 
-                // Set FPS based on template type
-                let fps = get_fps_for_template_type(&config);
+                // Set FPS based on stream type
+                let fps = get_fps_for_stream_type(&config);
 
                 // Get last frame time from capture manager if running
                 let last_frame_at = if let Some(capture_info) =
-                    state.capture_manager.get_capture_status(&template.id).await
+                    state.capture_manager.get_capture_status(&stream.id).await
                 {
                     capture_info.last_frame_at.map(|dt| dt.to_rfc3339())
                 } else {
-                    template.last_executed_at.clone()
+                    stream.last_executed_at.clone()
                 };
 
-                streams.push(StreamInfo {
-                    id: template.id.clone(),
-                    name: template.name.clone(),
+                stream_infos.push(StreamInfo {
+                    id: stream.id.clone(),
+                    name: stream.name.clone(),
                     source,
                     status,
                     resolution,
                     fps,
                     last_frame_at,
-                    template_id: Some(template.id),
+                    template_id: Some(stream.id),
                 });
             }
 
             debug!(
-                "Returning {} streams from {} templates",
-                streams.len(),
-                template_count
+                "Returning {} streams from {} streams",
+                stream_infos.len(),
+                stream_count
             );
-            Ok(HttpResponse::Ok().json(streams))
+            Ok(HttpResponse::Ok().json(stream_infos))
         }
         Err(e) => {
-            error!("Failed to fetch templates: {}", e);
+            error!("Failed to fetch streams: {}", e);
             Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
                 "database_error",
                 "Failed to retrieve streams",
@@ -203,8 +199,8 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
     }
 }
 
-/// Extract source URL from template configuration JSON
-fn extract_source_from_template_config(config: &Value) -> Option<String> {
+/// Extract source URL from stream configuration JSON
+fn extract_source_from_stream_config(config: &Value) -> Option<String> {
     // Get the template kind/type
     let kind = config.get("kind").and_then(|v| v.as_str())?;
 
@@ -234,7 +230,7 @@ fn extract_source_from_template_config(config: &Value) -> Option<String> {
 
 /// Extract resolution from template configuration JSON
 fn extract_resolution_from_config(config: &Value) -> Option<String> {
-    // Website templates have width and height fields
+    // Website streams have width and height fields
     if let Some(width) = config.get("width").and_then(|v| v.as_u64()) {
         if let Some(height) = config.get("height").and_then(|v| v.as_u64()) {
             return Some(format!("{}x{}", width, height));
@@ -244,7 +240,7 @@ fn extract_resolution_from_config(config: &Value) -> Option<String> {
 }
 
 /// Get appropriate FPS value based on template type
-fn get_fps_for_template_type(config: &Value) -> u32 {
+fn get_fps_for_stream_type(config: &Value) -> u32 {
     let kind = config
         .get("kind")
         .and_then(|v| v.as_str())

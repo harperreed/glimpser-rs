@@ -109,26 +109,70 @@ impl<'a> ApiKeyRepository<'a> {
     }
 
     /// List all API keys (admin only)
-    /// TODO: Remove this entire method as part of API key system removal
     #[instrument(skip(self))]
-    pub async fn list_all(&self, _limit: i64, _offset: i64) -> Result<Vec<ApiKey>> {
-        // Temporarily disabled - will be removed with API key system
-        Ok(vec![])
+    pub async fn list_all(&self, limit: i64, offset: i64) -> Result<Vec<ApiKey>> {
+        debug!("Listing all active API keys");
+
+        let api_keys = sqlx::query_as!(
+            ApiKey,
+            r#"
+            SELECT id, user_id, key_hash, name, permissions, expires_at, is_active, last_used_at, created_at, updated_at
+            FROM api_keys
+            WHERE is_active = true
+            ORDER BY created_at DESC
+            LIMIT ?1 OFFSET ?2
+            "#,
+            limit,
+            offset
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to list API keys: {}", e)))?;
+
+        Ok(api_keys)
     }
 
-    /// Delete an API key by ID
-    /// TODO: Remove this entire method as part of API key system removal
+    /// Delete an API key by ID (soft delete)
     #[instrument(skip(self))]
-    pub async fn delete(&self, _id: &str) -> Result<()> {
-        // Temporarily disabled - will be removed with API key system
+    pub async fn delete(&self, id: &str) -> Result<()> {
+        let now = now_iso8601();
+        let result = sqlx::query!(
+            r#"
+            UPDATE api_keys
+            SET is_active = false, updated_at = ?1
+            WHERE id = ?2
+            "#,
+            now,
+            id
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to delete API key: {}", e)))?;
+
+        debug!(rows = result.rows_affected(), "Soft-deleted API key");
         Ok(())
     }
 
     /// Update last used timestamp
-    /// TODO: Remove this entire method as part of API key system removal
     #[instrument(skip(self))]
-    pub async fn update_last_used(&self, _id: &str) -> Result<()> {
-        // Temporarily disabled - will be removed with API key system
+    pub async fn update_last_used(&self, id: &str) -> Result<()> {
+        let now = now_iso8601();
+        let result = sqlx::query!(
+            r#"
+            UPDATE api_keys
+            SET last_used_at = ?1, updated_at = ?1
+            WHERE id = ?2 AND is_active = true
+            "#,
+            now,
+            id
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update last_used for API key: {}", e)))?;
+        debug!(
+            rows = result.rows_affected(),
+            "Updated API key last_used_at"
+        );
         Ok(())
     }
 }
