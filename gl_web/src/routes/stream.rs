@@ -2,21 +2,18 @@
 //! ABOUTME: Handles video stream snapshot generation from streams
 
 use actix_web::{web, HttpResponse, Result as ActixResult};
-use bytes::Bytes;
-use futures_util::stream::StreamExt;
 use gl_capture::{
     CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel, OutputFormat,
     YtDlpConfig, YtDlpSource,
 };
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
-use gl_core::{Error, Result};
+use gl_core::{Error, Id, Result};
 use gl_db::StreamRepository;
+use gl_stream::{MjpegStream, StreamConfig, StreamSession};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio_stream::wrappers::IntervalStream;
 use tracing::{error, info, warn};
 use utoipa::OpenApi;
 
@@ -494,45 +491,44 @@ pub async fn mjpeg_stream(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
-    let stream_id = path.into_inner();
+    let stream_id_str = path.into_inner();
+    let stream_id: Id = match stream_id_str.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(ErrorResponse::new("invalid_id", "Invalid Stream ID")))
+        }
+    };
 
-    info!(stream_id = %stream_id, "Starting MJPEG stream");
+    // Get the session from the manager
+    match state.stream_manager.get_session(&stream_id).await {
+        Some(session) => {
+            info!(stream_id = %stream_id, "New client connected to MJPEG stream");
 
-    // Check if the stream is running in capture manager
-    if !state.capture_manager.is_stream_running(&stream_id).await {
-        info!(stream_id = %stream_id, "Stream not running, attempting to start");
+            // Subscribe to the frame broadcaster
+            let frame_receiver = session.subscribe();
 
-        // Try to start the stream if it's not running
-        match state.capture_manager.start_stream(&stream_id).await {
-            Ok(_) => {
-                info!(stream_id = %stream_id, "Stream started successfully for streaming");
-                // Give it a moment to start up
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            Err(e) => {
-                error!(stream_id = %stream_id, error = %e, "Failed to start stream for streaming");
-                return Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
-                    "stream_start_failed",
-                    format!("Failed to start stream: {}", e),
-                )));
-            }
+            // Create the real MjpegStream from the gl_stream crate
+            let mjpeg_stream = MjpegStream::new(
+                session.clone(),
+                frame_receiver,
+                state.stream_manager.metrics().clone(),
+            );
+
+            // Return the streaming response
+            Ok(HttpResponse::Ok()
+                .content_type(mjpeg_stream.content_type())
+                .insert_header(("Cache-Control", "no-cache"))
+                .streaming(mjpeg_stream))
+        }
+        None => {
+            warn!(stream_id = %stream_id, "No active stream session found for MJPEG request");
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new(
+                "stream_not_running",
+                "Stream is not running. Please start it first.",
+            )))
         }
     }
-
-    // Create MJPEG streaming response
-    let boundary = "--GLIMPSER_MJPEG_BOUNDARY";
-    let content_type = format!("multipart/x-mixed-replace; boundary={}", boundary);
-
-    let stream = create_mjpeg_stream(
-        state.capture_manager.clone(),
-        stream_id.clone(),
-        boundary.to_string(),
-    );
-
-    info!(stream_id = %stream_id, "MJPEG stream started successfully");
-    Ok(HttpResponse::Ok()
-        .content_type(content_type)
-        .streaming(stream))
 }
 
 /// Start a stream from a stream
@@ -559,29 +555,97 @@ pub async fn start_stream(
 
     info!(stream_id = %stream_id, "Starting stream");
 
-    match state.capture_manager.start_stream(&stream_id).await {
-        Ok(_) => {
-            info!(stream_id = %stream_id, "Stream started successfully");
-            Ok(HttpResponse::Ok().json(serde_json::json!({
-                "message": "Stream started successfully",
-                "stream_id": stream_id
-            })))
+    // Get the stream from the database first
+    let stream = {
+        let repo = StreamRepository::new(state.db.pool());
+        match repo.find_by_id(&stream_id).await {
+            Ok(Some(stream)) => stream,
+            Ok(None) => {
+                return Ok(HttpResponse::NotFound()
+                    .json(ErrorResponse::new("stream_not_found", "Stream not found")))
+            }
+            Err(e) => {
+                error!(error = %e, stream_id = stream_id, "Failed to get stream from database");
+                return Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
+                    "database_error",
+                    "Failed to retrieve stream",
+                )));
+            }
         }
-        Err(Error::NotFound(msg)) => {
-            Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
+    };
+
+    // Parse stream ID to gl_core::Id
+    let stream_core_id: Id = match stream_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(ErrorResponse::new("invalid_id", "Invalid stream ID format")))
         }
-        Err(Error::Config(msg)) if msg.contains("already running") => {
-            Ok(HttpResponse::BadRequest().json(ErrorResponse::new("stream_already_running", &msg)))
+    };
+
+    // Get or create a stream session from the manager
+    let _session = match state.stream_manager.get_session(&stream_core_id).await {
+        Some(session) => session,
+        None => {
+            // Create a new capture source and handle
+            let source = match create_capture_source_from_stream(&stream) {
+                Ok(source) => source,
+                Err(e) => {
+                    error!(error = %e, stream_id = stream_id, "Failed to create capture source");
+                    return Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
+                        "config_error",
+                        format!("Failed to create capture source: {}", e),
+                    )));
+                }
+            };
+
+            let handle = match source.start().await {
+                Ok(handle) => handle,
+                Err(e) => {
+                    error!(error = %e, stream_id = stream_id, "Failed to start capture source");
+                    return Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
+                        "start_error",
+                        format!("Failed to start capture: {}", e),
+                    )));
+                }
+            };
+
+            // Create a new stream session
+            let new_session = Arc::new(StreamSession::new(
+                stream_core_id.clone(),
+                handle,
+                StreamConfig::default(), // Or load from config
+                state.stream_manager.metrics().clone(),
+            ));
+
+            // Start the session's frame generation loop in the background
+            tokio::spawn(Arc::clone(&new_session).start());
+
+            // Add it to the manager
+            state
+                .stream_manager
+                .add_session(Arc::clone(&new_session))
+                .await;
+            new_session
         }
-        Err(e) => {
-            error!(error = %e, stream_id = stream_id, "Failed to start stream");
-            // Don't expose internal error details to API consumers
-            Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
-                "start_error",
-                "Internal server error occurred while starting stream",
-            )))
+    };
+
+    // Start the capture in the capture manager (if not already running)
+    if !state.capture_manager.is_stream_running(&stream_id).await {
+        if let Err(e) = state.capture_manager.start_stream(&stream_id).await {
+            // If start fails, remove the session we might have just created
+            state.stream_manager.remove_session(&stream_core_id).await;
+            error!(error = %e, stream_id = stream_id, "Failed to start stream in capture manager");
+            return Ok(HttpResponse::InternalServerError()
+                .json(ErrorResponse::new("start_error", "Failed to start stream")));
         }
     }
+
+    info!(stream_id = %stream_id, "Stream started successfully");
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "message": "Stream started successfully",
+        "stream_id": stream_id
+    })))
 }
 
 /// Stop a running stream
@@ -607,8 +671,20 @@ pub async fn stop_stream(
 
     info!(stream_id = %stream_id, "Stopping stream");
 
+    // Parse stream ID to gl_core::Id
+    let stream_core_id: Id = match stream_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(ErrorResponse::new("invalid_id", "Invalid stream ID format")))
+        }
+    };
+
     match state.capture_manager.stop_stream(&stream_id).await {
         Ok(_) => {
+            // Also remove the session from the stream manager
+            state.stream_manager.remove_session(&stream_core_id).await;
+
             info!(stream_id = %stream_id, "Stream stopped successfully");
             Ok(HttpResponse::Ok().json(serde_json::json!({
                 "message": "Stream stopped successfully",
@@ -629,75 +705,182 @@ pub async fn stop_stream(
     }
 }
 
-/// Create an MJPEG stream from a capture manager
-fn create_mjpeg_stream(
-    capture_manager: Arc<crate::capture_manager::CaptureManager>,
-    stream_id: String,
-    boundary: String,
-) -> impl futures_util::Stream<Item = std::result::Result<Bytes, Box<dyn std::error::Error>>> {
-    // Create interval stream for periodic snapshot capture
-    let interval = tokio::time::interval(Duration::from_millis(200)); // 5 FPS
-    let stream = IntervalStream::new(interval);
+/// Helper function to create a capture source from stream configuration
+fn create_capture_source_from_stream(
+    stream: &gl_db::Stream,
+) -> Result<Box<dyn CaptureSource + Send + Sync>> {
+    let config: Value = serde_json::from_str(&stream.config)
+        .map_err(|e| Error::Config(format!("Invalid stream config JSON: {}", e)))?;
 
-    stream.then(move |_| {
-        let capture_manager = capture_manager.clone();
-        let stream_id = stream_id.clone();
-        let boundary = boundary.clone();
+    let kind = config
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::Config("Stream config missing 'kind' field".to_string()))?;
 
-        async move {
-            // Get capture status and take snapshot if running
-            if let Some(capture_info) = capture_manager.get_capture_status(&stream_id).await {
-                if capture_info.status == crate::capture_manager::CaptureStatus::Active {
-                    // Try to get snapshot from one of the running captures
-                    // This is a simplified approach - in production you'd want more robust snapshot handling
-                    match take_stream_snapshot(&stream_id, &capture_manager).await {
-                        Ok(snapshot_data) => {
-                            let frame_data = format!(
-                                "\r\n--{}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
-                                boundary,
-                                snapshot_data.len()
-                            );
+    match kind {
+        "ffmpeg" => {
+            let source_url = config
+                .get("source_url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    Error::Config("FFmpeg stream config missing 'source_url' field".to_string())
+                })?;
 
-                            let mut frame_bytes = Vec::new();
-                            frame_bytes.extend_from_slice(frame_data.as_bytes());
-                            frame_bytes.extend_from_slice(&snapshot_data);
-                            frame_bytes.extend_from_slice(b"\r\n");
+            let mut ffmpeg_config = FfmpegConfig {
+                input_url: source_url.to_string(),
+                ..Default::default()
+            };
 
-                            Ok(Bytes::from(frame_bytes))
-                        }
-                        Err(e) => {
-                            error!(stream_id = %stream_id, error = %e, "Failed to capture snapshot for MJPEG stream");
-                            // Send a simple error frame
-                            let error_frame = format!(
-                                "\r\n--{}\r\nContent-Type: text/plain\r\n\r\nError: Failed to capture frame\r\n",
-                                boundary
-                            );
-                            Ok(Bytes::from(error_frame))
-                        }
+            // Parse hardware acceleration if specified
+            if let Some(hw_accel) = config.get("hardware_accel").and_then(|v| v.as_str()) {
+                ffmpeg_config.hardware_accel = match hw_accel.to_lowercase().as_str() {
+                    "vaapi" => HardwareAccel::Vaapi,
+                    "cuda" => HardwareAccel::Cuda,
+                    "qsv" => HardwareAccel::Qsv,
+                    "videotoolbox" => HardwareAccel::VideoToolbox,
+                    _ => HardwareAccel::None,
+                };
+            }
+
+            // Parse input options if provided
+            if let Some(input_opts) = config.get("input_options").and_then(|v| v.as_object()) {
+                for (key, value) in input_opts {
+                    if let Some(value_str) = value.as_str() {
+                        ffmpeg_config
+                            .input_options
+                            .insert(key.clone(), value_str.to_string());
                     }
-                } else {
-                    // Stream not active, send end boundary
-                    Err(Box::new(std::io::Error::other("Stream ended")) as Box<dyn std::error::Error>)
                 }
-            } else {
-                // Stream not running, send end boundary
-                Err(Box::new(std::io::Error::other("Stream not running")) as Box<dyn std::error::Error>)
+            }
+
+            // Parse codec if specified
+            if let Some(codec) = config.get("video_codec").and_then(|v| v.as_str()) {
+                ffmpeg_config.video_codec = Some(codec.to_string());
+            }
+
+            // Parse timeout if specified
+            if let Some(timeout) = config.get("timeout").and_then(|v| v.as_u64()) {
+                ffmpeg_config.timeout = Some(timeout as u32);
+            }
+
+            // Parse quality settings
+            if let Some(quality) = config.get("quality").and_then(|v| v.as_u64()) {
+                ffmpeg_config.snapshot_config.quality = quality as u8;
+            }
+
+            Ok(Box::new(FfmpegSource::new(ffmpeg_config)))
+        }
+        "file" => {
+            let file_path = config["file_path"]
+                .as_str()
+                .ok_or_else(|| Error::Config("Missing file_path".to_string()))?;
+            Ok(Box::new(FileSource::new(file_path)))
+        }
+        "website" => {
+            #[cfg(feature = "website")]
+            {
+                let url = config.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+                    Error::Config("Website stream config missing 'url' field".to_string())
+                })?;
+
+                let mut website_config = WebsiteConfig {
+                    url: url.to_string(),
+                    ..Default::default()
+                };
+
+                // Parse optional fields from config
+                if let Some(headless) = config.get("headless").and_then(|v| v.as_bool()) {
+                    website_config.headless = headless;
+                }
+
+                if let Some(stealth) = config.get("stealth").and_then(|v| v.as_bool()) {
+                    website_config.stealth = stealth;
+                }
+
+                if let Some(width) = config.get("width").and_then(|v| v.as_u64()) {
+                    website_config.width = width as u32;
+                }
+
+                if let Some(height) = config.get("height").and_then(|v| v.as_u64()) {
+                    website_config.height = height as u32;
+                }
+
+                if let Some(selector) = config.get("element_selector").and_then(|v| v.as_str()) {
+                    website_config.element_selector = Some(selector.to_string());
+                }
+
+                if let Some(username) = config.get("basic_auth_username").and_then(|v| v.as_str()) {
+                    website_config.basic_auth_username = Some(username.to_string());
+                }
+
+                if let Some(password) = config.get("basic_auth_password").and_then(|v| v.as_str()) {
+                    website_config.basic_auth_password = Some(password.to_string());
+                }
+
+                let client = gl_capture::website_source::MockWebDriverClient::new_boxed(); // Or real client
+                Ok(Box::new(WebsiteSource::new(website_config, client)))
+            }
+            #[cfg(not(feature = "website"))]
+            {
+                Err(Error::Config(
+                    "Website capture not enabled - compile with 'website' feature".to_string(),
+                ))
             }
         }
-    })
-}
+        "yt" => {
+            let url = config
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Error::Config("yt stream config missing 'url' field".to_string()))?;
 
-/// Helper function to take a snapshot from a stream using the CaptureManager
-async fn take_stream_snapshot(
-    stream_id: &str,
-    capture_manager: &crate::capture_manager::CaptureManager,
-) -> Result<Vec<u8>> {
-    // Use the CaptureManager's new take_stream_snapshot method
-    match capture_manager.take_stream_snapshot(stream_id).await {
-        Ok(snapshot_bytes) => Ok(snapshot_bytes.to_vec()),
-        Err(e) => {
-            error!(stream_id = %stream_id, error = %e, "Failed to take stream snapshot");
-            Err(e)
+            let mut ytdlp_config = YtDlpConfig {
+                url: url.to_string(),
+                ..Default::default()
+            };
+
+            // Parse optional fields from config
+            if let Some(format) = config.get("format").and_then(|v| v.as_str()) {
+                ytdlp_config.format = match format {
+                    "best" => OutputFormat::Best,
+                    "worst" => OutputFormat::Worst,
+                    format_id if format_id.chars().all(|c| c.is_numeric() || c == '+') => {
+                        OutputFormat::FormatId(format_id.to_string())
+                    }
+                    height_str
+                        if height_str.starts_with("best[height<=") && height_str.ends_with("]") =>
+                    {
+                        let height_part = &height_str[13..height_str.len() - 1];
+                        if let Ok(height) = height_part.parse::<u32>() {
+                            OutputFormat::BestWithHeight(height)
+                        } else {
+                            OutputFormat::Best
+                        }
+                    }
+                    _ => OutputFormat::Best,
+                };
+            }
+
+            if let Some(is_live) = config.get("is_live").and_then(|v| v.as_bool()) {
+                ytdlp_config.is_live = is_live;
+            }
+
+            if let Some(timeout) = config.get("timeout").and_then(|v| v.as_u64()) {
+                ytdlp_config.timeout = Some(timeout as u32);
+            }
+
+            // Parse options if provided
+            if let Some(opts) = config.get("options").and_then(|v| v.as_object()) {
+                for (key, value) in opts {
+                    if let Some(value_str) = value.as_str() {
+                        ytdlp_config
+                            .options
+                            .insert(key.clone(), value_str.to_string());
+                    }
+                }
+            }
+
+            Ok(Box::new(YtDlpSource::new(ytdlp_config)))
         }
+        _ => Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
     }
 }
