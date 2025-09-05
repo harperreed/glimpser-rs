@@ -187,6 +187,18 @@ class ApiClient {
   async stopStream(id: string) {
     return this.post(`/stream/${id}/stop`);
   }
+
+  // Export/Import endpoints
+  async exportStreams() {
+    return this.request('/api/settings/streams/export');
+  }
+
+  async importStreams(streams: any[], overwriteMode: 'skip' | 'overwrite' | 'create_new' = 'skip') {
+    return this.post('/api/settings/streams/import', {
+      streams,
+      overwrite_mode: overwriteMode,
+    });
+  }
 }
 
 export class ApiError extends Error {

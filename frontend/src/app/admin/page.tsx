@@ -63,6 +63,9 @@ export default function AdminPage() {
   const [showCreateStreamModal, setShowCreateStreamModal] = useState(false);
   const [showEditStreamModal, setShowEditStreamModal] = useState(false);
   const [editingStream, setEditingStream] = useState<Stream | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importData, setImportData] = useState('');
+  const [importMode, setImportMode] = useState<'skip' | 'overwrite' | 'create_new'>('skip');
 
   const { user } = useAuth();
   const router = useRouter();
@@ -181,6 +184,56 @@ export default function AdminPage() {
       await loadStreams();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete stream');
+    }
+  };
+
+  const exportStreams = async () => {
+    try {
+      const data = await apiClient.exportStreams();
+
+      // Create download link
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `streams_export_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to export streams');
+    }
+  };
+
+  const importStreams = async () => {
+    try {
+      const jsonData = JSON.parse(importData);
+
+      if (!jsonData.streams || !Array.isArray(jsonData.streams)) {
+        throw new Error('Invalid export format - missing streams array');
+      }
+
+      const result = await apiClient.importStreams(jsonData.streams, importMode);
+
+      setShowImportModal(false);
+      setImportData('');
+      await loadStreams();
+
+      alert(`Import complete: ${result.imported} imported, ${result.skipped} skipped, ${result.errors?.length || 0} errors`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import streams');
+    }
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setImportData(e.target?.result as string);
+      };
+      reader.readAsText(file);
     }
   };
 
@@ -383,11 +436,29 @@ export default function AdminPage() {
             <div>
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-lg font-semibold text-gray-800">Stream Management</h3>
-                <button
-                  onClick={() => setShowCreateStreamModal(true)}
-                  className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all duration-200">
-                  Create Stream
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={exportStreams}
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 transition-all duration-200">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Export
+                  </button>
+                  <button
+                    onClick={() => setShowImportModal(true)}
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-md font-medium hover:bg-purple-700 transition-all duration-200">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    Import
+                  </button>
+                  <button
+                    onClick={() => setShowCreateStreamModal(true)}
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all duration-200">
+                    Create Stream
+                  </button>
+                </div>
               </div>
 
               <div className="bg-white rounded-md shadow-sm overflow-hidden">
@@ -555,6 +626,77 @@ export default function AdminPage() {
             initialData={editingStream}
             title="Edit Stream"
           />
+        )}
+
+        {/* Import Streams Modal */}
+        {showImportModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xl font-semibold text-gray-800">Import Streams</h3>
+                  <button
+                    onClick={() => {
+                      setShowImportModal(false);
+                      setImportData('');
+                    }}
+                    className="text-gray-400 hover:text-gray-600">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="p-6">
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Import Mode</label>
+                  <select
+                    value={importMode}
+                    onChange={(e) => setImportMode(e.target.value as 'skip' | 'overwrite' | 'create_new')}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="skip">Skip existing streams (default)</option>
+                    <option value="overwrite">Overwrite existing streams</option>
+                    <option value="create_new">Create as new streams (append numbers)</option>
+                  </select>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">JSON Data</label>
+                  <textarea
+                    value={importData}
+                    onChange={(e) => setImportData(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                    rows={10}
+                    placeholder="Paste your exported JSON data here..."
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Or upload a file</label>
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={handleFileUpload}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => {
+                      setShowImportModal(false);
+                      setImportData('');
+                    }}
+                    className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-all duration-200">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={importStreams}
+                    disabled={!importData}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Import
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </ProtectedRoute>
