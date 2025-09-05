@@ -1,14 +1,20 @@
 //! ABOUTME: API client with authentication and error handling
 //! ABOUTME: Provides typed HTTP client for Glimpser backend API
 
-import type { components, operations } from '@/types/api';
+import type { components } from '@/types/api';
 
 // Type definitions from generated API types
 export type LoginRequest = components['schemas']['LoginRequest'];
 export type LoginResponse = components['schemas']['LoginResponse'];
 export type UserInfo = components['schemas']['UserInfo'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
-export type AdminStreamInfo = any; // TODO: regenerate from OpenAPI spec
+export type AdminStreamInfo = {
+  id: string;
+  name: string;
+  description?: string;
+  config: Record<string, unknown>;
+  is_default: boolean;
+};
 
 const API_BASE_URL = process.env.NODE_ENV === 'production'
   ? '' // Use same origin in production
@@ -47,17 +53,18 @@ class ApiClient {
   ): Promise<T> {
     const url = `${this.baseURL}/api${endpoint}`;
 
-    const headers: any = {
-      ...options.headers,
-    };
+    const headers: HeadersInit = {
+      ...(options.headers || {}),
+    } as HeadersInit;
 
     // Only set Content-Type for requests with bodies
-    if (options.body && !headers['Content-Type'] && !headers['content-type']) {
-      headers['Content-Type'] = 'application/json';
+    const headersObj = headers as Record<string, string>;
+    if (options.body && !headersObj['Content-Type'] && !headersObj['content-type']) {
+      headersObj['Content-Type'] = 'application/json';
     }
 
     if (this.accessToken) {
-      headers['Authorization'] = `Bearer ${this.accessToken}`;
+      headersObj['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
     const response = await fetch(url, {
@@ -118,7 +125,7 @@ class ApiClient {
   }
 
   // POST methods
-  post<T>(endpoint: string, data?: any) {
+  post<T>(endpoint: string, data?: unknown) {
     return this.request<T>(endpoint, {
       method: 'POST',
       body: data ? JSON.stringify(data) : undefined,
@@ -126,7 +133,7 @@ class ApiClient {
   }
 
   // PUT methods
-  put<T>(endpoint: string, data?: any) {
+  put<T>(endpoint: string, data?: unknown) {
     return this.request<T>(endpoint, {
       method: 'PUT',
       body: data ? JSON.stringify(data) : undefined,
@@ -141,7 +148,7 @@ class ApiClient {
   // Stream endpoints (listing)
   async getStreams(params?: { page?: number; page_size?: number; search?: string }) {
     const query = params ? new URLSearchParams(
-      Object.entries(params).filter(([_, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
+      Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
     ).toString() : '';
     return this.request(`/streams${query ? `?${query}` : ''}`);
   }
@@ -153,7 +160,7 @@ class ApiClient {
   async createStream(stream: {
     name: string;
     description?: string;
-    config: any;
+    config: Record<string, unknown>;
     is_default?: boolean;
   }) {
     return this.post('/streams', stream);
@@ -162,7 +169,7 @@ class ApiClient {
   async updateStream(id: string, stream: {
     name?: string;
     description?: string;
-    config?: any;
+    config?: Record<string, unknown>;
     is_default?: boolean;
   }) {
     return this.put(`/streams/${id}`, stream);
@@ -185,9 +192,10 @@ class ApiClient {
 export class ApiError extends Error {
   constructor(
     public status: number,
-    public data: any
+    public data: Record<string, unknown>
   ) {
-    super(data.message || `HTTP ${status}`);
+    const message = typeof data.message === 'string' ? data.message : `HTTP ${status}`;
+    super(message);
     this.name = 'ApiError';
   }
 }

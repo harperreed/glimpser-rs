@@ -46,6 +46,7 @@ pub struct AdminStreamInfo {
     pub is_default: bool,
     pub created_at: String,
     pub updated_at: String,
+    pub status: String, // "active" or "inactive"
 }
 
 /// Generic API response wrapper

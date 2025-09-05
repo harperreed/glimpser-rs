@@ -14,7 +14,7 @@
         "type_info": "Text"
       },
       {
-        "name": "template_id",
+        "name": "stream_id",
         "ordinal": 2,
         "type_info": "Text"
       },

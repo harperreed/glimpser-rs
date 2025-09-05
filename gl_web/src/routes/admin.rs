@@ -364,30 +364,37 @@ pub async fn list_streams_handler(
         Ok(streams) => {
             debug!("Streams retrieved successfully, count: {}", streams.len());
 
-            let stream_infos: Vec<AdminStreamInfo> = streams
-                .into_iter()
-                .map(|t| {
-                    let stream_type = match serde_json::from_str::<serde_json::Value>(&t.config) {
-                        Ok(config) => config
-                            .get("kind")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        Err(_) => "unknown".to_string(),
-                    };
+            let mut stream_infos: Vec<AdminStreamInfo> = Vec::new();
 
-                    AdminStreamInfo {
-                        id: t.id,
-                        user_id: t.user_id,
-                        name: t.name,
-                        description: t.description,
-                        stream_type,
-                        is_default: t.is_default,
-                        created_at: t.created_at,
-                        updated_at: t.updated_at,
-                    }
-                })
-                .collect();
+            for t in streams {
+                let stream_type = match serde_json::from_str::<serde_json::Value>(&t.config) {
+                    Ok(config) => config
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    Err(_) => "unknown".to_string(),
+                };
+
+                // Check if stream is running with capture manager
+                // Wrap in error handling to prevent endpoint crash
+                let status = match state.capture_manager.is_stream_running(&t.id).await {
+                    true => "active".to_string(),
+                    false => "inactive".to_string(),
+                };
+
+                stream_infos.push(AdminStreamInfo {
+                    id: t.id,
+                    user_id: t.user_id,
+                    name: t.name,
+                    description: t.description,
+                    stream_type,
+                    is_default: t.is_default,
+                    created_at: t.created_at,
+                    updated_at: t.updated_at,
+                    status,
+                });
+            }
 
             Ok(HttpResponse::Ok().json(stream_infos))
         }

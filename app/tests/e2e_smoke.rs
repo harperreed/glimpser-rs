@@ -1,5 +1,5 @@
 //! ABOUTME: End-to-end smoke test for glimpser platform
-//! ABOUTME: Tests complete workflow from template creation to metrics collection
+//! ABOUTME: Tests complete workflow from stream creation to metrics collection
 
 use gl_config::Config;
 use gl_core::telemetry;
@@ -90,29 +90,29 @@ impl E2ETestSetup {
     }
 
     /// Create a synthetic file-based stream for testing
-    async fn create_test_template(
+    async fn create_test_stream(
         &self,
         user_id: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let template_repo = StreamRepository::new(self.db.pool());
+        let stream_repo = StreamRepository::new(self.db.pool());
 
-        // Create a synthetic template with FileSource configuration
+        // Create a synthetic stream with FileSource configuration
         let config = json!({
             "kind": "file",
             "path": "/dev/null", // Safe synthetic file that always exists on Unix systems
             "format": "test"
         });
 
-        let template_request = CreateStreamRequest {
+        let stream_request = CreateStreamRequest {
             user_id: user_id.to_string(),
-            name: "E2E Test Template".to_string(),
-            description: Some("Synthetic template for E2E testing".to_string()),
+            name: "E2E Test Stream".to_string(),
+            description: Some("Synthetic stream for E2E testing".to_string()),
             config: config.to_string(),
             is_default: false,
         };
 
-        let template = template_repo.create(template_request).await?;
-        Ok(template.id)
+        let stream = stream_repo.create(stream_request).await?;
+        Ok(stream.id)
     }
 
     /// Login and get JWT token for API requests
@@ -230,13 +230,13 @@ impl E2ETestSetup {
     /// Create a capture using the API
     async fn create_capture(
         &self,
-        template_id: &str,
+        stream_id: &str,
         token: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let capture_payload = json!({
             "name": "E2E Test Capture",
             "description": "Test capture for E2E workflow",
-            "template_id": template_id,
+            "stream_id": stream_id,
             "source_url": "/dev/null"
         });
 
@@ -296,12 +296,12 @@ async fn test_e2e_smoke_workflow() {
         .expect("Failed to bootstrap admin user");
     println!("✅ Admin user bootstrapped: {}", user_id);
 
-    // Create synthetic template
-    let template_id = setup
-        .create_test_template(&user_id)
+    // Create synthetic stream
+    let stream_id = setup
+        .create_test_stream(&user_id)
         .await
-        .expect("Failed to create test template");
-    println!("✅ Test template created: {}", template_id);
+        .expect("Failed to create test stream");
+    println!("✅ Test stream created: {}", stream_id);
 
     // Start servers (simplified for testing)
     setup
@@ -319,12 +319,12 @@ async fn test_e2e_smoke_workflow() {
     // Verify database state
     let stream_repo = StreamRepository::new(setup.db.pool());
     let retrieved_stream = stream_repo
-        .find_by_id(&template_id)
+        .find_by_id(&stream_id)
         .await
         .expect("Failed to query stream")
         .expect("Stream not found");
 
-    assert_eq!(retrieved_stream.name, "E2E Test Template");
+    assert_eq!(retrieved_stream.name, "E2E Test Stream");
     assert_eq!(retrieved_stream.user_id, user_id);
     println!("✅ Stream verification completed");
 
@@ -345,7 +345,7 @@ async fn test_e2e_smoke_workflow() {
     let capture_repo = CaptureRepository::new(setup.db.pool());
     let create_capture_request = gl_db::repositories::captures::CreateCaptureRequest {
         user_id: user_id.clone(),
-        template_id: Some(template_id.clone()),
+        stream_id: Some(stream_id.clone()),
         name: "E2E Test Capture".to_string(),
         description: Some("Test capture for E2E workflow".to_string()),
         source_url: "/dev/null".to_string(),

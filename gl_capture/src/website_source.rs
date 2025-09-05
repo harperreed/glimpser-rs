@@ -22,8 +22,11 @@ pub struct WebsiteConfig {
     pub basic_auth_username: Option<String>,
     /// Basic auth password
     pub basic_auth_password: Option<String>,
-    /// CSS selector for element-specific screenshot
+    /// Selector for element-specific screenshot (CSS or XPath)
     pub element_selector: Option<String>,
+    /// Type of selector: "css" or "xpath" (default: "css")
+    #[serde(default = "default_selector_type")]
+    pub selector_type: String,
     /// Enable stealth mode to avoid detection
     #[serde(default)]
     pub stealth: bool,
@@ -40,6 +43,9 @@ pub struct WebsiteConfig {
 
 fn default_headless() -> bool {
     true
+}
+fn default_selector_type() -> String {
+    "css".to_string()
 }
 fn default_timeout() -> Duration {
     Duration::from_secs(30)
@@ -59,6 +65,7 @@ impl Default for WebsiteConfig {
             basic_auth_username: None,
             basic_auth_password: None,
             element_selector: None,
+            selector_type: default_selector_type(),
             stealth: false,
             timeout: default_timeout(),
             width: default_width(),
@@ -278,22 +285,30 @@ impl WebDriverClient for ThirtyfourClient {
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Take screenshot (element-specific or full page)
-        let screenshot_data =
-            if let Some(selector) = &config.element_selector {
-                debug!(selector = %selector, "Taking element-specific screenshot");
-                let element = driver.find(By::Css(selector)).await.map_err(|e| {
-                    Error::Config(format!("Element not found '{}': {}", selector, e))
-                })?;
-                element.screenshot_as_png().await.map_err(|e| {
-                    Error::Config(format!("Failed to take element screenshot: {}", e))
-                })?
+        let screenshot_data = if let Some(selector) = &config.element_selector {
+            debug!(selector = %selector, selector_type = %config.selector_type, "Taking element-specific screenshot");
+            let by = if config.selector_type == "xpath" {
+                By::XPath(selector)
             } else {
-                debug!("Taking full page screenshot");
-                driver
-                    .screenshot_as_png()
-                    .await
-                    .map_err(|e| Error::Config(format!("Failed to take screenshot: {}", e)))?
+                By::Css(selector)
             };
+            let element = driver.find(by).await.map_err(|e| {
+                Error::Config(format!(
+                    "Element not found '{}' ({}): {}",
+                    selector, config.selector_type, e
+                ))
+            })?;
+            element
+                .screenshot_as_png()
+                .await
+                .map_err(|e| Error::Config(format!("Failed to take element screenshot: {}", e)))?
+        } else {
+            debug!("Taking full page screenshot");
+            driver
+                .screenshot_as_png()
+                .await
+                .map_err(|e| Error::Config(format!("Failed to take screenshot: {}", e)))?
+        };
 
         Ok(Bytes::from(screenshot_data))
     }
@@ -381,12 +396,52 @@ impl WebDriverClient for HeadlessChromeClient {
 
         // Take screenshot
         let screenshot_data = if let Some(selector) = &config.element_selector {
-            debug!(selector = %selector, "Taking element-specific screenshot");
+            debug!(selector = %selector, selector_type = %config.selector_type, "Taking element-specific screenshot");
 
-            // Find element and take screenshot
-            let element = tab
-                .find_element(selector)
-                .map_err(|e| Error::Config(format!("Element not found '{}': {}", selector, e)))?;
+            // Find element - handle both CSS and XPath selectors
+            let element = if config.selector_type == "xpath" {
+                // Use JavaScript to evaluate XPath and get the element
+                let js_code = format!(
+                    r#"
+                    (function() {{
+                        var result = document.evaluate('{}', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                        var element = result.singleNodeValue;
+                        if (!element) {{
+                            throw new Error('XPath element not found');
+                        }}
+                        // Return a unique selector we can use to find it again
+                        element.setAttribute('data-glimpser-xpath-target', 'true');
+                        return true;
+                    }})()
+                    "#,
+                    selector.replace('\\', "\\\\").replace("'", "\\'") // Escape for JavaScript
+                );
+
+                // Execute JavaScript to mark the element
+                tab.evaluate(&js_code, true).map_err(|e| {
+                    Error::Config(format!("Failed to evaluate XPath '{}': {}", selector, e))
+                })?;
+
+                // Now find the marked element using CSS selector
+                let element = tab
+                    .find_element("[data-glimpser-xpath-target='true']")
+                    .map_err(|e| {
+                        Error::Config(format!("XPath element not found '{}': {}", selector, e))
+                    })?;
+
+                // Clean up the attribute
+                let cleanup_js = r#"
+                    document.querySelector('[data-glimpser-xpath-target="true"]').removeAttribute('data-glimpser-xpath-target');
+                "#;
+                let _ = tab.evaluate(cleanup_js, true); // Ignore cleanup errors
+
+                element
+            } else {
+                // Regular CSS selector
+                tab.find_element(selector).map_err(|e| {
+                    Error::Config(format!("CSS element not found '{}': {}", selector, e))
+                })?
+            };
 
             element
                 .capture_screenshot(

@@ -27,7 +27,10 @@ export default function LoginPage() {
       router.push('/dashboard');
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.data.message || `Login failed: ${err.message}`);
+        const errorMessage = typeof err.data === 'object' && err.data && 'message' in err.data
+          ? String(err.data.message)
+          : `Login failed: ${err.message}`;
+        setError(errorMessage);
       } else {
         setError('Login failed. Please try again.');
       }

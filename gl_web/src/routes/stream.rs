@@ -30,38 +30,38 @@ use crate::{models::ErrorResponse, AppState};
 )]
 pub struct StreamApiDoc;
 
-/// Take a snapshot from a stream template
+/// Take a snapshot from a stream
 #[utoipa::path(
     get,
-    path = "/api/stream/{template_id}/snapshot",
+    path = "/api/stream/{stream_id}/snapshot",
     params(
-        ("template_id" = String, Path, description = "Template ID")
+        ("stream_id" = String, Path, description = "Stream ID")
     ),
     responses(
         (status = 200, description = "Snapshot taken successfully", content_type = "image/jpeg"),
-        (status = 404, description = "Template not found"),
+        (status = 404, description = "Stream not found"),
         (status = 500, description = "Internal server error", body = ErrorResponse)
     ),
     security(("jwt_auth" = []), ("api_key" = []))
 )]
-#[actix_web::get("/{template_id}/snapshot")]
+#[actix_web::get("/{stream_id}/snapshot")]
 pub async fn snapshot(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
-    let template_id = path.into_inner();
+    let stream_id = path.into_inner();
 
-    info!(template_id = %template_id, "Taking snapshot");
+    info!(stream_id = %stream_id, "Taking snapshot");
 
-    match take_snapshot_impl(template_id.clone(), &state).await {
+    match take_snapshot_impl(stream_id.clone(), &state).await {
         Ok(jpeg_bytes) => Ok(HttpResponse::Ok()
             .content_type("image/jpeg")
             .body(jpeg_bytes)),
         Err(Error::NotFound(msg)) => {
-            Ok(HttpResponse::NotFound().json(ErrorResponse::new("template_not_found", &msg)))
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
         }
         Err(e) => {
-            error!(error = %e, template_id = template_id, "Failed to take snapshot");
+            error!(error = %e, stream_id = stream_id, "Failed to take snapshot");
             Ok(HttpResponse::InternalServerError()
                 .json(ErrorResponse::new("capture_error", e.to_string())))
         }
@@ -87,18 +87,18 @@ pub async fn thumbnail(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
-    let template_id = path.into_inner();
-    info!(template_id = %template_id, "Taking thumbnail");
+    let stream_id = path.into_inner();
+    info!(stream_id = %stream_id, "Taking thumbnail");
 
-    match take_snapshot_impl(template_id.clone(), &state).await {
+    match take_snapshot_impl(stream_id.clone(), &state).await {
         Ok(jpeg_bytes) => Ok(HttpResponse::Ok()
             .content_type("image/jpeg")
             .body(jpeg_bytes)),
         Err(Error::NotFound(msg)) => {
-            Ok(HttpResponse::NotFound().json(ErrorResponse::new("template_not_found", &msg)))
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
         }
         Err(e) => {
-            error!(error = %e, template_id = template_id, "Failed to take thumbnail");
+            error!(error = %e, stream_id = stream_id, "Failed to take thumbnail");
             Ok(HttpResponse::InternalServerError()
                 .json(ErrorResponse::new("capture_error", e.to_string())))
         }
@@ -135,10 +135,8 @@ pub async fn stream_details(
             let config: serde_json::Value = match serde_json::from_str(&stream.config) {
                 Ok(config) => config,
                 Err(_) => {
-                    return Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
-                        "config_error",
-                        "Invalid template config",
-                    )))
+                    return Ok(HttpResponse::InternalServerError()
+                        .json(ErrorResponse::new("config_error", "Invalid stream config")))
                 }
             };
 
@@ -229,42 +227,42 @@ pub async fn live_stream(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
-    let template_id = path.into_inner();
-    info!(template_id = %template_id, "Getting live stream");
+    let stream_id = path.into_inner();
+    info!(stream_id = %stream_id, "Getting live stream");
 
-    match take_snapshot_impl(template_id.clone(), &state).await {
+    match take_snapshot_impl(stream_id.clone(), &state).await {
         Ok(jpeg_bytes) => Ok(HttpResponse::Ok()
             .content_type("image/jpeg")
             .body(jpeg_bytes)),
         Err(Error::NotFound(msg)) => {
-            Ok(HttpResponse::NotFound().json(ErrorResponse::new("template_not_found", &msg)))
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
         }
         Err(e) => {
-            error!(error = %e, template_id = template_id, "Failed to get live stream");
+            error!(error = %e, stream_id = stream_id, "Failed to get live stream");
             Ok(HttpResponse::InternalServerError()
                 .json(ErrorResponse::new("capture_error", e.to_string())))
         }
     }
 }
 
-async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec<u8>> {
-    // Get the template from the database
-    let template = {
+async fn take_snapshot_impl(stream_id: String, state: &AppState) -> Result<Vec<u8>> {
+    // Get the stream from the database
+    let stream = {
         let repo = StreamRepository::new(state.db.pool());
-        repo.find_by_id(&template_id)
+        repo.find_by_id(&stream_id)
             .await?
-            .ok_or_else(|| Error::NotFound(format!("Template {} not found", template_id)))?
+            .ok_or_else(|| Error::NotFound(format!("Stream {} not found", stream_id)))?
     };
 
-    // Parse the template config to determine source type
-    let config: Value = serde_json::from_str(&template.config)
-        .map_err(|e| Error::Config(format!("Invalid template config JSON: {}", e)))?;
+    // Parse the stream config to determine source type
+    let config: Value = serde_json::from_str(&stream.config)
+        .map_err(|e| Error::Config(format!("Invalid stream config JSON: {}", e)))?;
 
     // Determine source type from config kind field
     let kind = config
         .get("kind")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Config("Template config missing 'kind' field".to_string()))?;
+        .ok_or_else(|| Error::Config("Stream config missing 'kind' field".to_string()))?;
 
     let jpeg_bytes = match kind {
         "file" => {
@@ -273,7 +271,7 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
                 .get("file_path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    Error::Config("File template config missing 'file_path' field".to_string())
+                    Error::Config("File stream config missing 'file_path' field".to_string())
                 })?;
 
             let source_path = PathBuf::from(file_path);
@@ -287,10 +285,10 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
                 .get("source_url")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    Error::Config("FFmpeg template config missing 'source_url' field".to_string())
+                    Error::Config("FFmpeg stream config missing 'source_url' field".to_string())
                 })?;
 
-            // Parse FFmpeg configuration from template config
+            // Parse FFmpeg configuration from stream config
             let mut ffmpeg_config = FfmpegConfig {
                 input_url: source_url.to_string(),
                 ..Default::default()
@@ -342,7 +340,7 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
             {
                 // Website-based source
                 let url = config.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
-                    Error::Config("Website template config missing 'url' field".to_string())
+                    Error::Config("Website stream config missing 'url' field".to_string())
                 })?;
 
                 let mut website_config = WebsiteConfig {
@@ -414,9 +412,10 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
         }
         "yt" => {
             // yt-dlp-based source
-            let url = config.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
-                Error::Config("yt template config missing 'url' field".to_string())
-            })?;
+            let url = config
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Error::Config("yt stream config missing 'url' field".to_string()))?;
 
             let mut ytdlp_config = YtDlpConfig {
                 url: url.to_string(),
@@ -469,56 +468,49 @@ async fn take_snapshot_impl(template_id: String, state: &AppState) -> Result<Vec
             handle.snapshot().await?
         }
         _ => {
-            return Err(Error::Config(format!(
-                "Unsupported template kind: {}",
-                kind
-            )));
+            return Err(Error::Config(format!("Unsupported stream kind: {}", kind)));
         }
     };
 
     Ok(jpeg_bytes.to_vec())
 }
 
-/// Stream MJPEG video from a template
+/// Stream MJPEG video from a stream
 #[utoipa::path(
     get,
-    path = "/api/stream/{template_id}/mjpeg",
+    path = "/api/stream/{stream_id}/mjpeg",
     params(
-        ("template_id" = String, Path, description = "Template ID")
+        ("stream_id" = String, Path, description = "Stream ID")
     ),
     responses(
         (status = 200, description = "MJPEG stream", content_type = "multipart/x-mixed-replace"),
-        (status = 404, description = "Template not found"),
+        (status = 404, description = "Stream not found"),
         (status = 500, description = "Internal server error", body = ErrorResponse)
     ),
     security(("jwt_auth" = []), ("api_key" = []))
 )]
-#[actix_web::get("/{template_id}/mjpeg")]
+#[actix_web::get("/{stream_id}/mjpeg")]
 pub async fn mjpeg_stream(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
-    let template_id = path.into_inner();
+    let stream_id = path.into_inner();
 
-    info!(template_id = %template_id, "Starting MJPEG stream");
+    info!(stream_id = %stream_id, "Starting MJPEG stream");
 
-    // Check if the template is running in capture manager
-    if !state
-        .capture_manager
-        .is_template_running(&template_id)
-        .await
-    {
-        info!(template_id = %template_id, "Template not running, attempting to start");
+    // Check if the stream is running in capture manager
+    if !state.capture_manager.is_stream_running(&stream_id).await {
+        info!(stream_id = %stream_id, "Stream not running, attempting to start");
 
-        // Try to start the template if it's not running
-        match state.capture_manager.start_template(&template_id).await {
+        // Try to start the stream if it's not running
+        match state.capture_manager.start_stream(&stream_id).await {
             Ok(_) => {
-                info!(template_id = %template_id, "Template started successfully for streaming");
+                info!(stream_id = %stream_id, "Stream started successfully for streaming");
                 // Give it a moment to start up
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
             Err(e) => {
-                error!(template_id = %template_id, error = %e, "Failed to start template for streaming");
+                error!(stream_id = %stream_id, error = %e, "Failed to start stream for streaming");
                 return Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
                     "stream_start_failed",
                     format!("Failed to start stream: {}", e),
@@ -533,56 +525,56 @@ pub async fn mjpeg_stream(
 
     let stream = create_mjpeg_stream(
         state.capture_manager.clone(),
-        template_id.clone(),
+        stream_id.clone(),
         boundary.to_string(),
     );
 
-    info!(template_id = %template_id, "MJPEG stream started successfully");
+    info!(stream_id = %stream_id, "MJPEG stream started successfully");
     Ok(HttpResponse::Ok()
         .content_type(content_type)
         .streaming(stream))
 }
 
-/// Start a stream from a template
+/// Start a stream from a stream
 #[utoipa::path(
     post,
-    path = "/api/stream/{template_id}/start",
+    path = "/api/stream/{stream_id}/start",
     params(
-        ("template_id" = String, Path, description = "Template ID")
+        ("stream_id" = String, Path, description = "Stream ID")
     ),
     responses(
         (status = 200, description = "Stream started successfully"),
         (status = 400, description = "Stream already running"),
-        (status = 404, description = "Template not found"),
+        (status = 404, description = "Stream not found"),
         (status = 500, description = "Internal server error", body = ErrorResponse)
     ),
     security(("jwt_auth" = []), ("api_key" = []))
 )]
-#[actix_web::post("/{template_id}/start")]
+#[actix_web::post("/{stream_id}/start")]
 pub async fn start_stream(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
-    let template_id = path.into_inner();
+    let stream_id = path.into_inner();
 
-    info!(template_id = %template_id, "Starting stream");
+    info!(stream_id = %stream_id, "Starting stream");
 
-    match state.capture_manager.start_template(&template_id).await {
+    match state.capture_manager.start_stream(&stream_id).await {
         Ok(_) => {
-            info!(template_id = %template_id, "Stream started successfully");
+            info!(stream_id = %stream_id, "Stream started successfully");
             Ok(HttpResponse::Ok().json(serde_json::json!({
                 "message": "Stream started successfully",
-                "template_id": template_id
+                "stream_id": stream_id
             })))
         }
         Err(Error::NotFound(msg)) => {
-            Ok(HttpResponse::NotFound().json(ErrorResponse::new("template_not_found", &msg)))
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
         }
         Err(Error::Config(msg)) if msg.contains("already running") => {
             Ok(HttpResponse::BadRequest().json(ErrorResponse::new("stream_already_running", &msg)))
         }
         Err(e) => {
-            error!(error = %e, template_id = template_id, "Failed to start stream");
+            error!(error = %e, stream_id = stream_id, "Failed to start stream");
             // Don't expose internal error details to API consumers
             Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
                 "start_error",
@@ -595,39 +587,39 @@ pub async fn start_stream(
 /// Stop a running stream
 #[utoipa::path(
     post,
-    path = "/api/stream/{template_id}/stop",
+    path = "/api/stream/{stream_id}/stop",
     params(
-        ("template_id" = String, Path, description = "Template ID")
+        ("stream_id" = String, Path, description = "Stream ID")
     ),
     responses(
         (status = 200, description = "Stream stopped successfully"),
-        (status = 404, description = "Template not found or stream not running"),
+        (status = 404, description = "Stream not found or stream not running"),
         (status = 500, description = "Internal server error", body = ErrorResponse)
     ),
     security(("jwt_auth" = []), ("api_key" = []))
 )]
-#[actix_web::post("/{template_id}/stop")]
+#[actix_web::post("/{stream_id}/stop")]
 pub async fn stop_stream(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
-    let template_id = path.into_inner();
+    let stream_id = path.into_inner();
 
-    info!(template_id = %template_id, "Stopping stream");
+    info!(stream_id = %stream_id, "Stopping stream");
 
-    match state.capture_manager.stop_template(&template_id).await {
+    match state.capture_manager.stop_stream(&stream_id).await {
         Ok(_) => {
-            info!(template_id = %template_id, "Stream stopped successfully");
+            info!(stream_id = %stream_id, "Stream stopped successfully");
             Ok(HttpResponse::Ok().json(serde_json::json!({
                 "message": "Stream stopped successfully",
-                "template_id": template_id
+                "stream_id": stream_id
             })))
         }
         Err(Error::NotFound(msg)) => {
             Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_running", &msg)))
         }
         Err(e) => {
-            error!(error = %e, template_id = template_id, "Failed to stop stream");
+            error!(error = %e, stream_id = stream_id, "Failed to stop stream");
             // Don't expose internal error details to API consumers
             Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
                 "stop_error",
@@ -640,7 +632,7 @@ pub async fn stop_stream(
 /// Create an MJPEG stream from a capture manager
 fn create_mjpeg_stream(
     capture_manager: Arc<crate::capture_manager::CaptureManager>,
-    template_id: String,
+    stream_id: String,
     boundary: String,
 ) -> impl futures_util::Stream<Item = std::result::Result<Bytes, Box<dyn std::error::Error>>> {
     // Create interval stream for periodic snapshot capture
@@ -649,16 +641,16 @@ fn create_mjpeg_stream(
 
     stream.then(move |_| {
         let capture_manager = capture_manager.clone();
-        let template_id = template_id.clone();
+        let stream_id = stream_id.clone();
         let boundary = boundary.clone();
 
         async move {
             // Get capture status and take snapshot if running
-            if let Some(capture_info) = capture_manager.get_capture_status(&template_id).await {
+            if let Some(capture_info) = capture_manager.get_capture_status(&stream_id).await {
                 if capture_info.status == crate::capture_manager::CaptureStatus::Active {
                     // Try to get snapshot from one of the running captures
                     // This is a simplified approach - in production you'd want more robust snapshot handling
-                    match take_template_snapshot(&template_id, &capture_manager).await {
+                    match take_stream_snapshot(&stream_id, &capture_manager).await {
                         Ok(snapshot_data) => {
                             let frame_data = format!(
                                 "\r\n--{}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
@@ -674,7 +666,7 @@ fn create_mjpeg_stream(
                             Ok(Bytes::from(frame_bytes))
                         }
                         Err(e) => {
-                            error!(template_id = %template_id, error = %e, "Failed to capture snapshot for MJPEG stream");
+                            error!(stream_id = %stream_id, error = %e, "Failed to capture snapshot for MJPEG stream");
                             // Send a simple error frame
                             let error_frame = format!(
                                 "\r\n--{}\r\nContent-Type: text/plain\r\n\r\nError: Failed to capture frame\r\n",
@@ -688,23 +680,23 @@ fn create_mjpeg_stream(
                     Err(Box::new(std::io::Error::other("Stream ended")) as Box<dyn std::error::Error>)
                 }
             } else {
-                // Template not running, send end boundary
-                Err(Box::new(std::io::Error::other("Template not running")) as Box<dyn std::error::Error>)
+                // Stream not running, send end boundary
+                Err(Box::new(std::io::Error::other("Stream not running")) as Box<dyn std::error::Error>)
             }
         }
     })
 }
 
-/// Helper function to take a snapshot from a template using the CaptureManager
-async fn take_template_snapshot(
-    template_id: &str,
+/// Helper function to take a snapshot from a stream using the CaptureManager
+async fn take_stream_snapshot(
+    stream_id: &str,
     capture_manager: &crate::capture_manager::CaptureManager,
 ) -> Result<Vec<u8>> {
-    // Use the CaptureManager's new take_template_snapshot method
-    match capture_manager.take_template_snapshot(template_id).await {
+    // Use the CaptureManager's new take_stream_snapshot method
+    match capture_manager.take_stream_snapshot(stream_id).await {
         Ok(snapshot_bytes) => Ok(snapshot_bytes.to_vec()),
         Err(e) => {
-            error!(template_id = %template_id, error = %e, "Failed to take template snapshot");
+            error!(stream_id = %stream_id, error = %e, "Failed to take stream snapshot");
             Err(e)
         }
     }

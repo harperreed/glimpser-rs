@@ -3,15 +3,16 @@
 
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { Navigation } from '@/components/Navigation';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/contexts/auth';
 import { useRouter } from 'next/navigation';
 
 interface Stream {
   id: string;
-  template_id?: string;
+  stream_id?: string;
   name: string;
   status: 'active' | 'inactive';
   last_frame_at?: string;
@@ -28,13 +29,14 @@ export default function StreamsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedStream, setSelectedStream] = useState<Stream | null>(null);
 
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
 
   const loadStreams = useCallback(async () => {
     try {
       setError(null);
-      const data = await apiClient.streams();
+      // Use the settings endpoint like the admin page does
+      const data = await apiClient.get('/settings/streams');
       const streamArray = Array.isArray(data) ? data : [];
       setStreams(streamArray);
     } catch (err) {
@@ -46,33 +48,8 @@ export default function StreamsPage() {
   }, []);
 
 
-  const handleStartStream = async (streamId: string) => {
-    try {
-      await apiClient.startStream(streamId);
-      loadStreams(); // Refresh streams
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start stream');
-    }
-  };
-
-  const handleStopStream = async (streamId: string) => {
-    try {
-      await apiClient.stopStream(streamId);
-      loadStreams(); // Refresh streams
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to stop stream');
-    }
-  };
-
-
-
-  // Add ref to track if component is mounted
-  const isMountedRef = useRef(true);
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
+  // Note: Stream control might be added in the future
+  // Currently streams are controlled from the admin panel
 
   // Filter streams when filter or streams change
   useEffect(() => {
@@ -108,10 +85,6 @@ export default function StreamsPage() {
     }
   }, [selectedStream]);
 
-  const handleLogout = () => {
-    logout();
-    router.push('/login');
-  };
 
   const formatTimeAgo = (date: Date) => {
     const now = new Date();
@@ -132,28 +105,7 @@ export default function StreamsPage() {
     <ProtectedRoute>
       <div className="min-h-screen bg-slate-50">
         {/* Header */}
-        <nav className="bg-white border-b border-gray-300 px-8 py-4 flex justify-between items-center shadow-sm">
-          <div>
-            <h1 className="text-xl font-bold text-blue-600">🔍 Glimpser</h1>
-          </div>
-          <div className="flex items-center gap-6">
-            <button
-              onClick={() => router.push('/dashboard')}
-              className="text-gray-500 font-medium hover:text-blue-600 transition-colors duration-200"
-            >
-              Dashboard
-            </button>
-            <span className="text-sm text-gray-500">
-              Welcome, {user?.username || user?.email}
-            </span>
-            <button
-              onClick={handleLogout}
-              className="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200"
-            >
-              Logout
-            </button>
-          </div>
-        </nav>
+        <Navigation />
 
         {/* Main Content */}
         <main className="p-8 max-w-6xl mx-auto w-full">
@@ -232,7 +184,7 @@ export default function StreamsPage() {
                     </div>
                     {stream.status === 'active' ? (
                       <img
-                        src={`/api/stream/${stream.template_id || stream.id}/thumbnail`}
+                        src={`/api/stream/${stream.stream_id || stream.id}/thumbnail`}
                         alt={stream.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {
@@ -306,7 +258,7 @@ export default function StreamsPage() {
                   <div className="aspect-video bg-gray-100 rounded-lg mb-4 flex items-center justify-center">
                     {selectedStream.status === 'active' ? (
                       <img
-                        src={`/api/stream/${selectedStream.template_id || selectedStream.id}/mjpeg`}
+                        src={`/api/stream/${selectedStream.stream_id || selectedStream.id}/mjpeg`}
                         alt={`${selectedStream.name} live stream`}
                         className="w-full h-full object-cover rounded-lg"
                       />

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            INSERT INTO captures (id, user_id, template_id, name, description, source_url, status, config, created_at, updated_at)\n            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9)\n            RETURNING *\n            ",
+  "query": "\n            SELECT id, stream_id, user_id, file_path, storage_uri, content_type,\n                   width, height, file_size, checksum, etag, captured_at,\n                   created_at, updated_at\n            FROM snapshots\n            WHERE stream_id = ?\n            ORDER BY captured_at DESC\n            LIMIT 1\n            ",
   "describe": {
     "columns": [
       {
@@ -9,102 +9,90 @@
         "type_info": "Text"
       },
       {
-        "name": "user_id",
+        "name": "stream_id",
         "ordinal": 1,
         "type_info": "Text"
       },
       {
-        "name": "template_id",
+        "name": "user_id",
         "ordinal": 2,
         "type_info": "Text"
       },
       {
-        "name": "name",
+        "name": "file_path",
         "ordinal": 3,
         "type_info": "Text"
       },
       {
-        "name": "description",
+        "name": "storage_uri",
         "ordinal": 4,
         "type_info": "Text"
       },
       {
-        "name": "source_url",
+        "name": "content_type",
         "ordinal": 5,
         "type_info": "Text"
       },
       {
-        "name": "status",
+        "name": "width",
         "ordinal": 6,
-        "type_info": "Text"
+        "type_info": "Integer"
       },
       {
-        "name": "config",
+        "name": "height",
         "ordinal": 7,
-        "type_info": "Text"
+        "type_info": "Integer"
       },
       {
-        "name": "metadata",
+        "name": "file_size",
         "ordinal": 8,
-        "type_info": "Text"
+        "type_info": "Integer"
       },
       {
-        "name": "file_path",
+        "name": "checksum",
         "ordinal": 9,
         "type_info": "Text"
       },
       {
-        "name": "file_size",
+        "name": "etag",
         "ordinal": 10,
-        "type_info": "Integer"
-      },
-      {
-        "name": "duration_seconds",
-        "ordinal": 11,
-        "type_info": "Integer"
-      },
-      {
-        "name": "started_at",
-        "ordinal": 12,
         "type_info": "Text"
       },
       {
-        "name": "completed_at",
-        "ordinal": 13,
+        "name": "captured_at",
+        "ordinal": 11,
         "type_info": "Text"
       },
       {
         "name": "created_at",
-        "ordinal": 14,
+        "ordinal": 12,
         "type_info": "Text"
       },
       {
         "name": "updated_at",
-        "ordinal": 15,
+        "ordinal": 13,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 9
+      "Right": 1
     },
     "nullable": [
       false,
       false,
-      true,
-      false,
-      true,
       false,
       false,
       false,
+      false,
       true,
       true,
+      false,
       true,
       true,
-      true,
-      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "3b2c9f9e54eee7b0f2606e600ba9064e9c9938d9f794c94b8e6951d02b2eaf95"
+  "hash": "2a1bcc7cb8898bd2d73e9f44a27e45ecdd018a221944795cd2879db942af51e9"
 }

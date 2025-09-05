@@ -4,7 +4,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { apiClient, type UserInfo, type LoginResponse } from '@/lib/api';
+import { apiClient, type UserInfo } from '@/lib/api';
 
 type User = UserInfo;
 
@@ -56,8 +56,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       const response = await apiClient.login(email, password);
       apiClient.setAuthToken(response.access_token);
-      setUser(response.user);
+
+      // If response doesn't include user, fetch it separately
+      if (response.user) {
+        setUser(response.user);
+      } else {
+        // Fetch user info after login
+        const userData = await apiClient.me();
+        setUser(userData);
+      }
     } catch (error) {
+      // Clean up on login failure
+      apiClient.clearAuthToken();
+      setUser(null);
       throw error;
     }
   };

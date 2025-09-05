@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/auth';
@@ -11,7 +11,7 @@ import { apiClient } from '@/lib/api';
 
 interface Stream {
   id: string;
-  template_id?: string;
+  stream_id?: string;
   name: string;
   status: 'active' | 'inactive';
   last_frame_at?: string;
@@ -42,7 +42,7 @@ export default function StreamViewerPage() {
 
       const streams = await apiClient.streams();
       const foundStream = Array.isArray(streams)
-        ? streams.find((s: Stream) => s.id === streamId || s.template_id === streamId)
+        ? streams.find((s: Stream) => s.id === streamId || s.stream_id === streamId)
         : null;
 
       if (!foundStream) {
@@ -75,12 +75,19 @@ export default function StreamViewerPage() {
     }
   };
 
-  const handleStreamError = () => {
+  const handleStreamError = useCallback(() => {
     setStreamError(true);
-    setTimeout(() => {
-      setStreamError(false);
-    }, 5000);
-  };
+  }, []);
+
+  // Auto-clear stream error after 5 seconds
+  useEffect(() => {
+    if (streamError) {
+      const timer = setTimeout(() => {
+        setStreamError(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [streamError]);
 
   const formatTimeAgo = (date: Date) => {
     const now = new Date();
@@ -198,7 +205,7 @@ export default function StreamViewerPage() {
                 ) : (
                   <img
                     ref={videoRef}
-                    src={`/api/stream/${stream.template_id || stream.id}/mjpeg?t=${Date.now()}`}
+                    src={`/api/stream/${stream.stream_id || stream.id}/mjpeg?t=${Date.now()}`}
                     alt={`${stream.name} live stream`}
                     className={`${isFullscreen ? 'max-h-screen max-w-screen' : 'max-h-[70vh] max-w-full'} object-contain`}
                     onError={handleStreamError}
@@ -260,10 +267,10 @@ export default function StreamViewerPage() {
                   <span className="text-gray-400">Stream ID:</span>
                   <span className="text-white ml-2">{stream.id}</span>
                 </div>
-                {stream.template_id && (
+                {stream.stream_id && (
                   <div>
-                    <span className="text-gray-400">Template ID:</span>
-                    <span className="text-white ml-2">{stream.template_id}</span>
+                    <span className="text-gray-400">Stream ID:</span>
+                    <span className="text-white ml-2">{stream.stream_id}</span>
                   </div>
                 )}
                 <div>

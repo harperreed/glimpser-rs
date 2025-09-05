@@ -142,7 +142,7 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
                 let status = match stream.execution_status.as_deref() {
                     Some("active") => {
                         // Double check with capture manager if it's really running
-                        if state.capture_manager.is_template_running(&stream.id).await {
+                        if state.capture_manager.is_stream_running(&stream.id).await {
                             StreamStatus::Active
                         } else {
                             StreamStatus::Inactive

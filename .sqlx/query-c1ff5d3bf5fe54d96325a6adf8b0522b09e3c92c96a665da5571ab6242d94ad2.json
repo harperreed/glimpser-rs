@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) as count FROM snapshots WHERE template_id = ?",
+  "query": "SELECT COUNT(*) as count FROM snapshots WHERE stream_id = ?",
   "describe": {
     "columns": [
       {
@@ -16,5 +16,5 @@
       false
     ]
   },
-  "hash": "13b65f72282082354225ce8ce50060680825992fb4bf77be240b5c59b2c72e29"
+  "hash": "c1ff5d3bf5fe54d96325a6adf8b0522b09e3c92c96a665da5571ab6242d94ad2"
 }

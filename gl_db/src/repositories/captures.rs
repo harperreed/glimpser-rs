@@ -10,7 +10,7 @@ use sqlx::{FromRow, SqlitePool};
 pub struct Capture {
     pub id: String,
     pub user_id: String,
-    pub template_id: Option<String>,
+    pub stream_id: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub source_url: String,
@@ -30,7 +30,7 @@ pub struct Capture {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCaptureRequest {
     pub user_id: String,
-    pub template_id: Option<String>,
+    pub stream_id: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub source_url: String,
@@ -67,13 +67,13 @@ impl<'a> CaptureRepository<'a> {
         let capture = sqlx::query_as!(
             Capture,
             r#"
-            INSERT INTO captures (id, user_id, template_id, name, description, source_url, status, config, created_at, updated_at)
+            INSERT INTO captures (id, user_id, stream_id, name, description, source_url, status, config, created_at, updated_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9)
             RETURNING *
             "#,
             id,
             request.user_id,
-            request.template_id,
+            request.stream_id,
             request.name,
             request.description,
             request.source_url,

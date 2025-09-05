@@ -10,7 +10,7 @@ use tracing::{debug, instrument};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     pub id: String,
-    pub template_id: String,
+    pub stream_id: String,
     pub user_id: String,
     pub file_path: String,
     pub storage_uri: String,
@@ -29,7 +29,7 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct SnapshotMetadata {
     pub id: String,
-    pub template_id: String,
+    pub stream_id: String,
     pub user_id: String,
     pub file_path: String,
     pub storage_uri: String,
@@ -47,7 +47,7 @@ pub struct SnapshotMetadata {
 /// Request to create a new snapshot
 #[derive(Debug, Clone)]
 pub struct CreateSnapshotRequest {
-    pub template_id: String,
+    pub stream_id: String,
     pub user_id: String,
     pub file_path: String,
     pub storage_uri: String,
@@ -78,7 +78,7 @@ impl<'a> SnapshotRepository<'a> {
 
         debug!(
             id = %id,
-            template_id = %request.template_id,
+            stream_id = %request.stream_id,
             file_size = request.file_size,
             file_path = %request.file_path,
             "Creating snapshot"
@@ -87,14 +87,14 @@ impl<'a> SnapshotRepository<'a> {
         sqlx::query!(
             r#"
             INSERT INTO snapshots (
-                id, template_id, user_id, file_path, storage_uri, content_type,
+                id, stream_id, user_id, file_path, storage_uri, content_type,
                 width, height, file_size, checksum, etag, captured_at,
                 created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             id,
-            request.template_id,
+            request.stream_id,
             request.user_id,
             request.file_path,
             request.storage_uri,
@@ -114,7 +114,7 @@ impl<'a> SnapshotRepository<'a> {
 
         Ok(Snapshot {
             id,
-            template_id: request.template_id,
+            stream_id: request.stream_id,
             user_id: request.user_id,
             file_path: request.file_path,
             storage_uri: request.storage_uri,
@@ -137,7 +137,7 @@ impl<'a> SnapshotRepository<'a> {
 
         let record = sqlx::query!(
             r#"
-            SELECT id, template_id, user_id, file_path, storage_uri, content_type,
+            SELECT id, stream_id, user_id, file_path, storage_uri, content_type,
                    width, height, file_size, checksum, etag, captured_at,
                    created_at, updated_at
             FROM snapshots
@@ -151,7 +151,7 @@ impl<'a> SnapshotRepository<'a> {
 
         Ok(record.map(|r| Snapshot {
             id: r.id,
-            template_id: r.template_id,
+            stream_id: r.stream_id,
             user_id: r.user_id,
             file_path: r.file_path,
             storage_uri: r.storage_uri,
@@ -171,12 +171,12 @@ impl<'a> SnapshotRepository<'a> {
     #[instrument(skip(self))]
     pub async fn list_by_template(
         &self,
-        template_id: &str,
+        stream_id: &str,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<SnapshotMetadata>> {
         debug!(
-            template_id = %template_id,
+            stream_id = %stream_id,
             limit = limit,
             offset = offset,
             "Listing snapshots for template"
@@ -185,15 +185,15 @@ impl<'a> SnapshotRepository<'a> {
         let records = sqlx::query_as!(
             SnapshotMetadata,
             r#"
-            SELECT id, template_id, user_id, file_path, storage_uri, content_type,
+            SELECT id, stream_id, user_id, file_path, storage_uri, content_type,
                    width, height, file_size, checksum, etag, captured_at,
                    created_at, updated_at
             FROM snapshots
-            WHERE template_id = ?
+            WHERE stream_id = ?
             ORDER BY captured_at DESC
             LIMIT ? OFFSET ?
             "#,
-            template_id,
+            stream_id,
             limit,
             offset
         )
@@ -208,22 +208,22 @@ impl<'a> SnapshotRepository<'a> {
     #[instrument(skip(self))]
     pub async fn get_latest_by_template(
         &self,
-        template_id: &str,
+        stream_id: &str,
     ) -> Result<Option<SnapshotMetadata>> {
-        debug!(template_id = %template_id, "Getting latest snapshot for template");
+        debug!(stream_id = %stream_id, "Getting latest snapshot for template");
 
         let record = sqlx::query_as!(
             SnapshotMetadata,
             r#"
-            SELECT id, template_id, user_id, file_path, storage_uri, content_type,
+            SELECT id, stream_id, user_id, file_path, storage_uri, content_type,
                    width, height, file_size, checksum, etag, captured_at,
                    created_at, updated_at
             FROM snapshots
-            WHERE template_id = ?
+            WHERE stream_id = ?
             ORDER BY captured_at DESC
             LIMIT 1
             "#,
-            template_id
+            stream_id
         )
         .fetch_optional(self.pool)
         .await
@@ -234,9 +234,9 @@ impl<'a> SnapshotRepository<'a> {
 
     /// Delete old snapshots for a template (keep only the latest N)
     #[instrument(skip(self))]
-    pub async fn cleanup_old_snapshots(&self, template_id: &str, keep_count: i64) -> Result<i64> {
+    pub async fn cleanup_old_snapshots(&self, stream_id: &str, keep_count: i64) -> Result<i64> {
         debug!(
-            template_id = %template_id,
+            stream_id = %stream_id,
             keep_count = keep_count,
             "Cleaning up old snapshots"
         );
@@ -244,16 +244,16 @@ impl<'a> SnapshotRepository<'a> {
         let result = sqlx::query!(
             r#"
             DELETE FROM snapshots
-            WHERE template_id = ?
+            WHERE stream_id = ?
             AND id NOT IN (
                 SELECT id FROM snapshots
-                WHERE template_id = ?
+                WHERE stream_id = ?
                 ORDER BY captured_at DESC
                 LIMIT ?
             )
             "#,
-            template_id,
-            template_id,
+            stream_id,
+            stream_id,
             keep_count
         )
         .execute(self.pool)
@@ -265,12 +265,12 @@ impl<'a> SnapshotRepository<'a> {
 
     /// Count snapshots for a template
     #[instrument(skip(self))]
-    pub async fn count_by_template(&self, template_id: &str) -> Result<i64> {
-        debug!(template_id = %template_id, "Counting snapshots for template");
+    pub async fn count_by_template(&self, stream_id: &str) -> Result<i64> {
+        debug!(stream_id = %stream_id, "Counting snapshots for template");
 
         let record = sqlx::query!(
-            "SELECT COUNT(*) as count FROM snapshots WHERE template_id = ?",
-            template_id
+            "SELECT COUNT(*) as count FROM snapshots WHERE stream_id = ?",
+            stream_id
         )
         .fetch_one(self.pool)
         .await

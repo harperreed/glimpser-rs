@@ -4,6 +4,7 @@
 'use client';
 
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { Navigation } from '@/components/Navigation';
 import { useAuth } from '@/contexts/auth';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
@@ -23,7 +24,7 @@ interface Activity {
 }
 
 export default function DashboardPage() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<SystemStats>({
     apiStatus: 'offline',
@@ -36,10 +37,6 @@ export default function DashboardPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleLogout = () => {
-    logout();
-    router.push('/login');
-  };
 
   const loadSystemStats = useCallback(async () => {
     try {
@@ -50,11 +47,16 @@ export default function DashboardPage() {
       let systemHealth: 'healthy' | 'warning' | 'error' = 'error';
 
       try {
-        const health = await apiClient.health() as any;
+        const health = await apiClient.health();
         apiStatus = 'online';
-        systemHealth = health?.status === 'healthy' ? 'healthy' : 'warning';
-      } catch (e) {
-        console.warn('Health check failed:', e);
+        // Safely check for health status property
+        if (typeof health === 'object' && health && 'status' in health) {
+          systemHealth = (health as { status: string }).status === 'healthy' ? 'healthy' : 'warning';
+        } else {
+          systemHealth = 'warning';
+        }
+      } catch {
+        // Health check failed
       }
 
       // Load streams count
@@ -62,8 +64,8 @@ export default function DashboardPage() {
       try {
         const streams = await apiClient.streams();
         streamsCount = Array.isArray(streams) ? streams.length : 0;
-      } catch (e) {
-        console.warn('Failed to load streams count:', e);
+      } catch {
+        // Failed to load streams count
       }
 
       // Load alerts count (placeholder - endpoint might not exist)
@@ -74,8 +76,8 @@ export default function DashboardPage() {
         if (alerts && Array.isArray(alerts)) {
           alertsCount = alerts.length;
         }
-      } catch (e) {
-        console.log('Alerts endpoint not available');
+      } catch {
+        // Alerts endpoint not available
       }
 
       setStats({
@@ -98,7 +100,7 @@ export default function DashboardPage() {
       try {
         const alerts = await apiClient.alerts();
         if (alerts && Array.isArray(alerts)) {
-          alerts.slice(0, 5).forEach((alert: any) => {
+          alerts.slice(0, 5).forEach((alert: { message?: string; created_at?: string }) => {
             activities.push({
               type: 'alert',
               message: `Alert: ${alert.message || 'New alert received'}`,
@@ -106,8 +108,8 @@ export default function DashboardPage() {
             });
           });
         }
-      } catch (e) {
-        console.log('No alerts available');
+      } catch {
+        // No alerts available
       }
 
       // Add system activity
@@ -143,12 +145,18 @@ export default function DashboardPage() {
 
   // Load data on mount
   useEffect(() => {
+    let isMounted = true;
     const loadData = async () => {
       setIsLoading(true);
       await refreshDashboard();
-      setIsLoading(false);
+      if (isMounted) {
+        setIsLoading(false);
+      }
     };
     loadData();
+    return () => {
+      isMounted = false;
+    };
   }, [refreshDashboard]);
 
   // Auto-refresh every 30 seconds
@@ -204,47 +212,38 @@ export default function DashboardPage() {
     <ProtectedRoute>
       <div className="min-h-screen bg-gray-100">
         {/* Header */}
+        <Navigation />
+
         <header className="bg-white shadow">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center py-6">
+            <div className="flex justify-between items-center py-4">
               <div className="flex items-center">
-                <h1 className="text-3xl font-bold text-gray-900">
-                  Glimpser Dashboard
-                </h1>
+                <h2 className="text-2xl font-bold text-gray-900">
+                  Dashboard
+                </h2>
                 {isLoading && (
                   <div className="ml-4 w-6 h-6 border-2 border-transparent border-t-blue-600 rounded-full animate-spin"></div>
                 )}
               </div>
-              <div className="flex items-center space-x-4">
-                <button
-                  onClick={refreshDashboard}
-                  disabled={isRefreshing}
-                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2"
-                >
-                  {isRefreshing ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-transparent border-t-white rounded-full animate-spin"></div>
-                      <span>Refreshing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      <span>Refresh</span>
-                    </>
-                  )}
-                </button>
-                <span className="text-sm text-gray-500">
-                  Welcome, {user?.username || user?.email}
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium"
-                >
-                  Logout
-                </button>
-              </div>
+              <button
+                onClick={refreshDashboard}
+                disabled={isRefreshing}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2"
+              >
+                {isRefreshing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-transparent border-t-white rounded-full animate-spin"></div>
+                    <span>Refreshing...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>Refresh</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </header>
