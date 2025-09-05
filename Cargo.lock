@@ -352,6 +352,7 @@ dependencies = [
  "gl_core",
  "gl_db",
  "gl_obs",
+ "gl_stream",
  "gl_web",
  "reqwest",
  "rpassword",

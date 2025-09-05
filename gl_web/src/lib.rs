@@ -5,6 +5,7 @@ use actix_web::{web, App, HttpResponse, HttpServer};
 use gl_config::SecurityConfig;
 use gl_core::Result;
 use gl_db::Db;
+use gl_stream::StreamManager;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -29,6 +30,7 @@ pub struct AppState {
     pub rate_limit_config: middleware::ratelimit::RateLimitConfig,
     pub body_limits_config: middleware::bodylimits::BodyLimitsConfig,
     pub capture_manager: Arc<capture_manager::CaptureManager>,
+    pub stream_manager: Arc<StreamManager>,
 }
 
 /// OpenAPI documentation
@@ -263,6 +265,15 @@ pub fn create_app(
                                 .route(web::put().to(admin::update_stream_handler))
                                 .route(web::delete().to(admin::delete_stream_handler)),
                         )
+                        // Export/Import
+                        .service(
+                            web::resource("streams/export")
+                                .route(web::get().to(admin::export_streams)),
+                        )
+                        .service(
+                            web::resource("streams/import")
+                                .route(web::post().to(admin::import_streams)),
+                        )
                         // Users
                         .service(
                             web::resource("users")
@@ -354,6 +365,8 @@ mod tests {
             .expect("Failed to create test database");
 
         let capture_manager = Arc::new(capture_manager::CaptureManager::new(db.pool().clone()));
+        let stream_metrics = gl_stream::StreamMetrics::new();
+        let stream_manager = Arc::new(StreamManager::new(stream_metrics));
 
         let mut test_security_config = SecurityConfig::default();
         test_security_config.jwt_secret = "test_secret_key_32_characters_minimum".to_string();
@@ -365,6 +378,7 @@ mod tests {
             rate_limit_config: middleware::ratelimit::RateLimitConfig::default(),
             body_limits_config: middleware::bodylimits::BodyLimitsConfig::default(),
             capture_manager,
+            stream_manager,
         }
     }
 

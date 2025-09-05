@@ -502,6 +502,7 @@ mod tests {
             basic_auth_username: Some("user".to_string()),
             basic_auth_password: Some("pass".to_string()),
             element_selector: Some("#main".to_string()),
+            selector_type: "css".to_string(),
             stealth: true,
             timeout: Duration::from_secs(60),
             width: 1280,

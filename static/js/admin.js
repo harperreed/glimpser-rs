@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupTabs();
     setupModals();
     setupStreamTypeHandling();
+    setupExportImport();
     loadInitialData();
 });
 
@@ -636,6 +637,131 @@ async function deleteStream(streamId) {
 
     } catch (error) {
         showError('Failed to delete stream: ' + error.message);
+    }
+}
+
+// Export/Import functionality
+async function exportStreams() {
+    try {
+        const response = await fetch('/api/settings/streams/export', {
+            headers: authManager.getAuthHeaders()
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+
+        // Create download link
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `streams_export_${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showSuccess(`Exported ${data.streams.length} streams`);
+    } catch (error) {
+        showError('Failed to export streams: ' + error.message);
+    }
+}
+
+async function importStreams() {
+    const modal = document.getElementById('import-modal');
+    const importData = document.getElementById('import-data');
+    const importMode = document.getElementById('import-mode');
+
+    let jsonData;
+    try {
+        jsonData = JSON.parse(importData.value);
+    } catch (error) {
+        showError('Invalid JSON format');
+        return;
+    }
+
+    if (!jsonData.streams || !Array.isArray(jsonData.streams)) {
+        showError('Invalid export format - missing streams array');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/settings/streams/import', {
+            method: 'POST',
+            headers: {
+                ...authManager.getAuthHeaders(),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                streams: jsonData.streams,
+                overwrite_mode: importMode.value
+            })
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const result = await response.json();
+
+        modal.classList.add('hidden');
+        importData.value = '';
+
+        await loadStreams();
+
+        showSuccess(`Import complete: ${result.imported} imported, ${result.skipped} skipped, ${result.errors} errors`);
+    } catch (error) {
+        showError('Failed to import streams: ' + error.message);
+    }
+}
+
+// Setup export/import event listeners
+function setupExportImport() {
+    const exportBtn = document.getElementById('export-streams-btn');
+    const importBtn = document.getElementById('import-streams-btn');
+    const importModal = document.getElementById('import-modal');
+    const closeModalBtn = document.getElementById('close-import-modal');
+    const cancelImportBtn = document.getElementById('cancel-import-btn');
+    const confirmImportBtn = document.getElementById('confirm-import-btn');
+    const importFile = document.getElementById('import-file');
+    const importData = document.getElementById('import-data');
+
+    if (exportBtn) {
+        exportBtn.addEventListener('click', exportStreams);
+    }
+
+    if (importBtn) {
+        importBtn.addEventListener('click', () => {
+            importModal.classList.remove('hidden');
+        });
+    }
+
+    if (closeModalBtn) {
+        closeModalBtn.addEventListener('click', () => {
+            importModal.classList.add('hidden');
+        });
+    }
+
+    if (cancelImportBtn) {
+        cancelImportBtn.addEventListener('click', () => {
+            importModal.classList.add('hidden');
+        });
+    }
+
+    if (confirmImportBtn) {
+        confirmImportBtn.addEventListener('click', importStreams);
+    }
+
+    if (importFile) {
+        importFile.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    importData.value = e.target.result;
+                };
+                reader.readAsText(file);
+            }
+        });
     }
 }
 

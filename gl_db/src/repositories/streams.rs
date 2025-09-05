@@ -215,6 +215,23 @@ impl<'a> StreamRepository<'a> {
         Ok(streams)
     }
 
+    pub async fn find_by_name_and_user(&self, name: &str, user_id: &str) -> Result<Option<Stream>> {
+        let stream = sqlx::query_as::<_, Stream>(
+            r#"
+            SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                   execution_status, last_executed_at, last_error_message
+            FROM streams WHERE name = ?1 AND user_id = ?2
+            "#,
+        )
+        .bind(name)
+        .bind(user_id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to find stream by name and user: {}", e)))?;
+
+        Ok(stream)
+    }
+
     pub async fn update_execution_status(
         &self,
         id: &str,

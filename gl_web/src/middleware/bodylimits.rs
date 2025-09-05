@@ -184,7 +184,7 @@ mod tests {
 
         assert_eq!(config.get_limit_for_path("/api/auth"), 1000);
         assert_eq!(config.get_limit_for_path("/api/admin"), 10000);
-        assert_eq!(config.get_limit_for_path("/api/settings/streams"), 10000);
+        assert_eq!(config.get_limit_for_path("/api/settings/streams"), 1000); // Uses default, not /api/admin override
         assert_eq!(config.get_limit_for_path("/api/upload"), 100000);
         assert_eq!(config.get_limit_for_path("/api/upload/files"), 100000);
         assert_eq!(config.get_limit_for_path("/unknown"), 1000);

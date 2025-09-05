@@ -3,6 +3,7 @@ use gl_config::Config;
 use gl_core::telemetry;
 use gl_db::{CreateStreamRequest, Db, StreamRepository, UserRepository};
 use gl_obs::ObsState;
+use gl_stream::{StreamManager, StreamMetrics};
 use gl_web::AppState;
 use std::process;
 
@@ -319,6 +320,10 @@ async fn start_server(config: Config, db: Db) {
         ),
     );
 
+    // Initialize stream manager for MJPEG streaming
+    let stream_metrics = StreamMetrics::new();
+    let stream_manager = std::sync::Arc::new(StreamManager::new(stream_metrics));
+
     let web_app_state = AppState {
         db: db.clone(),
         security_config: config.security.clone(),
@@ -334,6 +339,7 @@ async fn start_server(config: Config, db: Db) {
         )
         .with_override("/api/upload", config.server.body_limits.upload_limit),
         capture_manager,
+        stream_manager,
     };
 
     // Start observability server

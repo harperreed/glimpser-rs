@@ -161,11 +161,16 @@ impl E2ETestSetup {
             self.db.pool().clone(),
         ));
 
+        // Initialize stream manager for tests
+        let stream_metrics = gl_stream::StreamMetrics::new();
+        let stream_manager = std::sync::Arc::new(gl_stream::StreamManager::new(stream_metrics));
+
         let _web_app_state = AppState {
             db: self.db.clone(),
             security_config: self.config.security.clone(),
             static_config,
             capture_manager,
+            stream_manager,
             rate_limit_config: gl_web::middleware::ratelimit::RateLimitConfig {
                 requests_per_minute: 100,
                 window_duration: Duration::from_secs(60),

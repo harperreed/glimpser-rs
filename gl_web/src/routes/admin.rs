@@ -816,3 +816,182 @@ pub async fn delete_api_key_handler(
         }
     }
 }
+
+/// Export stream configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamExport {
+    pub name: String,
+    pub description: Option<String>,
+    pub config: serde_json::Value,
+    pub is_default: bool,
+}
+
+/// Export all streams as JSON
+pub async fn export_streams(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse> {
+    // Check authentication
+    let user = get_http_auth_user(&req)
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
+    debug!("Exporting streams for user: {}", user.id);
+
+    let stream_repo = StreamRepository::new(state.db.pool());
+
+    // Get all streams for the user
+    match stream_repo.list(Some(&user.id), 0, 1000).await {
+        Ok(streams) => {
+            let exports: Vec<StreamExport> = streams
+                .into_iter()
+                .map(|stream| {
+                    let config = serde_json::from_str(&stream.config)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    StreamExport {
+                        name: stream.name,
+                        description: stream.description,
+                        config,
+                        is_default: stream.is_default,
+                    }
+                })
+                .collect();
+
+            info!("Exported {} streams for user {}", exports.len(), user.id);
+            Ok(HttpResponse::Ok().json(serde_json::json!({
+                "streams": exports,
+                "export_date": chrono::Utc::now().to_rfc3339(),
+                "user_id": user.id
+            })))
+        }
+        Err(e) => {
+            error!("Failed to export streams: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to export streams",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
+/// Import stream configuration request
+#[derive(Debug, Deserialize)]
+pub struct StreamImportRequest {
+    pub streams: Vec<StreamExport>,
+    pub overwrite_mode: Option<String>, // "skip", "overwrite", or "create_new"
+}
+
+/// Import streams from JSON
+pub async fn import_streams(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    body: web::Json<StreamImportRequest>,
+) -> Result<HttpResponse> {
+    // Check authentication
+    let user = get_http_auth_user(&req)
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Authentication required"))?;
+    debug!(
+        "Importing {} streams for user: {}",
+        body.streams.len(),
+        user.id
+    );
+
+    let stream_repo = StreamRepository::new(state.db.pool());
+    let overwrite_mode = body.overwrite_mode.as_deref().unwrap_or("skip");
+
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut errors = Vec::new();
+
+    for stream_export in &body.streams {
+        // Check if stream with same name exists
+        let existing = stream_repo
+            .find_by_name_and_user(&stream_export.name, &user.id)
+            .await
+            .ok()
+            .flatten();
+
+        let mut stream_name = stream_export.name.clone();
+
+        match overwrite_mode {
+            "skip" if existing.is_some() => {
+                skipped += 1;
+                continue;
+            }
+            "overwrite" if existing.is_some() => {
+                // Delete existing stream first
+                if let Some(existing_stream) = existing {
+                    if let Err(e) = stream_repo.delete(&existing_stream.id).await {
+                        errors.push(format!(
+                            "Failed to delete existing stream '{}': {}",
+                            stream_export.name, e
+                        ));
+                        continue;
+                    }
+                }
+            }
+            "create_new" if existing.is_some() => {
+                // Append number to make unique name
+                let mut counter = 1;
+                loop {
+                    stream_name = format!("{} ({})", stream_export.name, counter);
+                    let check = stream_repo
+                        .find_by_name_and_user(&stream_name, &user.id)
+                        .await
+                        .ok()
+                        .flatten();
+                    if check.is_none() {
+                        break;
+                    }
+                    counter += 1;
+                    if counter > 100 {
+                        errors.push(format!(
+                            "Could not find unique name for stream '{}'",
+                            stream_export.name
+                        ));
+                        continue;
+                    }
+                }
+            }
+            _ => {} // For "skip" with no existing, or any other case, proceed normally
+        }
+
+        // Create new stream
+        let create_request = CreateStreamRequest {
+            user_id: user.id.clone(),
+            name: stream_name,
+            description: stream_export.description.clone(),
+            config: stream_export.config.to_string(),
+            is_default: stream_export.is_default,
+        };
+
+        match stream_repo.create(create_request).await {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                errors.push(format!(
+                    "Failed to import stream '{}': {}",
+                    stream_export.name, e
+                ));
+            }
+        }
+    }
+
+    let response = serde_json::json!({
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "total": body.streams.len()
+    });
+
+    if errors.is_empty() {
+        info!(
+            "Successfully imported {} streams, skipped {} for user {}",
+            imported, skipped, user.id
+        );
+        Ok(HttpResponse::Ok().json(response))
+    } else {
+        warn!(
+            "Import completed with errors for user {}: imported={}, skipped={}, errors={}",
+            user.id,
+            imported,
+            skipped,
+            errors.len()
+        );
+        Ok(HttpResponse::PartialContent().json(response))
+    }
+}

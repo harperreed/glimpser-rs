@@ -16,6 +16,7 @@ gl_core = { path = "../gl_core" }
 gl_config = { path = "../gl_config" }
 gl_db = { path = "../gl_db" }
 gl_obs = { path = "../gl_obs" }
+gl_stream = { path = "../gl_stream" }
 gl_web = { path = "../gl_web" }
 tokio.workspace = true
 tracing.workspace = true
