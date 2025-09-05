@@ -266,17 +266,20 @@ impl CaptureSource for YtDlpSource {
         }
 
         let info_lines: Vec<&str> = info_result.stdout.trim().split('\n').collect();
+        let mut is_live_stream = false;
         if info_lines.len() >= 3 {
+            let is_live_str = info_lines.get(2).unwrap_or(&"Unknown");
+            is_live_stream = *is_live_str == "True";
             info!(
                 title = info_lines.first().unwrap_or(&"Unknown"),
                 duration = info_lines.get(1).unwrap_or(&"Unknown"),
-                is_live = info_lines.get(2).unwrap_or(&"Unknown"),
+                is_live = is_live_str,
                 "Video info retrieved"
             );
         }
 
         // Start download process for non-live streams
-        if !self.config.is_live {
+        if !is_live_stream {
             let download_spec = self.build_download_command().await?;
             debug!(command = ?download_spec, "Starting download");
 
@@ -293,8 +296,12 @@ impl CaptureSource for YtDlpSource {
         counter!("yt_dlp_starts_total").increment(1);
         histogram!("yt_dlp_start_duration_seconds").record(start_time.elapsed().as_secs_f64());
 
+        // Create a new config with the detected live stream status
+        let mut updated_config = self.config.clone();
+        updated_config.is_live = is_live_stream;
+
         Ok(CaptureHandle::new(Arc::new(YtDlpSource::new(
-            self.config.clone(),
+            updated_config,
         ))))
     }
 
