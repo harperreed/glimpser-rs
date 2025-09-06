@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/auth';
 import { useRouter } from 'next/navigation';
 import { ApiError } from '@/lib/api';
+import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -40,7 +41,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <RouteErrorBoundary routeName="Login">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
@@ -100,6 +102,7 @@ export default function LoginPage() {
           </div>
         </form>
       </div>
-    </div>
+      </div>
+    </RouteErrorBoundary>
   );
 }

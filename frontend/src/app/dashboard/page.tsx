@@ -5,6 +5,8 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Navigation } from '@/components/Navigation';
+import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
+import { DataErrorBoundary } from '@/components/DataErrorBoundary';
 import { useAuth } from '@/contexts/auth';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
@@ -210,7 +212,8 @@ export default function DashboardPage() {
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen bg-gray-100">
+      <RouteErrorBoundary routeName="Dashboard">
+        <div className="min-h-screen bg-gray-100">
         {/* Header */}
         <Navigation />
 
@@ -260,7 +263,12 @@ export default function DashboardPage() {
         {/* Main Content */}
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <DataErrorBoundary
+              componentName="System Statistics"
+              onRetry={refreshDashboard}
+              retryText="Refresh Stats"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
 
               {/* Streams Card */}
               <div className="bg-white overflow-hidden shadow rounded-lg">
@@ -394,6 +402,7 @@ export default function DashboardPage() {
               </div>
 
             </div>
+            </DataErrorBoundary>
 
             {/* Recent Activity and Quick Actions */}
             <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -476,7 +485,8 @@ export default function DashboardPage() {
             </div>
           </div>
         </main>
-      </div>
+        </div>
+      </RouteErrorBoundary>
     </ProtectedRoute>
   );
 }

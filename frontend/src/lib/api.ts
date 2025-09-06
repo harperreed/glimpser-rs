@@ -193,7 +193,7 @@ class ApiClient {
     return this.request('/api/settings/streams/export');
   }
 
-  async importStreams(streams: any[], overwriteMode: 'skip' | 'overwrite' | 'create_new' = 'skip') {
+  async importStreams(streams: Record<string, unknown>[], overwriteMode: 'skip' | 'overwrite' | 'create_new' = 'skip') {
     return this.post('/api/settings/streams/import', {
       streams,
       overwrite_mode: overwriteMode,

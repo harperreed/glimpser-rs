@@ -6,6 +6,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Navigation } from '@/components/Navigation';
+import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
+import { DataErrorBoundary } from '@/components/DataErrorBoundary';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/contexts/auth';
 import { useRouter } from 'next/navigation';
@@ -103,7 +105,8 @@ export default function StreamsPage() {
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen bg-slate-50">
+      <RouteErrorBoundary routeName="Streams">
+        <div className="min-h-screen bg-slate-50">
         {/* Header */}
         <Navigation />
 
@@ -300,7 +303,8 @@ export default function StreamsPage() {
           )}
 
         </main>
-      </div>
+        </div>
+      </RouteErrorBoundary>
     </ProtectedRoute>
   );
 }

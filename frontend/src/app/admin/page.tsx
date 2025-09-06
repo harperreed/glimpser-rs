@@ -6,6 +6,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Navigation } from '@/components/Navigation';
+import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
+import { DataErrorBoundary } from '@/components/DataErrorBoundary';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/contexts/auth';
 import { useRouter } from 'next/navigation';
@@ -44,6 +46,7 @@ interface Stream {
   type?: string; // Backend returns 'type' not 'config'
   config?: StreamConfig; // Only present when fetching individual stream
   is_default: boolean;
+  status?: 'active' | 'inactive';
   execution_status?: string;
   execution_error?: string;
   last_execution?: string;
@@ -214,13 +217,17 @@ export default function AdminPage() {
         throw new Error('Invalid export format - missing streams array');
       }
 
-      const result = await apiClient.importStreams(jsonData.streams, importMode);
+      const result = await apiClient.importStreams(jsonData.streams, importMode) as {
+        imported?: number;
+        skipped?: number;
+        errors?: unknown[];
+      };
 
       setShowImportModal(false);
       setImportData('');
       await loadStreams();
 
-      alert(`Import complete: ${result.imported} imported, ${result.skipped} skipped, ${result.errors?.length || 0} errors`);
+      alert(`Import complete: ${result.imported || 0} imported, ${result.skipped || 0} skipped, ${result.errors?.length || 0} errors`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to import streams');
     }
@@ -285,7 +292,8 @@ export default function AdminPage() {
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen bg-slate-50">
+      <RouteErrorBoundary routeName="Admin Panel">
+        <div className="min-h-screen bg-slate-50">
         {/* Header */}
         <Navigation />
 
@@ -698,7 +706,8 @@ export default function AdminPage() {
             </div>
           </div>
         )}
-      </div>
+        </div>
+      </RouteErrorBoundary>
     </ProtectedRoute>
   );
 }
