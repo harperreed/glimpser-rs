@@ -115,9 +115,11 @@ impl YtDlpSource {
             "%(is_live)s".to_string(),
         ];
 
-        // Add format selection
+        // Add format selection (skip for Best to let yt-dlp auto-choose)
         match &self.config.format {
-            OutputFormat::Best => args.extend(["--format".to_string(), "best".to_string()]),
+            OutputFormat::Best => {
+                // Don't add format selection - let yt-dlp auto-choose the best format
+            }
             OutputFormat::Worst => args.extend(["--format".to_string(), "worst".to_string()]),
             OutputFormat::FormatId(id) => args.extend(["--format".to_string(), id.clone()]),
             OutputFormat::BestWithHeight(height) => {
@@ -164,9 +166,11 @@ impl YtDlpSource {
             temp_file.to_string_lossy().to_string(),
         ];
 
-        // Add format selection
+        // Add format selection (skip for Best to let yt-dlp auto-choose)
         match &self.config.format {
-            OutputFormat::Best => args.extend(["--format".to_string(), "best".to_string()]),
+            OutputFormat::Best => {
+                // Don't add format selection - let yt-dlp auto-choose the best format
+            }
             OutputFormat::Worst => args.extend(["--format".to_string(), "worst".to_string()]),
             OutputFormat::FormatId(id) => args.extend(["--format".to_string(), id.clone()]),
             OutputFormat::BestWithHeight(height) => {
@@ -309,55 +313,27 @@ impl CaptureSource for YtDlpSource {
     async fn snapshot(&self) -> Result<Bytes> {
         info!(url = %self.config.url, "Taking yt-dlp snapshot");
 
-        // For live streams, we need to capture from the stream directly
+        // For live streams, pipe yt-dlp directly to ffmpeg
         if self.config.is_live {
-            // Use yt-dlp to get the direct stream URL, then use ffmpeg
-            let get_url_spec = CommandSpec::new("yt-dlp".into())
-                .args(vec![
-                    "--get-url".to_string(),
-                    "--format".to_string(),
-                    "best".to_string(),
-                    self.config.url.clone(),
-                ])
-                .timeout(Duration::from_secs(30));
-
-            let url_result = run(get_url_spec).await?;
-            if !url_result.success() {
-                return Err(Error::Config(format!(
-                    "Failed to get stream URL: {}",
-                    url_result.stderr
-                )));
-            }
-
-            let stream_url = url_result.stdout.trim();
-            debug!(stream_url = %stream_url, "Got live stream URL");
-
-            // Use ffmpeg to capture from the live stream
             let temp_path =
                 std::env::temp_dir().join(format!("yt_live_snapshot_{}.jpg", gl_core::Id::new()));
 
-            let ffmpeg_args = vec![
-                "-i".to_string(),
-                stream_url.to_string(),
-                "-vframes".to_string(),
-                "1".to_string(),
-                "-f".to_string(),
-                "image2".to_string(),
-                "-q:v".to_string(),
-                "2".to_string(),
-                "-y".to_string(), // Overwrite output file
-                temp_path.to_string_lossy().to_string(),
-            ];
+            // Use yt-dlp -g to get URL, then ffmpeg to capture frame
+            let cmd = format!(
+                r#"ffmpeg -i "$(yt-dlp -g '{}')" -vframes 1 -f image2 -q:v 2 -y '{}'"#,
+                self.config.url,
+                temp_path.to_string_lossy()
+            );
 
-            let ffmpeg_spec = CommandSpec::new("ffmpeg".into())
-                .args(ffmpeg_args)
-                .timeout(self.config.snapshot_config.timeout);
+            let cmd_spec = CommandSpec::new("sh".into())
+                .args(vec!["-c".to_string(), cmd])
+                .timeout(Duration::from_secs(15));
 
-            let ffmpeg_result = run(ffmpeg_spec).await?;
-            if !ffmpeg_result.success() {
+            let cmd_result = run(cmd_spec).await?;
+            if !cmd_result.success() {
                 return Err(Error::Config(format!(
-                    "FFmpeg snapshot failed: {}",
-                    ffmpeg_result.stderr
+                    "yt-dlp+ffmpeg command failed: {}",
+                    cmd_result.stderr
                 )));
             }
 
@@ -464,8 +440,8 @@ mod tests {
 
         assert_eq!(spec.program.to_string_lossy(), "yt-dlp");
         assert!(spec.args.contains(&"--no-playlist".to_string()));
-        assert!(spec.args.contains(&"--format".to_string()));
-        assert!(spec.args.contains(&"best".to_string()));
+        // For OutputFormat::Best, we don't add --format to let yt-dlp auto-choose
+        assert!(!spec.args.contains(&"--format".to_string()));
         assert!(spec
             .args
             .contains(&"https://youtube.com/watch?v=test".to_string()));
