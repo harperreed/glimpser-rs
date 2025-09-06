@@ -78,7 +78,7 @@ impl SidecarStrategy {
 
         // Verify install directory exists and is writable
         if !config.install_dir.exists() {
-            return Err(gl_core::Error::Configuration(format!(
+            return Err(gl_core::Error::Config(format!(
                 "Install directory does not exist: {}",
                 config.install_dir.display()
             )));
@@ -87,7 +87,7 @@ impl SidecarStrategy {
         // Test write permissions by creating a temp file
         let test_file = config.install_dir.join(".update_test");
         if let Err(e) = std::fs::write(&test_file, b"test") {
-            return Err(gl_core::Error::Configuration(format!(
+            return Err(gl_core::Error::Config(format!(
                 "Install directory is not writable: {}",
                 e
             )));
@@ -196,7 +196,7 @@ impl SidecarStrategy {
         // Create temporary file in the same directory to ensure atomic move
         let temp_dir = target_path
             .parent()
-            .ok_or_else(|| gl_core::Error::Configuration("Invalid target path".to_string()))?;
+            .ok_or_else(|| gl_core::Error::Config("Invalid target path".to_string()))?;
 
         let temp_file = NamedTempFile::new_in(temp_dir)
             .map_err(|e| gl_core::Error::External(format!("Failed to create temp file: {}", e)))?;
@@ -356,7 +356,7 @@ pub fn create_strategy(config: UpdateConfig) -> Result<UpdateStrategyImpl> {
             }
             #[cfg(not(feature = "sidecar"))]
             {
-                Err(gl_core::Error::Configuration(
+                Err(gl_core::Error::Config(
                     "Sidecar strategy not compiled in".to_string(),
                 ))
             }
@@ -370,7 +370,7 @@ pub fn create_strategy(config: UpdateConfig) -> Result<UpdateStrategyImpl> {
             }
             #[cfg(not(feature = "self-replace"))]
             {
-                Err(gl_core::Error::Configuration(
+                Err(gl_core::Error::Config(
                     "Self-replace strategy not compiled in".to_string(),
                 ))
             }

@@ -11,3 +11,7 @@ pub mod notification_deliveries;
 pub mod snapshots;
 pub mod streams;
 pub mod users;
+
+// Cache-aware repositories
+pub mod cached_streams;
+pub mod cached_users;

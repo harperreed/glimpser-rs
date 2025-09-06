@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n                UPDATE users\n                SET username = ?1, updated_at = ?2\n                WHERE id = ?3\n                RETURNING id, username, email, password_hash, is_active, created_at, updated_at\n                ",
+  "query": "\n            UPDATE users\n            SET username = ?1, email = ?2, password_hash = ?3, is_active = ?4, updated_at = ?5\n            WHERE id = ?6\n            RETURNING id, username, email, password_hash, is_active, created_at, updated_at\n            ",
   "describe": {
     "columns": [
       {
@@ -40,7 +40,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 6
     },
     "nullable": [
       false,
@@ -52,5 +52,5 @@
       false
     ]
   },
-  "hash": "ea878ea343dfeb704292d56195f69a9043d7642f82b612b6af03972c3700b645"
+  "hash": "98d8a21b7f8f830ae97e12c0e51a70492bd480ebb7917d36e05a1c0f267f90b4"
 }

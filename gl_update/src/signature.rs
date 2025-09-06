@@ -20,25 +20,27 @@ impl SignatureVerifier {
     /// * `public_key_hex` - Public key as hex-encoded string
     pub fn new(public_key_hex: &str) -> Result<Self> {
         if public_key_hex.is_empty() {
-            return Err(gl_core::Error::Configuration(
+            return Err(gl_core::Error::Config(
                 "Public key cannot be empty".to_string(),
             ));
         }
 
         let key_bytes = hex::decode(public_key_hex)
-            .map_err(|e| gl_core::Error::Configuration(format!("Invalid hex public key: {}", e)))?;
+            .map_err(|e| gl_core::Error::Config(format!("Invalid hex public key: {}", e)))?;
 
         if key_bytes.len() != 32 {
-            return Err(gl_core::Error::Configuration(format!(
+            return Err(gl_core::Error::Config(format!(
                 "Public key must be 32 bytes, got {}",
                 key_bytes.len()
             )));
         }
 
-        let public_key = VerifyingKey::from_bytes(&key_bytes.try_into().map_err(|_| {
-            gl_core::Error::Configuration("Failed to convert key bytes".to_string())
-        })?)
-        .map_err(|e| gl_core::Error::Configuration(format!("Invalid public key: {}", e)))?;
+        let public_key = VerifyingKey::from_bytes(
+            &key_bytes
+                .try_into()
+                .map_err(|_| gl_core::Error::Config("Failed to convert key bytes".to_string()))?,
+        )
+        .map_err(|e| gl_core::Error::Config(format!("Invalid public key: {}", e)))?;
 
         info!("Signature verifier initialized with public key");
 
@@ -141,20 +143,21 @@ pub mod signing {
     /// * `data` - The data to sign
     /// * `private_key_hex` - Private key as hex-encoded string
     pub fn sign_data(data: &[u8], private_key_hex: &str) -> Result<String> {
-        let key_bytes = hex::decode(private_key_hex).map_err(|e| {
-            gl_core::Error::Configuration(format!("Invalid hex private key: {}", e))
-        })?;
+        let key_bytes = hex::decode(private_key_hex)
+            .map_err(|e| gl_core::Error::Config(format!("Invalid hex private key: {}", e)))?;
 
         if key_bytes.len() != 32 {
-            return Err(gl_core::Error::Configuration(format!(
+            return Err(gl_core::Error::Config(format!(
                 "Private key must be 32 bytes, got {}",
                 key_bytes.len()
             )));
         }
 
-        let signing_key = SigningKey::from_bytes(&key_bytes.try_into().map_err(|_| {
-            gl_core::Error::Configuration("Failed to convert key bytes".to_string())
-        })?);
+        let signing_key = SigningKey::from_bytes(
+            &key_bytes
+                .try_into()
+                .map_err(|_| gl_core::Error::Config("Failed to convert key bytes".to_string()))?,
+        );
 
         // Hash the data
         let hash = Sha256::digest(data);

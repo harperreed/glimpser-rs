@@ -326,6 +326,7 @@ async fn start_server(config: Config, db: Db) {
 
     let web_app_state = AppState {
         db: db.clone(),
+        cache: std::sync::Arc::new(gl_db::DatabaseCache::new()),
         security_config: config.security.clone(),
         static_config,
         rate_limit_config: gl_web::middleware::ratelimit::RateLimitConfig {

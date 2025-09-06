@@ -141,66 +141,50 @@ impl<'a> UserRepository<'a> {
     pub async fn update(&self, id: &str, request: UpdateUserRequest) -> Result<User> {
         debug!("Updating user: {}", id);
 
-        // Build dynamic update query based on provided fields
-        let mut set_clauses = Vec::new();
-        let mut params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Sqlite> + Send + 'static>> = Vec::new();
-        let mut param_idx = 1;
-
-        if let Some(username) = &request.username {
-            set_clauses.push(format!("username = ?{}", param_idx));
-            params.push(Box::new(username.clone()));
-            param_idx += 1;
-        }
-
-        if let Some(email) = &request.email {
-            set_clauses.push(format!("email = ?{}", param_idx));
-            params.push(Box::new(email.clone()));
-            param_idx += 1;
-        }
-
-        if let Some(password_hash) = &request.password_hash {
-            set_clauses.push(format!("password_hash = ?{}", param_idx));
-            params.push(Box::new(password_hash.clone()));
-            param_idx += 1;
-        }
-
-        if let Some(is_active) = request.is_active {
-            set_clauses.push(format!("is_active = ?{}", param_idx));
-            params.push(Box::new(is_active));
-            param_idx += 1;
-        }
-
-        if set_clauses.is_empty() {
+        // Validate that at least one field is provided
+        if request.username.is_none()
+            && request.email.is_none()
+            && request.password_hash.is_none()
+            && request.is_active.is_none()
+        {
             return Err(Error::Validation("No fields to update".to_string()));
         }
 
         let now = now_iso8601();
-        set_clauses.push(format!("updated_at = ?{}", param_idx));
-        params.push(Box::new(now.clone()));
 
-        // For simplicity, we'll do a simpler update with conditional logic
-        let user = if let Some(username) = request.username {
-            sqlx::query_as!(
-                User,
-                r#"
-                UPDATE users
-                SET username = ?1, updated_at = ?2
-                WHERE id = ?3
-                RETURNING id, username, email, password_hash, is_active, created_at, updated_at
-                "#,
-                username,
-                now,
-                id
-            )
-            .fetch_one(self.pool)
-            .await
-            .map_err(|e| Error::Database(format!("Failed to update user: {}", e)))?
-        } else {
-            // Get current user for return
-            self.find_by_id(id)
-                .await?
-                .ok_or_else(|| Error::NotFound("User not found".to_string()))?
-        };
+        // Get current user to preserve unchanged fields
+        let current_user = self
+            .find_by_id(id)
+            .await?
+            .ok_or_else(|| Error::NotFound("User not found".to_string()))?;
+
+        // Use provided values or fall back to current values
+        let username = request.username.unwrap_or(current_user.username);
+        let email = request.email.unwrap_or(current_user.email);
+        let password_hash = request.password_hash.unwrap_or(current_user.password_hash);
+        let is_active = request
+            .is_active
+            .unwrap_or(current_user.is_active.unwrap_or(true));
+
+        // Single update query with all fields
+        let user = sqlx::query_as!(
+            User,
+            r#"
+            UPDATE users
+            SET username = ?1, email = ?2, password_hash = ?3, is_active = ?4, updated_at = ?5
+            WHERE id = ?6
+            RETURNING id, username, email, password_hash, is_active, created_at, updated_at
+            "#,
+            username,
+            email,
+            password_hash,
+            is_active,
+            now,
+            id
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update user: {}", e)))?;
 
         debug!("Successfully updated user: {}", user.id);
         Ok(user)

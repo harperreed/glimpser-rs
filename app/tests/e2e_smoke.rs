@@ -167,6 +167,7 @@ impl E2ETestSetup {
 
         let _web_app_state = AppState {
             db: self.db.clone(),
+            cache: std::sync::Arc::new(gl_db::DatabaseCache::new()),
             security_config: self.config.security.clone(),
             static_config,
             capture_manager,

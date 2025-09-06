@@ -4,9 +4,6 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(String),
 
-    #[error("Configuration error: {0}")]
-    Configuration(String),
-
     #[error("Database error: {0}")]
     Database(String),
 

@@ -131,11 +131,17 @@ pub struct DatabaseStats {
 // Repository modules
 pub mod repositories;
 
+// Cache module
+pub mod cache;
+
 // Re-export common types and repositories
+pub use cache::{CacheStats, DatabaseCache};
 pub use repositories::{
     alerts::{Alert, AlertRepository, CreateAlertRequest},
     analysis_events::{AnalysisEvent, AnalysisEventRepository, CreateAnalysisEvent},
     api_keys::{ApiKey, ApiKeyRepository, CreateApiKeyRequest},
+    cached_streams::CachedStreamRepository,
+    cached_users::CachedUserRepository,
     captures::{Capture, CaptureRepository, CreateCaptureRequest, UpdateCaptureRequest},
     events::{CreateEventRequest, Event, EventRepository},
     jobs::{CreateJobRequest, Job, JobRepository, UpdateJobRequest},
