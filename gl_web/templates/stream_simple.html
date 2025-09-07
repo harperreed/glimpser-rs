@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stream Detail</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="bg-gray-900 text-white">
+    <div class="p-8">
+        <h1 class="text-2xl font-bold mb-4">{{ stream.name }}</h1>
+        <p class="mb-4">Status: {{ stream.status }}</p>
+        <p class="mb-4">Last seen: {{ stream.last_frame_at }}</p>
+
+        {% if stream.status == "active" %}
+            <div class="bg-black rounded p-4">
+                <img src="/api/stream/{{ stream.stream_id }}/mjpeg"
+                     alt="Live stream"
+                     class="max-w-full">
+            </div>
+        {% else %}
+            <div class="bg-gray-800 rounded p-8 text-center">
+                <p>Stream is offline</p>
+            </div>
+        {% endif %}
+
+        <div class="mt-4">
+            <a href="/streams" class="bg-blue-600 px-4 py-2 rounded text-white">Back to Streams</a>
+        </div>
+    </div>
+</body>
+</html>

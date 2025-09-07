@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Live Streams{% endblock %}
+
+{% block nav_streams %}text-blue-600 border-b-2 border-blue-600 pb-1{% endblock %}
+
+{% block content %}
+<div class="p-8 max-w-6xl mx-auto">
+    <div class="flex justify-between items-center mb-8">
+        <h2 class="text-2xl font-bold text-gray-800">Live Streams</h2>
+        <button onclick="location.reload()" class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600">
+            Refresh
+        </button>
+    </div>
+
+    {% if has_error %}
+    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+        {{ error_message }}
+    </div>
+    {% endif %}
+
+    {% if streams.is_empty() %}
+        <div class="text-center p-8 bg-white rounded shadow">
+            <p class="text-lg text-gray-500">No streams found</p>
+        </div>
+    {% else %}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% for stream in streams %}
+            <div class="bg-white rounded-lg shadow p-4">
+                <h3 class="font-semibold mb-2">{{ stream.name }}</h3>
+                <p class="text-sm text-gray-500">Status: {{ stream.status }}</p>
+                <p class="text-sm text-gray-500">Last seen: {{ stream.last_frame_at }}</p>
+                <a href="/streams/{{ stream.id }}" class="text-blue-600 hover:text-blue-800 text-sm">View Stream</a>
+            </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,5 +1,5 @@
-# ABOUTME: Web API layer with authentication and routing
-# ABOUTME: Provides REST endpoints and OpenAPI documentation
+# ABOUTME: Unified web service with server-rendered frontend and REST API
+# ABOUTME: Hybrid Axum (frontend) + Actix-web (API) with HTMX and Askama templates
 
 [package]
 name = "gl_web"
@@ -38,6 +38,15 @@ hex.workspace = true
 sqlx.workspace = true
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 bytes.workspace = true
+
+# New dependencies for Axum + HTMX + Askama stack
+axum = "0.7"
+askama = { version = "0.12", features = ["with-axum"] }
+askama_axum = "0.4"
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3.0"
