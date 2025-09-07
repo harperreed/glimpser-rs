@@ -1,0 +1,48 @@
+# ABOUTME: Simplified Dockerfile for Rust backend without cargo-chef to reduce memory usage
+# ABOUTME: Single-stage build to avoid memory issues with headless_chrome compilation
+
+FROM rust:1.83
+
+# Install Chromium and its dependencies (ARM64 compatible)
+RUN apt-get update && apt-get install -y \
+    chromium \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libxss1 \
+    libnss3 \
+    libxkbcommon0 \
+    libgtk-3-0 \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install nightly Rust for edition2024 support
+RUN rustup toolchain install nightly && rustup default nightly
+
+WORKDIR /app
+
+# Copy everything and build directly (no cargo-chef)
+COPY . .
+
+# Build with all features enabled (now we have enough memory)
+RUN CARGO_NET_GIT_FETCH_WITH_CLI=true cargo build --bin glimpser
+
+# Create app user
+RUN useradd -r -s /bin/false -m -d /app app
+RUN chown -R app:app /app
+
+USER app
+
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ./target/debug/glimpser --help > /dev/null || exit 1
+
+ENTRYPOINT ["./target/debug/glimpser"]

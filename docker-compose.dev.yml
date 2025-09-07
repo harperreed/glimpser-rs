@@ -1,0 +1,64 @@
+# ABOUTME: Development Docker Compose configuration with hot-reload and debug capabilities
+# ABOUTME: Optimized for development workflow with volume mounts and debug tools
+
+version: '3.8'
+
+services:
+  # Development Rust backend with hot-reload
+  backend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend.lean
+    container_name: glimpser-backend-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "9229:9229" # Debug port
+    environment:
+      - RUST_LOG=debug
+      - BIND_ADDRESS=0.0.0.0:3000
+    networks:
+      - glimpser-dev-network
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+    command: cargo watch -x 'run --bin glimpser'
+
+  # Development Next.js frontend with hot-reload
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: deps
+    container_name: glimpser-frontend-dev
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:3000
+      - NEXT_TELEMETRY_DISABLED=1
+    depends_on:
+      - backend-dev
+    networks:
+      - glimpser-dev-network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    working_dir: /app
+    command: npm run dev
+
+networks:
+  glimpser-dev-network:
+    driver: bridge
+    name: glimpser-dev-network
+
+volumes:
+  cargo_cache:
+    driver: local
+    name: glimpser-cargo-cache
+  target_cache:
+    driver: local
+    name: glimpser-target-cache
