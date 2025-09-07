@@ -23,13 +23,20 @@ High‑priority
   - [x] Added StreamRepository (view-backed) and migrated all routes.
   - [x] Migrated all references to use streams terminology.
 
+- ✅ COMPLETED: Enhanced Streaming Architecture (Real-Time)
+  - [x] Implemented persistent capture tasks with broadcast channels.
+  - [x] Added memory-first snapshot serving (10-50ms vs 3-5s response times).
+  - [x] Created /api/streams/{id}/recent-snapshots endpoint for hover animations.
+  - [x] Enhanced MJPEG streaming with real-time broadcast capabilities.
+  - [x] Added duration limits and graceful shutdown to capture loops.
+
 - Admin streams payload shape
   - [x] Accept config as serde_json::Value (not String) for create/update; validate Value and serialize to String for DB.
   - [x] Aligns /api/settings/streams with /api/streams expectations.
 
 - Routing consistency
   - [x] Decide on global trailing slash policy (prefer no trailing slash) and enable NormalizePath accordingly.
-  - [ ] Remove temporary route aliases/logging after verification.
+  - [x] Remove temporary route aliases/logging after verification.
 
 Medium‑priority
 
