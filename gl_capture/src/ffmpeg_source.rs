@@ -118,6 +118,55 @@ impl FfmpegSource {
         }
     }
 
+    /// Add RTSP-specific options to FFmpeg arguments
+    fn add_rtsp_options(&self, args: &mut Vec<String>, timeout: Option<u32>) {
+        let is_rtsp = self.config.input_url.starts_with("rtsp://")
+            || self.config.input_url.starts_with("rtsps://");
+
+        if !is_rtsp {
+            return;
+        }
+
+        // Add timeout with bounds checking
+        if let Some(timeout) = timeout {
+            let micros = (timeout as u64).saturating_mul(1_000_000);
+            args.extend(["-stimeout".to_string(), micros.to_string()]);
+        }
+
+        // Add transport-specific options
+        match self.config.rtsp_transport {
+            RtspTransport::Tcp => {
+                args.extend(["-rtsp_transport".to_string(), "tcp".to_string()]);
+                args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
+            }
+            RtspTransport::Udp => {
+                args.extend(["-rtsp_transport".to_string(), "udp".to_string()]);
+            }
+            RtspTransport::Auto => {
+                args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
+            }
+        }
+
+        // Add optimization flags
+        args.extend(["-fflags".to_string(), "nobuffer".to_string()]);
+        args.extend(["-flags".to_string(), "low_delay".to_string()]);
+    }
+
+    /// Add timeout for non-RTSP protocols
+    fn add_timeout(&self, args: &mut Vec<String>, timeout: Option<u32>) {
+        let is_rtsp = self.config.input_url.starts_with("rtsp://")
+            || self.config.input_url.starts_with("rtsps://");
+
+        if let Some(timeout) = timeout {
+            if is_rtsp {
+                // RTSP timeout is handled in add_rtsp_options
+                return;
+            }
+            // For non-RTSP, use timeout in seconds (not microseconds)
+            args.extend(["-timeout".to_string(), timeout.to_string()]);
+        }
+    }
+
     /// Get the current configuration
     pub fn config(&self) -> &FfmpegConfig {
         &self.config
@@ -155,43 +204,14 @@ impl FfmpegSource {
             }
         }
 
-        // Determine if input is RTSP or RTSPS
-        let is_rtsp = self.config.input_url.starts_with("rtsp://")
-            || self.config.input_url.starts_with("rtsps://");
-
         // Add input options
         for (key, value) in &self.config.input_options {
             args.extend([format!("-{}", key), value.clone()]);
         }
 
-        // Add timeout if specified
-        if let Some(timeout) = self.config.timeout {
-            if is_rtsp {
-                let micros = (timeout as u64) * 1_000_000;
-                args.extend(["-stimeout".to_string(), micros.to_string()]);
-            } else {
-                let micros = (timeout as u64) * 1_000_000;
-                args.extend(["-timeout".to_string(), micros.to_string()]);
-            }
-        }
-
-        // Add default RTSP options
-        if is_rtsp {
-            match self.config.rtsp_transport {
-                RtspTransport::Tcp => {
-                    args.extend(["-rtsp_transport".to_string(), "tcp".to_string()]);
-                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
-                }
-                RtspTransport::Udp => {
-                    args.extend(["-rtsp_transport".to_string(), "udp".to_string()]);
-                }
-                RtspTransport::Auto => {
-                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
-                }
-            }
-            args.extend(["-fflags".to_string(), "nobuffer".to_string()]);
-            args.extend(["-flags".to_string(), "low_delay".to_string()]);
-        }
+        // Add timeout and RTSP options
+        self.add_timeout(&mut args, self.config.timeout);
+        self.add_rtsp_options(&mut args, self.config.timeout);
 
         // Add buffer size if specified
         if let Some(buffer_size) = &self.config.buffer_size {
@@ -249,34 +269,9 @@ impl FfmpegSource {
             "error".to_string(),
         ];
 
-        let is_rtsp = self.config.input_url.starts_with("rtsp://")
-            || self.config.input_url.starts_with("rtsps://");
-
-        if let Some(timeout) = self.config.timeout {
-            let micros = (timeout as u64) * 1_000_000;
-            if is_rtsp {
-                args.extend(["-stimeout".to_string(), micros.to_string()]);
-            } else {
-                args.extend(["-timeout".to_string(), micros.to_string()]);
-            }
-        }
-
-        if is_rtsp {
-            match self.config.rtsp_transport {
-                RtspTransport::Tcp => {
-                    args.extend(["-rtsp_transport".to_string(), "tcp".to_string()]);
-                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
-                }
-                RtspTransport::Udp => {
-                    args.extend(["-rtsp_transport".to_string(), "udp".to_string()]);
-                }
-                RtspTransport::Auto => {
-                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
-                }
-            }
-            args.extend(["-fflags".to_string(), "nobuffer".to_string()]);
-            args.extend(["-flags".to_string(), "low_delay".to_string()]);
-        }
+        // Add timeout and RTSP options
+        self.add_timeout(&mut args, self.config.timeout);
+        self.add_rtsp_options(&mut args, self.config.timeout);
 
         args.extend([
             "-i".to_string(),
@@ -641,7 +636,7 @@ mod tests {
         let args = &command.args;
 
         assert!(args.contains(&"-timeout".to_string()));
-        assert!(args.contains(&"10000000".to_string()));
+        assert!(args.contains(&"10".to_string())); // Non-RTSP uses timeout in seconds
     }
 
     #[test]
