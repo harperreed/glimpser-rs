@@ -27,6 +27,9 @@ pub struct WebsiteConfig {
     /// Type of selector: "css" or "xpath" (default: "css")
     #[serde(default = "default_selector_type")]
     pub selector_type: String,
+    /// Optional WebDriver endpoint (e.g., http://localhost:9515)
+    #[serde(default)]
+    pub webdriver_url: Option<String>,
     /// Enable stealth mode to avoid detection
     #[serde(default)]
     pub stealth: bool,
@@ -66,6 +69,7 @@ impl Default for WebsiteConfig {
             basic_auth_password: None,
             element_selector: None,
             selector_type: default_selector_type(),
+            webdriver_url: None,
             stealth: false,
             timeout: default_timeout(),
             width: default_width(),
@@ -108,7 +112,9 @@ impl CaptureSource for WebsiteSource {
     #[instrument(skip(self))]
     async fn start(&self) -> Result<CaptureHandle> {
         info!(url = %self.config.url, "Starting website capture");
-        // Create a new embedded Chrome client for the capture handle
+        // Note: For embedded mode, we always create a fresh HeadlessChromeClient
+        // since each capture session needs its own browser instance to avoid conflicts.
+        // The injected client is preserved for compatibility but not used in this mode.
         let client = HeadlessChromeClient::new_boxed().map_err(|e| {
             Error::Config(format!("Failed to create embedded Chrome client: {}", e))
         })?;
@@ -123,7 +129,8 @@ impl CaptureSource for WebsiteSource {
     async fn start(&self) -> Result<CaptureHandle> {
         info!(url = %self.config.url, "Starting website capture");
 
-        // Try to use real WebDriver first, fallback to mock if not available
+        // For non-embedded mode, we create a separate client for the capture handle.
+        // This allows concurrent captures while avoiding conflicts with the original client.
         #[cfg(feature = "website")]
         let client = {
             match ThirtyfourClient::new(self.config.webdriver_url.clone()).await {
@@ -342,7 +349,7 @@ impl HeadlessChromeClient {
             .sandbox(false)
             .window_size(Some((1920, 1080)))
             .build()
-            .expect("Failed to build launch options");
+            .map_err(|e| Error::Config(format!("Failed to build launch options: {}", e)))?;
 
         let browser = Browser::new(options)
             .map_err(|e| Error::Config(format!("Failed to launch Chrome: {}", e)))?;
@@ -373,6 +380,17 @@ impl WebDriverClient for HeadlessChromeClient {
         let tab = browser
             .new_tab()
             .map_err(|e| Error::Config(format!("Failed to create new tab: {}", e)))?;
+
+        // RAII guard to ensure tab cleanup on all paths
+        struct TabGuard<'a> {
+            tab: &'a headless_chrome::Tab,
+        }
+        impl<'a> Drop for TabGuard<'a> {
+            fn drop(&mut self) {
+                let _ = self.tab.close(true);
+            }
+        }
+        let _tab_guard = TabGuard { tab: &tab };
 
         // Set viewport size using set_bounds
         tab.set_bounds(headless_chrome::types::Bounds::Normal {
@@ -497,9 +515,6 @@ impl WebDriverClient for HeadlessChromeClient {
             .map_err(|e| Error::Config(format!("Failed to capture screenshot: {}", e)))?
         };
 
-        // Close the tab
-        let _ = tab.close(true);
-
         Ok(Bytes::from(screenshot_data))
     }
 
@@ -539,6 +554,7 @@ mod tests {
             basic_auth_password: Some("pass".to_string()),
             element_selector: Some("#main".to_string()),
             selector_type: "css".to_string(),
+            webdriver_url: None,
             stealth: true,
             timeout: Duration::from_secs(60),
             width: 1280,
@@ -612,6 +628,10 @@ mod tests {
         let client = HeadlessChromeClient::new_boxed().unwrap();
         let source = WebsiteSource::new(config, client);
         let handle = source.start().await.unwrap();
+        
+        // Small delay to ensure file is written and Chrome can load it
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        
         let bytes = handle.snapshot().await.unwrap();
         handle.stop().await.unwrap();
 
