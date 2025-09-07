@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Admin Panel{% endblock %}
+{% block nav_admin %}text-blue-600 border-b-2 border-blue-600 pb-1{% endblock %}
+{% block content %}
+<div class="p-8">
+    <h1 class="text-3xl font-bold mb-8">Admin Panel</h1>
+
+    <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <h2 class="text-xl font-bold mb-4">Streams</h2>
+        <div class="space-y-4">
+            {% for stream in streams %}
+            <div class="flex justify-between items-center p-4 border rounded">
+                <div>
+                    <h3 class="font-medium">{{ stream.name }}</h3>
+                    <p class="text-sm text-gray-500">Status: {{ stream.status }}</p>
+                </div>
+                <div class="space-x-2">
+                    <button class="bg-blue-500 text-white px-3 py-1 rounded text-sm">Edit</button>
+                    <button class="bg-red-500 text-white px-3 py-1 rounded text-sm">Delete</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <h2 class="text-xl font-bold mb-4">API Keys</h2>
+        <p class="text-gray-500">API key management coming soon</p>
+    </div>
+
+    <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <h2 class="text-xl font-bold mb-4">Users</h2>
+        <div class="space-y-4">
+            {% for admin_user in users %}
+            <div class="flex justify-between items-center p-4 border rounded">
+                <div>
+                    <h3 class="font-medium">{{ admin_user.username }}</h3>
+                    <p class="text-sm text-gray-500">{{ admin_user.email }}</p>
+                </div>
+                <button class="bg-red-500 text-white px-3 py-1 rounded text-sm">Delete</button>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-xl font-bold mb-4">System</h2>
+        <p class="text-gray-500">System settings coming soon</p>
+    </div>
+</div>
+{% endblock %}

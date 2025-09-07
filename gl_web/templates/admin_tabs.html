@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Panel{% endblock %}
+
+{% block body_class %}min-h-screen bg-slate-50{% endblock %}
+
+{% block nav_admin %}text-blue-600 border-b-2 border-blue-600 pb-1{% endblock %}
+
+{% block content %}
+<div class="p-8 max-w-6xl mx-auto w-full">
+    <div class="flex justify-between items-center mb-8">
+        <h2 class="text-2xl font-bold text-gray-800">Admin Panel</h2>
+        <div class="bg-yellow-100 text-yellow-800 px-4 py-2 rounded-md text-sm font-medium">
+            <span>Administrator privileges required</span>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-1 mb-8 border-b border-gray-300">
+        <button id="streams-tab" onclick="showTab('streams')" class="px-6 py-3 font-medium cursor-pointer border-b-2 border-blue-600 text-blue-600 transition-all duration-200">
+            Streams
+        </button>
+        <button id="api-keys-tab" onclick="showTab('api-keys')" class="px-6 py-3 font-medium cursor-pointer border-b-2 border-transparent hover:text-blue-600 transition-all duration-200">
+            API Keys
+        </button>
+        <button id="users-tab" onclick="showTab('users')" class="px-6 py-3 font-medium cursor-pointer border-b-2 border-transparent hover:text-blue-600 transition-all duration-200">
+            Users
+        </button>
+        <button id="system-tab" onclick="showTab('system')" class="px-6 py-3 font-medium cursor-pointer border-b-2 border-transparent hover:text-blue-600 transition-all duration-200">
+            System
+        </button>
+    </div>
+
+    <!-- Streams Content (Default Active) -->
+    <div id="streams-content" class="tab-content">
+        <div class="bg-white shadow rounded-lg">
+            <div class="px-6 py-4">
+                <h3 class="text-lg font-medium mb-4">Stream Configuration</h3>
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b">
+                            <th class="text-left py-2">Stream</th>
+                            <th class="text-left py-2">Status</th>
+                            <th class="text-left py-2">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stream in streams %}
+                        <tr class="border-b">
+                            <td class="py-2">{{ stream.name }}</td>
+                            <td class="py-2">
+                                <span class="px-2 py-1 text-xs rounded {% if stream.status == 'active' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                                    {{ stream.status }}
+                                </span>
+                            </td>
+                            <td class="py-2">
+                                <button class="text-blue-600 mr-2">Edit</button>
+                                <button class="text-red-600">Delete</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Users Content -->
+    <div id="users-content" class="tab-content hidden">
+        <div class="bg-white shadow rounded-lg">
+            <div class="px-6 py-4">
+                <h3 class="text-lg font-medium mb-4">User Management</h3>
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b">
+                            <th class="text-left py-2">Username</th>
+                            <th class="text-left py-2">Email</th>
+                            <th class="text-left py-2">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for admin_user in users %}
+                        <tr class="border-b">
+                            <td class="py-2">{{ admin_user.username }}</td>
+                            <td class="py-2">{{ admin_user.email }}</td>
+                            <td class="py-2">
+                                <button class="text-red-600">Delete</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Keys Content -->
+    <div id="api-keys-content" class="tab-content hidden">
+        <div class="bg-white shadow rounded-lg">
+            <div class="px-6 py-4">
+                <h3 class="text-lg font-medium mb-4">API Keys</h3>
+                <p class="text-gray-500">API key management</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Content -->
+    <div id="system-content" class="tab-content hidden">
+        <div class="bg-white shadow rounded-lg">
+            <div class="px-6 py-4">
+                <h3 class="text-lg font-medium mb-4">System Settings</h3>
+                <p class="text-gray-500">System configuration</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showTab(tabName) {
+    document.querySelectorAll('.tab-content').forEach(function(content) {
+        content.classList.add('hidden');
+    });
+
+    document.querySelectorAll('button[id$="-tab"]').forEach(function(btn) {
+        btn.classList.remove('border-blue-600', 'text-blue-600');
+        btn.classList.add('border-transparent');
+    });
+
+    document.getElementById(tabName + '-content').classList.remove('hidden');
+    document.getElementById(tabName + '-tab').classList.add('border-blue-600', 'text-blue-600');
+}
+</script>
+{% endblock %}

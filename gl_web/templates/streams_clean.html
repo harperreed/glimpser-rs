@@ -6,14 +6,13 @@
 
 {% block content %}
 <div class="p-8 max-w-6xl mx-auto w-full">
-    <!-- Header with controls matching Next.js design -->
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <h2 class="text-2xl font-bold text-gray-800">Live Streams</h2>
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-            <button onclick="location.reload()" class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200 disabled:opacity-50">
+            <button onclick="location.reload()" class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600 transition-all duration-200">
                 Refresh
             </button>
-            <select class="px-3 py-3 border border-gray-300 rounded-md text-base transition-colors duration-200 focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+            <select class="px-3 py-3 border border-gray-300 rounded-md text-base">
                 <option value="">All Streams</option>
                 <option value="active">Active Only</option>
                 <option value="inactive">Inactive Only</option>
@@ -21,14 +20,12 @@
         </div>
     </div>
 
-    <!-- Error State -->
     {% if has_error %}
     <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
         Failed to load streams: {{ error_message }}
     </div>
     {% endif %}
 
-    <!-- Empty State matching Next.js -->
     {% if streams.is_empty() %}
     <div class="flex flex-col items-center justify-center min-h-48 bg-white rounded-md shadow-sm text-gray-500">
         <p class="text-lg mb-2">No streams found</p>
@@ -36,37 +33,29 @@
     </div>
     {% endif %}
 
-    <!-- Streams Grid matching Next.js design exactly -->
     {% if !streams.is_empty() %}
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {% for stream in streams %}
         <div class="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden">
 
-            <!-- Stream Preview (aspect-video) -->
             <div class="aspect-video bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors relative group"
                  onclick="window.location.href='/streams/{{ stream.id }}'">
 
-                <!-- View Details Button (appears on hover) -->
                 <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                        onclick="event.stopPropagation(); showStreamDetails('{{ stream.name }}');"
-                        class="bg-black bg-opacity-50 text-white p-1 rounded text-xs hover:bg-opacity-75"
-                        title="View details">
-                        i
+                    <button class="bg-black bg-opacity-50 text-white p-1 rounded text-xs hover:bg-opacity-75">
+                        Info
                     </button>
                 </div>
 
                 {% if stream.status == "active" %}
                     <img src="/api/stream/{{ stream.stream_id }}/thumbnail"
                          alt="{{ stream.name }}"
-                         class="w-full h-full object-cover"
-                         onerror="this.style.display='none';">
+                         class="w-full h-full object-cover">
                 {% else %}
-                    <span class="text-2xl">Stream Offline</span>
+                    <span class="text-2xl text-gray-400">Offline</span>
                 {% endif %}
             </div>
 
-            <!-- Stream Info -->
             <div class="p-4">
                 <div class="flex justify-between items-start mb-2">
                     <h3 class="font-semibold text-gray-800 truncate">{{ stream.name }}</h3>

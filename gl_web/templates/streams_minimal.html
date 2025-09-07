@@ -2,11 +2,13 @@
 
 {% block title %}Live Streams{% endblock %}
 
+{% block body_class %}min-h-screen bg-slate-50{% endblock %}
+
 {% block nav_streams %}text-blue-600 border-b-2 border-blue-600 pb-1{% endblock %}
 
 {% block content %}
 <div class="p-8 max-w-6xl mx-auto w-full">
-    <!-- Header with controls matching Next.js design -->
+    <!-- Header with controls matching Next.js exactly -->
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <h2 class="text-2xl font-bold text-gray-800">Live Streams</h2>
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
@@ -28,7 +30,7 @@
     </div>
     {% endif %}
 
-    <!-- Empty State matching Next.js -->
+    <!-- Empty State -->
     {% if streams.is_empty() %}
     <div class="flex flex-col items-center justify-center min-h-48 bg-white rounded-md shadow-sm text-gray-500">
         <p class="text-lg mb-2">No streams found</p>
@@ -36,37 +38,31 @@
     </div>
     {% endif %}
 
-    <!-- Streams Grid matching Next.js design exactly -->
+    <!-- Streams Grid with HTMX card components -->
     {% if !streams.is_empty() %}
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {% for stream in streams %}
-        <div class="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden">
+        <div class="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden"
+             hx-get="/api/htmx/stream-card/{{ stream.id }}"
+             hx-trigger="every 30s"
+             hx-swap="outerHTML">
 
-            <!-- Stream Preview (aspect-video) -->
             <div class="aspect-video bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors relative group"
-                 onclick="window.location.href='/streams/{{ stream.id }}'">
+                 onclick="window.location='/streams/{{ stream.id }}'"
 
-                <!-- View Details Button (appears on hover) -->
                 <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                        onclick="event.stopPropagation(); showStreamDetails('{{ stream.name }}');"
-                        class="bg-black bg-opacity-50 text-white p-1 rounded text-xs hover:bg-opacity-75"
-                        title="View details">
-                        i
+                    <button onclick="event.stopPropagation();" class="bg-black bg-opacity-50 text-white p-1 rounded text-xs hover:bg-opacity-75" title="View details">
+                        Info
                     </button>
                 </div>
 
                 {% if stream.status == "active" %}
-                    <img src="/api/stream/{{ stream.stream_id }}/thumbnail"
-                         alt="{{ stream.name }}"
-                         class="w-full h-full object-cover"
-                         onerror="this.style.display='none';">
+                    <img src="/api/stream/{{ stream.stream_id }}/thumbnail" alt="{{ stream.name }}" class="w-full h-full object-cover">
                 {% else %}
-                    <span class="text-2xl">Stream Offline</span>
+                    <span class="text-2xl">Offline</span>
                 {% endif %}
             </div>
 
-            <!-- Stream Info -->
             <div class="p-4">
                 <div class="flex justify-between items-start mb-2">
                     <h3 class="font-semibold text-gray-800 truncate">{{ stream.name }}</h3>
@@ -75,11 +71,8 @@
                     </span>
                 </div>
                 <div class="flex justify-between items-center">
-                    <p class="text-sm text-gray-500">
-                        Last seen: {{ stream.last_frame_at }}
-                    </p>
-                    <button onclick="window.location.href='/streams/{{ stream.id }}'"
-                            class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                    <p class="text-sm text-gray-500">Last seen: {{ stream.last_frame_at }}</p>
+                    <button onclick="window.location='/streams/{{ stream.id }}'" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
                         View
                     </button>
                 </div>

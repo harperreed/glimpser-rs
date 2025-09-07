@@ -56,7 +56,7 @@ pub struct DashboardTemplate {
 
 /// Streams list template
 #[derive(Template)]
-#[template(path = "streams_page.html")]
+#[template(path = "streams_ultra_simple.html")]
 pub struct StreamsListTemplate {
     pub user: UserInfo,
     pub logged_in: bool,
@@ -91,6 +91,38 @@ pub struct StreamsLoadingFragment;
 pub struct StreamDetailTemplate {
     pub stream: StreamInfo,
     pub user: UserInfo,
+}
+
+/// Individual stream card component for HTMX
+#[derive(Template)]
+#[template(path = "card_simple.html")]
+pub struct StreamCard {
+    pub stream: StreamInfo,
+}
+
+/// Admin page template - step 1
+#[derive(Template)]
+#[template(path = "admin_step1.html")]
+pub struct AdminTemplate {
+    pub user: UserInfo,
+    pub logged_in: bool,
+}
+
+/// Admin user info
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AdminUser {
+    pub id: String,
+    pub username: String,
+    pub email: String,
+    pub created_at: String,
+}
+
+/// Admin API key info
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AdminApiKey {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
 }
 
 /// User information for templates
@@ -129,6 +161,7 @@ pub fn create_frontend_router() -> Router<FrontendState> {
         .route("/admin", get(admin_handler))
         // HTMX endpoints for dynamic updates
         .route("/api/htmx/streams-list", get(htmx_streams_fragment))
+        .route("/api/htmx/stream-card/:id", get(htmx_stream_card_handler))
         .route(
             "/api/htmx/stream/:id/status",
             get(htmx_stream_status_fragment),
@@ -368,9 +401,26 @@ async fn stream_detail_handler(
 }
 
 /// Admin page
-async fn admin_handler(State(_state): State<FrontendState>) -> impl IntoResponse {
-    // TODO: Implement admin template
-    Html("<h1>Admin Panel</h1><p>Coming soon...</p>").into_response()
+async fn admin_handler(State(frontend_state): State<FrontendState>) -> impl IntoResponse {
+    // TODO: Extract user from cookie/session - for now use test user
+    let user = UserInfo {
+        id: "test".to_string(),
+        username: "Admin User".to_string(),
+        is_admin: true,
+    };
+
+    let template = AdminTemplate {
+        user,
+        logged_in: true,
+    };
+
+    match template.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => {
+            warn!("Admin template render error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response()
+        }
+    }
 }
 
 /// HTMX fragment for streams list
@@ -454,6 +504,30 @@ async fn fetch_streams(
     Ok(streams)
 }
 
+/// Helper function to fetch admin users from database
+async fn fetch_admin_users(frontend_state: &FrontendState) -> Result<Vec<AdminUser>, Error> {
+    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
+
+    // Fetch all users (in the future we can add pagination)
+    let db_users = user_repo
+        .list_active()
+        .await
+        .map_err(|e| Error::Database(format!("Failed to fetch users: {}", e)))?;
+
+    // Convert to admin user format
+    let admin_users: Vec<AdminUser> = db_users
+        .into_iter()
+        .map(|user| AdminUser {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            created_at: user.created_at,
+        })
+        .collect();
+
+    Ok(admin_users)
+}
+
 /// Helper function to fetch a single stream from database
 async fn fetch_single_stream(
     frontend_state: &FrontendState,
@@ -479,6 +553,46 @@ async fn fetch_single_stream(
         }
         Ok(None) => Ok(None),
         Err(e) => Err(Error::Database(format!("Failed to fetch stream: {}", e))),
+    }
+}
+
+/// HTMX handler for individual stream card updates
+async fn htmx_stream_card_handler(
+    Path(stream_id): Path<String>,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    match fetch_single_stream(&frontend_state, &stream_id).await {
+        Ok(Some(stream)) => {
+            let template = StreamCard { stream };
+
+            match template.render() {
+                Ok(html) => Html(html).into_response(),
+                Err(e) => {
+                    warn!("Template render error for stream {}: {}", stream_id, e);
+                    Html(format!(
+                        r#"<div class="bg-red-100 p-4 rounded">Error loading stream {}</div>"#,
+                        stream_id
+                    ))
+                    .into_response()
+                }
+            }
+        }
+        Ok(None) => Html(format!(
+            r#"<div class="bg-gray-100 p-4 rounded">Stream {} not found</div>"#,
+            stream_id
+        ))
+        .into_response(),
+        Err(e) => {
+            warn!(
+                "Failed to fetch stream {} for card update: {}",
+                stream_id, e
+            );
+            Html(format!(
+                r#"<div class="bg-red-100 p-4 rounded">Error: {}</div>"#,
+                e
+            ))
+            .into_response()
+        }
     }
 }
 
