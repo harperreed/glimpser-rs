@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ form_title }}{% endblock %}
+{% block nav_admin %}text-blue-600 border-b-2 border-blue-600 pb-1{% endblock %}
+{% block content %}
+<div class="p-8 max-w-2xl mx-auto">
+    <div class="mb-8">
+        <a href="/settings" class="text-blue-600 hover:text-blue-800">Back to Settings</a>
+        <h1 class="text-3xl font-bold text-gray-900 mt-4">{{ form_title }}</h1>
+    </div>
+
+    {% if !error_message.is_empty() %}
+    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+        {{ error_message }}
+    </div>
+    {% endif %}
+
+    <div class="bg-white shadow rounded-lg">
+        <form action="{{ form_action }}" method="post" class="p-6 space-y-6">
+            <div>
+                <label for="name" class="block text-sm font-medium text-gray-700">Stream Name</label>
+                <input type="text" id="name" name="name" required value="{{ stream_data.name }}"
+                       class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+            </div>
+
+            <div>
+                <label for="description" class="block text-sm font-medium text-gray-700">Description</label>
+                <textarea id="description" name="description" rows="3"
+                          class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">{{ stream_data.description }}</textarea>
+            </div>
+
+            <div>
+                <label for="config_kind" class="block text-sm font-medium text-gray-700">Stream Type</label>
+                <select id="config_kind" name="config_kind" required
+                        class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                    {% if stream_data.config_kind.is_empty() %}
+                        <option value="">Select stream type...</option>
+                    {% endif %}
+                    <option value="file" {% if stream_data.config_kind == "file" %}selected{% endif %}>File Source</option>
+                    <option value="website" {% if stream_data.config_kind == "website" %}selected{% endif %}>Website Capture</option>
+                    <option value="ffmpeg" {% if stream_data.config_kind == "ffmpeg" %}selected{% endif %}>FFmpeg Stream</option>
+                    <option value="yt_dlp" {% if stream_data.config_kind == "yt_dlp" %}selected{% endif %}>YouTube/Video URL</option>
+                </select>
+            </div>
+
+            <!-- File Source Config -->
+            <div id="file-config" class="config-section space-y-4">
+                <div>
+                    <label for="file_path" class="block text-sm font-medium text-gray-700">File Path</label>
+                    <input type="text" id="file_path" name="file_path" value="{{ stream_data.file_path }}"
+                           class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                           placeholder="/path/to/video.mp4">
+                </div>
+            </div>
+
+            <!-- Website Capture Config -->
+            <div id="website-config" class="config-section space-y-4">
+                <div>
+                    <label for="website_url" class="block text-sm font-medium text-gray-700">Website URL</label>
+                    <input type="url" id="website_url" name="website_url" value="{{ stream_data.website_url }}"
+                           class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                           placeholder="https://example.com">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label for="website_width" class="block text-sm font-medium text-gray-700">Width</label>
+                        <input type="number" id="website_width" name="website_width" value="{{ stream_data.website_width }}"
+                               class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label for="website_height" class="block text-sm font-medium text-gray-700">Height</label>
+                        <input type="number" id="website_height" name="website_height" value="{{ stream_data.website_height }}"
+                               class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <label for="capture_interval" class="block text-sm font-medium text-gray-700">Capture Interval (seconds)</label>
+                <input type="number" id="capture_interval" name="capture_interval" value="{{ stream_data.capture_interval }}" min="1" max="3600" required
+                       class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                <p class="text-sm text-gray-500 mt-1">How often to capture snapshots</p>
+            </div>
+
+            <div class="flex items-center">
+                <input type="checkbox" id="is_default" name="is_default" {% if stream_data.is_default %}checked{% endif %}
+                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                <label for="is_default" class="ml-2 block text-sm text-gray-900">Set as default stream</label>
+            </div>
+
+            <div class="flex justify-end space-x-3">
+                <a href="/settings" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50">Cancel</a>
+                <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">{{ submit_button_text }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/stream-form.js"></script>
+{% endblock %}

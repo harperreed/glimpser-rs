@@ -65,13 +65,22 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path();
     tracing::info!("Static file request: {}", path);
 
-    // For now, serve basic static responses
+    // Serve actual static files
     match path {
-        "/static/htmx.js" => axum::response::Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "application/javascript")
-            .body(Body::from("// HTMX would be served here"))
-            .unwrap(),
+        "/static/stream-form.js" => {
+            // Read the actual JavaScript file
+            match std::fs::read_to_string("gl_web/static/stream-form.js") {
+                Ok(content) => axum::response::Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/javascript")
+                    .body(Body::from(content))
+                    .unwrap(),
+                Err(_) => axum::response::Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("JavaScript file not found"))
+                    .unwrap(),
+            }
+        }
         "/static/app.css" => axum::response::Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "text/css")
