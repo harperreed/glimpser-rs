@@ -20,7 +20,7 @@ pub mod website_source;
 pub use artifact_storage::{
     snapshot_and_store, ArtifactStorageConfig, ArtifactStorageService, StoredArtifact,
 };
-pub use ffmpeg_source::{FfmpegConfig, FfmpegSource, HardwareAccel};
+pub use ffmpeg_source::{FfmpegConfig, FfmpegSource, HardwareAccel, RtspTransport};
 pub use file_source::FileSource;
 pub use yt_dlp_source::{OutputFormat, YtDlpConfig, YtDlpSource};
 
