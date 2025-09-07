@@ -86,7 +86,7 @@ async fn test_motion_burst_deduplication() {
     let mut total_events = 0;
     let mut motion_events = 0;
 
-    for i in 0..5 {
+    for i in 0..3 {
         let input = create_test_input("template_burst", "camera_entrance");
         let events = service.analyze(input).await.unwrap();
 
@@ -98,8 +98,7 @@ async fn test_motion_burst_deduplication() {
 
         println!("Burst {} generated {} events", i + 1, events.len());
 
-        // Small delay between bursts
-        sleep(Duration::from_millis(100)).await;
+        // No delay needed; deduplication window covers rapid events
     }
 
     println!(
@@ -107,16 +106,10 @@ async fn test_motion_burst_deduplication() {
         motion_events, total_events
     );
 
-    // Should have fewer motion events due to deduplication
-    // First event should pass through, subsequent ones should be deduplicated
-    assert!(
-        motion_events < 5,
-        "Expected deduplication to reduce motion events, got {}",
-        motion_events
-    );
-    assert!(
-        motion_events >= 1,
-        "At least first motion event should pass through"
+    // Should emit exactly one motion event due to deduplication
+    assert_eq!(
+        motion_events, 1,
+        "Deduplication should allow only the first motion event"
     );
 }
 
