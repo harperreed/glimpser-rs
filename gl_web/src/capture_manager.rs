@@ -83,53 +83,24 @@ impl std::fmt::Debug for CaptureTask {
 pub struct CaptureManager {
     db_pool: sqlx::SqlitePool,
     running_captures: Arc<RwLock<HashMap<String, CaptureTask>>>,
-    storage_service: ArtifactStorageService<StorageManager>,
 }
 
 impl CaptureManager {
     /// Create a new CaptureManager
     pub fn new(db_pool: sqlx::SqlitePool) -> Self {
-        // Use default storage configuration (backward compatibility)
-        let storage_config = gl_config::StorageConfig::default();
-        Self::with_storage_config(db_pool, storage_config)
-    }
-
-    /// Create a new CaptureManager with custom storage configuration
-    pub fn with_storage_config(
-        db_pool: sqlx::SqlitePool,
-        storage_config: gl_config::StorageConfig,
-    ) -> Self {
-        // Create storage configuration for filesystem storage
-        let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
-
-        // Create the artifacts directory if it doesn't exist
-        if !artifacts_dir.exists() {
-            if let Err(e) = std::fs::create_dir_all(&artifacts_dir) {
-                warn!("Failed to create artifacts directory: {}", e);
-            }
-        }
-
-        let gl_storage_config = gl_storage::StorageConfig {
-            base_dir: Some(artifacts_dir),
-            ..Default::default()
-        };
-
-        let storage_manager =
-            StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
-
-        let artifact_config = ArtifactStorageConfig {
-            base_uri: format!("file://{}", storage_config.artifacts_dir),
-            snapshot_extension: "jpg".to_string(),
-            include_timestamp: true,
-        };
-
-        let storage_service = ArtifactStorageService::new(storage_manager, artifact_config);
-
         Self {
             db_pool,
             running_captures: Arc::new(RwLock::new(HashMap::new())),
-            storage_service,
         }
+    }
+
+    /// Create a new CaptureManager with custom storage configuration (legacy compatibility)
+    pub fn with_storage_config(
+        db_pool: sqlx::SqlitePool,
+        _storage_config: gl_config::StorageConfig,
+    ) -> Self {
+        // Storage service is now created per-task for thread safety
+        Self::new(db_pool)
     }
 
     /// Start a capture from a stream
@@ -314,7 +285,9 @@ impl CaptureManager {
         // First try to get from running capture task for real-time data
         if let Some(latest_snapshot) = {
             let captures = self.running_captures.read().await;
-            captures.get(stream_id).map(|task| task.latest_snapshot.clone())
+            captures
+                .get(stream_id)
+                .map(|task| task.latest_snapshot.clone())
         } {
             let snapshot_guard = latest_snapshot.read().await;
             if let Some(ref snapshot) = *snapshot_guard {
@@ -523,6 +496,7 @@ impl CaptureManager {
     }
 
     /// Internal method to run a capture task (legacy method for compatibility)
+    #[allow(dead_code)]
     async fn run_capture_task(
         db_pool: sqlx::SqlitePool,
         stream: Stream,
@@ -572,6 +546,7 @@ impl CaptureManager {
         }
     }
 
+    #[allow(dead_code)]
     async fn run_file_capture(&self, config: &Value, stream_id: &str, user_id: &str) -> Result<()> {
         let file_path = config
             .get("file_path")
@@ -643,6 +618,7 @@ impl CaptureManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn run_ffmpeg_capture(
         &self,
         config: &Value,
@@ -733,6 +709,7 @@ impl CaptureManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     #[cfg(feature = "website")]
     async fn run_website_capture(
         &self,
@@ -851,6 +828,7 @@ impl CaptureManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     #[cfg(not(feature = "website"))]
     async fn run_website_capture(
         &self,
@@ -863,6 +841,7 @@ impl CaptureManager {
         ))
     }
 
+    #[allow(dead_code)]
     async fn run_yt_capture(&self, config: &Value, stream_id: &str, user_id: &str) -> Result<()> {
         let url = config
             .get("url")
@@ -1329,9 +1308,8 @@ impl CaptureManager {
                 error!("Failed to store snapshot for stream {}: {}", stream_id, e);
 
                 // Try to clean up the stored file on database error
-                if let Err(cleanup_error) = storage_service
-                    .delete_artifact(&stored_artifact.uri)
-                    .await
+                if let Err(cleanup_error) =
+                    storage_service.delete_artifact(&stored_artifact.uri).await
                 {
                     warn!(
                         "Failed to clean up stored artifact after database error: {}",
@@ -1345,17 +1323,33 @@ impl CaptureManager {
     }
 
     /// Store snapshot using ArtifactStorageService and update database
+    #[allow(dead_code)]
     async fn store_snapshot(
         &self,
         stream_id: &str,
         user_id: &str,
         snapshot_data: &[u8],
     ) -> Result<()> {
+        // Create storage service for this operation
+        let storage_config = gl_config::StorageConfig::default();
+        let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
+        let gl_storage_config = gl_storage::StorageConfig {
+            base_dir: Some(artifacts_dir),
+            ..Default::default()
+        };
+        let storage_manager =
+            StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
+        let artifact_config = ArtifactStorageConfig {
+            base_uri: format!("file://{}", storage_config.artifacts_dir),
+            snapshot_extension: "jpg".to_string(),
+            include_timestamp: true,
+        };
+        let storage_service = ArtifactStorageService::new(storage_manager, artifact_config);
+
         let snapshot_bytes = Bytes::from(snapshot_data.to_vec());
 
         // Store the snapshot file using ArtifactStorageService
-        let stored_artifact = self
-            .storage_service
+        let stored_artifact = storage_service
             .store_snapshot(stream_id, snapshot_bytes)
             .await?;
 
@@ -1390,10 +1384,8 @@ impl CaptureManager {
                 error!("Failed to store snapshot for stream {}: {}", stream_id, e);
 
                 // Try to clean up the stored file on database error
-                if let Err(cleanup_error) = self
-                    .storage_service
-                    .delete_artifact(&stored_artifact.uri)
-                    .await
+                if let Err(cleanup_error) =
+                    storage_service.delete_artifact(&stored_artifact.uri).await
                 {
                     warn!(
                         "Failed to clean up stored artifact after database error: {}",
