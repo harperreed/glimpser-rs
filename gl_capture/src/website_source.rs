@@ -443,13 +443,49 @@ impl WebDriverClient for HeadlessChromeClient {
                 })?
             };
 
-            element
-                .capture_screenshot(
-                    headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+            let rect_obj = element
+                .call_js_fn(
+                    "function() { const r = this.getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height}; }",
+                    vec![],
+                    false,
                 )
                 .map_err(|e| {
-                    Error::Config(format!("Failed to capture element screenshot: {}", e))
+                    Error::Config(format!(
+                        "Failed to get element bounding box: {}",
+                        e
+                    ))
                 })?
+                .value
+                .ok_or_else(|| Error::Config("Element bounding box missing".to_string()))?;
+
+            let x = rect_obj.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let y = rect_obj.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let width = rect_obj
+                .get("width")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| Error::Config("Element width missing".to_string()))?;
+            let height = rect_obj
+                .get("height")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| Error::Config("Element height missing".to_string()))?;
+            if width <= 0.0 || height <= 0.0 {
+                return Err(Error::Config("Element has zero size".to_string()));
+            }
+            let clip = headless_chrome::protocol::cdp::Page::Viewport {
+                x,
+                y,
+                width,
+                height,
+                scale: 1.0,
+            };
+
+            tab.capture_screenshot(
+                headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                None,
+                Some(clip),
+                true,
+            )
+            .map_err(|e| Error::Config(format!("Failed to capture element screenshot: {}", e)))?
         } else {
             // Full page screenshot
             tab.capture_screenshot(
@@ -552,6 +588,63 @@ mod tests {
 
         // Test stop
         handle.stop().await.unwrap();
+    }
+
+    #[cfg(feature = "website_embedded")]
+    #[tokio::test]
+    async fn test_headless_element_screenshot_size() {
+        use image::ImageFormat;
+        use std::io::Write;
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "<html><body><div id='box' style='width:120px;height:80px;background:red;'>hi</div></body></html>"
+        )
+        .unwrap();
+        let url = format!("file://{}", file.path().display());
+        let config = WebsiteConfig {
+            url,
+            element_selector: Some("#box".into()),
+            ..Default::default()
+        };
+
+        let client = HeadlessChromeClient::new_boxed().unwrap();
+        let source = WebsiteSource::new(config, client);
+        let handle = source.start().await.unwrap();
+        let bytes = handle.snapshot().await.unwrap();
+        handle.stop().await.unwrap();
+
+        let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png).unwrap();
+        assert_eq!(img.width(), 120);
+        assert_eq!(img.height(), 80);
+    }
+
+    #[cfg(feature = "website_embedded")]
+    #[tokio::test]
+    async fn test_headless_zero_size_element_error() {
+        use std::io::Write;
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "<html><body><div id='box' style='width:0;height:0;'></div></body></html>"
+        )
+        .unwrap();
+        let url = format!("file://{}", file.path().display());
+        let config = WebsiteConfig {
+            url,
+            element_selector: Some("#box".into()),
+            ..Default::default()
+        };
+
+        let client = HeadlessChromeClient::new_boxed().unwrap();
+        let source = WebsiteSource::new(config, client);
+        let handle = source.start().await.unwrap();
+        let result = handle.snapshot().await;
+        handle.stop().await.unwrap();
+
+        assert!(matches!(result, Err(Error::Config(_))));
     }
 
     #[cfg(feature = "website_live")]
