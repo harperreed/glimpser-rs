@@ -292,6 +292,8 @@ async fn test_error_handling() {
 }
 
 /// Performance test comparing different motion detection scenarios
+/// This is an optional heavy benchmark and is ignored by default.
+#[ignore]
 #[tokio::test]
 async fn test_motion_detection_performance() {
     let config = MotionConfig {
