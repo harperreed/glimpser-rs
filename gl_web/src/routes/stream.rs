@@ -14,6 +14,8 @@ use gl_stream::{MjpegStream, StreamConfig, StreamSession};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::broadcast;
+use tokio_stream::{Stream as TokioStream, StreamExt};
 use tracing::{error, info, warn};
 use utoipa::OpenApi;
 
@@ -21,7 +23,7 @@ use crate::{models::ErrorResponse, AppState};
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(snapshot, mjpeg_stream, start_stream, stop_stream),
+    paths(snapshot, recent_snapshots, mjpeg_stream, start_stream, stop_stream),
     components(schemas()),
     tags((name = "stream", description = "Stream snapshot, MJPEG streaming, and lifecycle operations"))
 )]
@@ -205,6 +207,63 @@ pub async fn stream_details(
     }
 }
 
+/// Get recent snapshots for a stream (for hover animations)
+#[utoipa::path(
+    get,
+    path = "/api/streams/{stream_id}/recent-snapshots",
+    params(
+        ("stream_id" = String, Path, description = "Stream ID")
+    ),
+    responses(
+        (status = 200, description = "Recent snapshots list", body = Vec<String>),
+        (status = 404, description = "Stream not found"),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    security(("jwt_auth" = []), ("api_key" = []))
+)]
+#[actix_web::get("/{stream_id}/recent-snapshots")]
+pub async fn recent_snapshots(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> ActixResult<HttpResponse> {
+    let stream_id = path.into_inner();
+    info!(stream_id = %stream_id, "Getting recent snapshots");
+
+    // Get recent snapshots from database
+    let snapshot_repo = gl_db::SnapshotRepository::new(state.db.pool());
+
+    match snapshot_repo.list_by_template(&stream_id, 0, 10).await {
+        Ok(snapshots) => {
+            // Convert snapshots to URLs for frontend consumption
+            // Since we can't serve individual snapshots by ID, we'll return the snapshot endpoint
+            // and include metadata so frontend can use timestamp-based caching
+            let snapshot_data: Vec<serde_json::Value> = snapshots
+                .into_iter()
+                .map(|snap| {
+                    serde_json::json!({
+                        "url": format!("/api/stream/{}/snapshot", stream_id),
+                        "captured_at": snap.captured_at,
+                        "id": snap.id,
+                        "file_path": snap.file_path
+                    })
+                })
+                .collect();
+
+            Ok(HttpResponse::Ok().json(serde_json::json!({
+                "snapshots": snapshot_data,
+                "total": snapshot_data.len()
+            })))
+        }
+        Err(e) => {
+            error!(error = %e, stream_id = stream_id, "Failed to get recent snapshots");
+            Ok(HttpResponse::InternalServerError().json(ErrorResponse::new(
+                "database_error",
+                "Failed to retrieve snapshots",
+            )))
+        }
+    }
+}
+
 /// Get live stream (alias for snapshot for now)
 #[utoipa::path(
     get,
@@ -243,6 +302,12 @@ pub async fn live_stream(
 }
 
 async fn take_snapshot_impl(stream_id: String, state: &AppState) -> Result<Vec<u8>> {
+    // Try fast path first: get latest snapshot from running capture or database
+    if let Ok(snapshot_bytes) = state.capture_manager.get_latest_snapshot(&stream_id).await {
+        return Ok(snapshot_bytes.to_vec());
+    }
+
+    // Fall back to the original on-demand capture behavior
     // Get the stream from the database
     let stream = {
         let repo = StreamRepository::new(state.db.pool());
@@ -492,6 +557,29 @@ pub async fn mjpeg_stream(
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
     let stream_id_str = path.into_inner();
+
+    // Try to subscribe to the CaptureManager's broadcast channel for real-time streaming
+    if let Some(frame_receiver) = state
+        .capture_manager
+        .subscribe_to_stream(&stream_id_str)
+        .await
+    {
+        info!(stream_id = %stream_id_str, "New client connected to MJPEG stream via CaptureManager");
+
+        // Create a simple MJPEG stream directly from the broadcast receiver
+        let mjpeg_stream = create_simple_mjpeg_stream(frame_receiver);
+
+        // Return the streaming response
+        return Ok(HttpResponse::Ok()
+            .content_type("multipart/x-mixed-replace; boundary=mjpeg_frame")
+            .insert_header(("Cache-Control", "no-cache, no-store, must-revalidate"))
+            .insert_header(("Pragma", "no-cache"))
+            .insert_header(("Expires", "0"))
+            .insert_header(("Connection", "keep-alive"))
+            .streaming(mjpeg_stream));
+    }
+
+    // Fall back to the original StreamManager-based approach
     let stream_id: Id = match stream_id_str.parse() {
         Ok(id) => id,
         Err(_) => {
@@ -503,7 +591,7 @@ pub async fn mjpeg_stream(
     // Get the session from the manager
     match state.stream_manager.get_session(&stream_id).await {
         Some(session) => {
-            info!(stream_id = %stream_id, "New client connected to MJPEG stream");
+            info!(stream_id = %stream_id, "New client connected to MJPEG stream via StreamManager");
 
             // Subscribe to the frame broadcaster
             let frame_receiver = session.subscribe();
@@ -883,4 +971,28 @@ fn create_capture_source_from_stream(
         }
         _ => Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
     }
+}
+
+/// Create a simple MJPEG stream from a broadcast receiver
+fn create_simple_mjpeg_stream(
+    receiver: broadcast::Receiver<bytes::Bytes>,
+) -> impl TokioStream<Item = std::result::Result<bytes::Bytes, actix_web::Error>> {
+    tokio_stream::wrappers::BroadcastStream::new(receiver).map(|result| match result {
+        Ok(frame_data) => {
+            // Create multipart frame with headers
+            let frame_header = format!(
+                "--mjpeg_frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+                frame_data.len()
+            );
+            // Combine header and data
+            let mut combined = bytes::BytesMut::from(frame_header.as_bytes());
+            combined.extend_from_slice(&frame_data);
+            combined.extend_from_slice(b"\r\n");
+            Ok(combined.freeze())
+        }
+        Err(e) => {
+            warn!("MJPEG stream error: {}", e);
+            Err(actix_web::error::ErrorInternalServerError("Stream error"))
+        }
+    })
 }

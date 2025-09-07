@@ -16,8 +16,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::time::Duration;
+use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
+use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 /// Status of a running capture
@@ -51,11 +53,15 @@ pub struct CaptureInfo {
     pub last_frame_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Handle for a running capture task
+/// Handle for a running capture task with broadcast capabilities
 struct CaptureTask {
     handle: JoinHandle<()>,
     info: CaptureInfo,
     capture_handle: Option<Arc<CaptureHandle>>,
+    /// Broadcast channel for real-time frame distribution to MJPEG streams
+    frame_sender: broadcast::Sender<Bytes>,
+    /// Latest snapshot data for immediate API responses
+    latest_snapshot: Arc<RwLock<Option<Bytes>>>,
 }
 
 impl std::fmt::Debug for CaptureTask {
@@ -67,6 +73,8 @@ impl std::fmt::Debug for CaptureTask {
                 "capture_handle",
                 &self.capture_handle.as_ref().map(|_| "CaptureHandle"),
             )
+            .field("subscribers", &self.frame_sender.receiver_count())
+            .field("has_latest_snapshot", &"Arc<RwLock<Option<Bytes>>>")
             .finish()
     }
 }
@@ -75,53 +83,24 @@ impl std::fmt::Debug for CaptureTask {
 pub struct CaptureManager {
     db_pool: sqlx::SqlitePool,
     running_captures: Arc<RwLock<HashMap<String, CaptureTask>>>,
-    storage_service: ArtifactStorageService<StorageManager>,
 }
 
 impl CaptureManager {
     /// Create a new CaptureManager
     pub fn new(db_pool: sqlx::SqlitePool) -> Self {
-        // Use default storage configuration (backward compatibility)
-        let storage_config = gl_config::StorageConfig::default();
-        Self::with_storage_config(db_pool, storage_config)
-    }
-
-    /// Create a new CaptureManager with custom storage configuration
-    pub fn with_storage_config(
-        db_pool: sqlx::SqlitePool,
-        storage_config: gl_config::StorageConfig,
-    ) -> Self {
-        // Create storage configuration for filesystem storage
-        let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
-
-        // Create the artifacts directory if it doesn't exist
-        if !artifacts_dir.exists() {
-            if let Err(e) = std::fs::create_dir_all(&artifacts_dir) {
-                warn!("Failed to create artifacts directory: {}", e);
-            }
-        }
-
-        let gl_storage_config = gl_storage::StorageConfig {
-            base_dir: Some(artifacts_dir),
-            ..Default::default()
-        };
-
-        let storage_manager =
-            StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
-
-        let artifact_config = ArtifactStorageConfig {
-            base_uri: format!("file://{}", storage_config.artifacts_dir),
-            snapshot_extension: "jpg".to_string(),
-            include_timestamp: true,
-        };
-
-        let storage_service = ArtifactStorageService::new(storage_manager, artifact_config);
-
         Self {
             db_pool,
             running_captures: Arc::new(RwLock::new(HashMap::new())),
-            storage_service,
         }
+    }
+
+    /// Create a new CaptureManager with custom storage configuration (legacy compatibility)
+    pub fn with_storage_config(
+        db_pool: sqlx::SqlitePool,
+        _storage_config: gl_config::StorageConfig,
+    ) -> Self {
+        // Storage service is now created per-task for thread safety
+        Self::new(db_pool)
     }
 
     /// Start a capture from a stream
@@ -161,16 +140,46 @@ impl CaptureManager {
             last_frame_at: None,
         };
 
+        // Create broadcast channel for real-time frame distribution (capacity of 10 frames)
+        let (frame_sender, _) = broadcast::channel(10);
+        let latest_snapshot = Arc::new(RwLock::new(None));
+
         // Start the capture task
         let db_pool = self.db_pool.clone();
         let stream_clone = stream.clone();
         let running_captures = self.running_captures.clone();
         let stream_id_clone = stream_id.to_string();
+        let frame_sender_clone = frame_sender.clone();
+        let latest_snapshot_clone = latest_snapshot.clone();
+        // Note: We pass storage_service by reference to avoid clone issues
+        // The spawned task will create its own copy of necessary components
 
         let handle = tokio::spawn(async move {
-            let result =
-                Self::run_capture_task(db_pool.clone(), stream_clone, stream_id_clone.clone())
-                    .await;
+            // Create fresh storage service instance for the async task
+            let storage_config = gl_config::StorageConfig::default();
+            let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
+            let gl_storage_config = gl_storage::StorageConfig {
+                base_dir: Some(artifacts_dir),
+                ..Default::default()
+            };
+            let storage_manager = StorageManager::new(gl_storage_config)
+                .expect("Failed to create storage manager for async task");
+            let artifact_config = ArtifactStorageConfig {
+                base_uri: format!("file://{}", storage_config.artifacts_dir),
+                snapshot_extension: "jpg".to_string(),
+                include_timestamp: true,
+            };
+            let storage_service = ArtifactStorageService::new(storage_manager, artifact_config);
+
+            let result = Self::run_persistent_capture_task(
+                db_pool.clone(),
+                storage_service,
+                stream_clone,
+                stream_id_clone.clone(),
+                frame_sender_clone,
+                latest_snapshot_clone,
+            )
+            .await;
 
             // Always remove from running captures when task completes
             {
@@ -207,6 +216,8 @@ impl CaptureManager {
             handle,
             info: capture_info,
             capture_handle: None, // TODO: Store actual capture handle for snapshot access
+            frame_sender,
+            latest_snapshot,
         };
 
         captures.insert(stream_id.to_string(), task);
@@ -269,10 +280,55 @@ impl CaptureManager {
         captures.contains_key(stream_id)
     }
 
-    /// Take a snapshot from a running stream
-    /// For now, this creates a temporary capture to get a snapshot
-    /// TODO: In production, store capture handles in CaptureTask for direct access
-    pub async fn take_stream_snapshot(&self, stream_id: &str) -> Result<bytes::Bytes> {
+    /// Get the latest snapshot from a running stream (fast database/memory lookup)
+    pub async fn get_latest_snapshot(&self, stream_id: &str) -> Result<bytes::Bytes> {
+        // First try to get from running capture task for real-time data
+        if let Some(latest_snapshot) = {
+            let captures = self.running_captures.read().await;
+            captures
+                .get(stream_id)
+                .map(|task| task.latest_snapshot.clone())
+        } {
+            let snapshot_guard = latest_snapshot.read().await;
+            if let Some(ref snapshot) = *snapshot_guard {
+                return Ok(snapshot.clone());
+            }
+        }
+
+        // Fall back to database for the latest stored snapshot
+        let repo = SnapshotRepository::new(&self.db_pool);
+        if let Some(latest_snapshot) = repo.get_latest_by_template(stream_id).await? {
+            // Read the file from storage
+            let file_path = PathBuf::from(&latest_snapshot.file_path);
+            match tokio::fs::read(&file_path).await {
+                Ok(data) => Ok(Bytes::from(data)),
+                Err(e) => {
+                    warn!(
+                        stream_id = %stream_id,
+                        error = %e,
+                        file_path = %latest_snapshot.file_path,
+                        "Failed to read snapshot file, falling back to on-demand capture"
+                    );
+                    self.take_stream_snapshot_fallback(stream_id).await
+                }
+            }
+        } else {
+            // No snapshot available, try on-demand capture as fallback
+            self.take_stream_snapshot_fallback(stream_id).await
+        }
+    }
+
+    /// Subscribe to real-time frame broadcast from a running stream
+    pub async fn subscribe_to_stream(&self, stream_id: &str) -> Option<broadcast::Receiver<Bytes>> {
+        let captures = self.running_captures.read().await;
+        captures
+            .get(stream_id)
+            .map(|task| task.frame_sender.subscribe())
+    }
+
+    /// Take a snapshot from a running stream (fallback method - on-demand capture)
+    /// This is the original behavior, used when no running capture exists
+    pub async fn take_stream_snapshot_fallback(&self, stream_id: &str) -> Result<bytes::Bytes> {
         // Check if stream is running
         if !self.is_stream_running(stream_id).await {
             return Err(Error::NotFound(
@@ -306,7 +362,141 @@ impl CaptureManager {
         }
     }
 
-    /// Internal method to run a capture task
+    /// Internal method to run a persistent capture task with broadcast capabilities
+    async fn run_persistent_capture_task(
+        db_pool: sqlx::SqlitePool,
+        storage_service: ArtifactStorageService<StorageManager>,
+        stream: Stream,
+        stream_id: String,
+        frame_sender: broadcast::Sender<Bytes>,
+        latest_snapshot: Arc<RwLock<Option<Bytes>>>,
+    ) -> Result<()> {
+        info!(stream_id = %stream_id, "Running persistent capture task with broadcast");
+
+        // Parse stream config
+        let config: Value = serde_json::from_str(&stream.config)
+            .map_err(|e| Error::Config(format!("Invalid stream config JSON: {}", e)))?;
+
+        let kind = config
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Config("Stream config missing 'kind' field".to_string()))?;
+
+        // Update status to active with timestamp
+        let stream_repo = StreamRepository::new(&db_pool);
+        stream_repo
+            .update_execution_status(&stream_id, "active", Some(&chrono::Utc::now().to_rfc3339()))
+            .await?;
+
+        // Create and start the capture source based on stream type
+        let capture_handle = match kind {
+            "file" => Self::create_file_capture(&config).await?,
+            "ffmpeg" => Self::create_ffmpeg_capture(&config).await?,
+            "website" => Self::create_website_capture(&config).await?,
+            "yt" => Self::create_yt_capture(&config).await?,
+            _ => return Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
+        };
+
+        // Get snapshot interval from config (default: 5 seconds)
+        let snapshot_interval = config
+            .get("snapshot_interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5);
+
+        // Setup snapshot timer
+        let mut snapshot_timer = interval(Duration::from_secs(snapshot_interval));
+
+        // Get duration from config (default: 1 hour, 0 = infinite)
+        let duration = config
+            .get("duration")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3600); // Default 1 hour
+
+        // Setup end time for finite duration captures
+        let end_time = if duration > 0 {
+            Some(tokio::time::Instant::now() + Duration::from_secs(duration))
+        } else {
+            None
+        };
+
+        // Persistent capture loop with graceful shutdown
+        loop {
+            tokio::select! {
+                _ = snapshot_timer.tick() => {
+                    // Take snapshot
+                    match capture_handle.snapshot().await {
+                        Ok(snapshot_data) => {
+                            debug!(
+                                stream_id = %stream_id,
+                                frame_size = snapshot_data.len(),
+                                subscribers = frame_sender.receiver_count(),
+                                "Captured frame for persistent task"
+                            );
+
+                            // Store latest snapshot in memory for fast API access
+                            {
+                                let mut snapshot_guard = latest_snapshot.write().await;
+                                *snapshot_guard = Some(snapshot_data.clone());
+                            }
+
+                            // Broadcast to MJPEG streams (ignore errors if no subscribers)
+                            let _ = frame_sender.send(snapshot_data.clone());
+
+                            // Store to database and filesystem (directly, not spawned for simplicity)
+                            if let Err(e) = Self::store_snapshot_async(
+                                &storage_service,
+                                &db_pool,
+                                &stream_id,
+                                &stream.user_id,
+                                &snapshot_data,
+                            ).await {
+                                warn!(
+                                    stream_id = %stream_id,
+                                    error = %e,
+                                    "Failed to store snapshot"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                stream_id = %stream_id,
+                                error = %e,
+                                "Failed to capture frame in persistent task"
+                            );
+                        }
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    info!(stream_id = %stream_id, "Persistent capture interrupted by signal");
+                    break;
+                }
+                _ = async {
+                    if let Some(end_time) = end_time {
+                        tokio::time::sleep_until(end_time).await;
+                    } else {
+                        // For infinite duration, never complete this branch
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    info!(stream_id = %stream_id, duration = duration, "Persistent capture completed after duration limit");
+                    break;
+                }
+            }
+
+            // Check if we should exit due to duration limit
+            if let Some(end_time) = end_time {
+                if tokio::time::Instant::now() >= end_time {
+                    break;
+                }
+            }
+        }
+
+        drop(capture_handle);
+        Ok(())
+    }
+
+    /// Internal method to run a capture task (legacy method for compatibility)
+    #[allow(dead_code)]
     async fn run_capture_task(
         db_pool: sqlx::SqlitePool,
         stream: Stream,
@@ -356,6 +546,7 @@ impl CaptureManager {
         }
     }
 
+    #[allow(dead_code)]
     async fn run_file_capture(&self, config: &Value, stream_id: &str, user_id: &str) -> Result<()> {
         let file_path = config
             .get("file_path")
@@ -427,6 +618,7 @@ impl CaptureManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn run_ffmpeg_capture(
         &self,
         config: &Value,
@@ -517,6 +709,7 @@ impl CaptureManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     #[cfg(feature = "website")]
     async fn run_website_capture(
         &self,
@@ -635,6 +828,7 @@ impl CaptureManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     #[cfg(not(feature = "website"))]
     async fn run_website_capture(
         &self,
@@ -647,6 +841,7 @@ impl CaptureManager {
         ))
     }
 
+    #[allow(dead_code)]
     async fn run_yt_capture(&self, config: &Value, stream_id: &str, user_id: &str) -> Result<()> {
         let url = config
             .get("url")
@@ -924,9 +1119,143 @@ impl CaptureManager {
         Ok(snapshot)
     }
 
-    /// Store snapshot using ArtifactStorageService and update database
-    async fn store_snapshot(
-        &self,
+    /// Create file capture source
+    async fn create_file_capture(config: &Value) -> Result<Arc<CaptureHandle>> {
+        let file_path = config
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                Error::Config("File stream config missing 'file_path' field".to_string())
+            })?;
+
+        // Validate file path for security (prevent path traversal)
+        let source_path = PathBuf::from(file_path);
+        if source_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Error::Config("Path traversal not allowed".to_string()));
+        }
+
+        let file_source = FileSource::new(&source_path);
+        let handle = file_source.start().await?;
+        Ok(Arc::new(handle))
+    }
+
+    /// Create FFmpeg capture source
+    async fn create_ffmpeg_capture(config: &Value) -> Result<Arc<CaptureHandle>> {
+        let source_url = config
+            .get("source_url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                Error::Config("FFmpeg stream config missing 'source_url' field".to_string())
+            })?;
+
+        let mut ffmpeg_config = FfmpegConfig {
+            input_url: source_url.to_string(),
+            ..Default::default()
+        };
+
+        // Parse optional configuration
+        if let Some(hw_accel) = config.get("hardware_accel").and_then(|v| v.as_str()) {
+            ffmpeg_config.hardware_accel = match hw_accel.to_lowercase().as_str() {
+                "vaapi" => HardwareAccel::Vaapi,
+                "cuda" => HardwareAccel::Cuda,
+                "qsv" => HardwareAccel::Qsv,
+                "videotoolbox" => HardwareAccel::VideoToolbox,
+                _ => HardwareAccel::None,
+            };
+        }
+
+        // Safe timeout handling - prevent overflow
+        if let Some(timeout_val) = config.get("timeout").and_then(|v| v.as_u64()) {
+            let safe_timeout = std::cmp::min(timeout_val, u32::MAX as u64) as u32;
+            ffmpeg_config.timeout = Some(safe_timeout);
+        }
+
+        let ffmpeg_source = FfmpegSource::new(ffmpeg_config);
+        let handle = ffmpeg_source.start().await?;
+        Ok(Arc::new(handle))
+    }
+
+    /// Create website capture source
+    #[cfg(feature = "website")]
+    async fn create_website_capture(config: &Value) -> Result<Arc<CaptureHandle>> {
+        let url = config.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+            Error::Config("Website stream config missing 'url' field".to_string())
+        })?;
+
+        let mut website_config = WebsiteConfig {
+            url: url.to_string(),
+            ..Default::default()
+        };
+
+        // Parse optional fields with safe casting
+        if let Some(headless) = config.get("headless").and_then(|v| v.as_bool()) {
+            website_config.headless = headless;
+        }
+
+        if let Some(width) = config.get("width").and_then(|v| v.as_u64()) {
+            website_config.width = std::cmp::min(width, u32::MAX as u64) as u32;
+        }
+
+        if let Some(height) = config.get("height").and_then(|v| v.as_u64()) {
+            website_config.height = std::cmp::min(height, u32::MAX as u64) as u32;
+        }
+
+        let client =
+            gl_capture::website_source::HeadlessChromeClient::new_boxed().map_err(|e| {
+                Error::Config(format!("Failed to create embedded Chrome client: {}", e))
+            })?;
+        let website_source = WebsiteSource::new(website_config, client);
+        let handle = website_source.start().await?;
+        Ok(Arc::new(handle))
+    }
+
+    /// Create website capture source (stub when website feature disabled)
+    #[cfg(not(feature = "website"))]
+    async fn create_website_capture(_config: &Value) -> Result<Arc<CaptureHandle>> {
+        Err(Error::Config(
+            "Website capture not enabled - compile with 'website' feature".to_string(),
+        ))
+    }
+
+    /// Create YouTube capture source
+    async fn create_yt_capture(config: &Value) -> Result<Arc<CaptureHandle>> {
+        let url = config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Config("yt stream config missing 'url' field".to_string()))?;
+
+        let mut ytdlp_config = YtDlpConfig {
+            url: url.to_string(),
+            ..Default::default()
+        };
+
+        // Parse optional fields
+        if let Some(format) = config.get("format").and_then(|v| v.as_str()) {
+            ytdlp_config.format = match format {
+                "best" => OutputFormat::Best,
+                "worst" => OutputFormat::Worst,
+                _ => OutputFormat::Best,
+            };
+        }
+
+        // Safe timeout handling
+        if let Some(timeout_val) = config.get("timeout").and_then(|v| v.as_u64()) {
+            let safe_timeout = std::cmp::min(timeout_val, u32::MAX as u64) as u32;
+            ytdlp_config.timeout = Some(safe_timeout);
+        }
+
+        let ytdlp_source = YtDlpSource::new(ytdlp_config);
+        let handle = ytdlp_source.start().await?;
+        Ok(Arc::new(handle))
+    }
+
+    /// Store snapshot asynchronously (static method for spawned tasks)
+    async fn store_snapshot_async(
+        storage_service: &ArtifactStorageService<StorageManager>,
+        db_pool: &sqlx::SqlitePool,
         stream_id: &str,
         user_id: &str,
         snapshot_data: &[u8],
@@ -934,8 +1263,93 @@ impl CaptureManager {
         let snapshot_bytes = Bytes::from(snapshot_data.to_vec());
 
         // Store the snapshot file using ArtifactStorageService
-        let stored_artifact = self
-            .storage_service
+        let stored_artifact = storage_service
+            .store_snapshot(stream_id, snapshot_bytes)
+            .await?;
+
+        // Extract file path from storage URI for database
+        let file_path = stored_artifact.uri.path().unwrap_or_default().to_string();
+
+        // Create database record with file path reference
+        let snapshot_repo = SnapshotRepository::new(db_pool);
+        let request = CreateSnapshotRequest {
+            stream_id: stream_id.to_string(),
+            user_id: user_id.to_string(),
+            file_path,
+            storage_uri: stored_artifact.uri.to_string(),
+            content_type: stored_artifact.content_type,
+            width: None,
+            height: None,
+            file_size: stored_artifact.size as i64,
+            checksum: stored_artifact.checksum,
+            etag: stored_artifact.etag,
+            captured_at: now_iso8601(),
+        };
+
+        match snapshot_repo.create(request).await {
+            Ok(snapshot) => {
+                debug!(
+                    "Stored snapshot {} for stream {} at {}",
+                    snapshot.id, stream_id, stored_artifact.uri
+                );
+
+                // Clean up old snapshots to prevent disk space bloat
+                if let Err(e) = snapshot_repo.cleanup_old_snapshots(stream_id, 20).await {
+                    warn!(
+                        stream_id = %stream_id,
+                        error = %e,
+                        "Failed to cleanup old snapshots"
+                    );
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to store snapshot for stream {}: {}", stream_id, e);
+
+                // Try to clean up the stored file on database error
+                if let Err(cleanup_error) =
+                    storage_service.delete_artifact(&stored_artifact.uri).await
+                {
+                    warn!(
+                        "Failed to clean up stored artifact after database error: {}",
+                        cleanup_error
+                    );
+                }
+
+                Err(e)
+            }
+        }
+    }
+
+    /// Store snapshot using ArtifactStorageService and update database
+    #[allow(dead_code)]
+    async fn store_snapshot(
+        &self,
+        stream_id: &str,
+        user_id: &str,
+        snapshot_data: &[u8],
+    ) -> Result<()> {
+        // Create storage service for this operation
+        let storage_config = gl_config::StorageConfig::default();
+        let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
+        let gl_storage_config = gl_storage::StorageConfig {
+            base_dir: Some(artifacts_dir),
+            ..Default::default()
+        };
+        let storage_manager =
+            StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
+        let artifact_config = ArtifactStorageConfig {
+            base_uri: format!("file://{}", storage_config.artifacts_dir),
+            snapshot_extension: "jpg".to_string(),
+            include_timestamp: true,
+        };
+        let storage_service = ArtifactStorageService::new(storage_manager, artifact_config);
+
+        let snapshot_bytes = Bytes::from(snapshot_data.to_vec());
+
+        // Store the snapshot file using ArtifactStorageService
+        let stored_artifact = storage_service
             .store_snapshot(stream_id, snapshot_bytes)
             .await?;
 
@@ -970,10 +1384,8 @@ impl CaptureManager {
                 error!("Failed to store snapshot for stream {}: {}", stream_id, e);
 
                 // Try to clean up the stored file on database error
-                if let Err(cleanup_error) = self
-                    .storage_service
-                    .delete_artifact(&stored_artifact.uri)
-                    .await
+                if let Err(cleanup_error) =
+                    storage_service.delete_artifact(&stored_artifact.uri).await
                 {
                     warn!(
                         "Failed to clean up stored artifact after database error: {}",

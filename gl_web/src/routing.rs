@@ -19,6 +19,7 @@ use utoipa_swagger_ui::SwaggerUi;
         auth_routes::login,
         public::me,
         stream::snapshot,
+        stream::recent_snapshots,
         stream::mjpeg_stream,
         stream::start_stream,
         stream::stop_stream,
@@ -195,6 +196,7 @@ pub fn create_app(
                         ))
                         .wrap(middleware::auth::RequireAuth::new())
                         .service(stream::snapshot)
+                        .service(stream::recent_snapshots)
                         .service(stream::mjpeg_stream)
                         .service(stream::start_stream)
                         .service(stream::stop_stream)
