@@ -28,7 +28,9 @@ async fn test_multi_channel_notification() {
         },
         NotificationChannel::Webhook {
             // Local endpoint provided by Wiremock to avoid external HTTP requests
-            url: format!("{}/post", server.uri()).parse().unwrap(),
+            url: format!("{}/post", server.uri())
+                .parse()
+                .expect("valid WireMock URL for webhook channel"),
             headers: None,
             method: Some("POST".to_string()),
         },
