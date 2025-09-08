@@ -2250,6 +2250,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "gl_ai",
  "gl_analysis",
  "gl_cap",
  "gl_capture",

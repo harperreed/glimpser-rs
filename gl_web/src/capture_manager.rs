@@ -143,9 +143,20 @@ impl CaptureManager {
         if app_config.features.enable_ai {
             info!("Initializing analysis service with AI enabled");
 
-            // Create analysis configuration
+            // Create analysis configuration with online AI enabled
+            let mut ai_config = app_config.ai.to_ai_config();
+
+            // When AI features are enabled, ensure online mode is active
+            ai_config.use_online = true;
+
+            // Validate that we have an API key for online mode
+            if ai_config.api_key.is_none() || ai_config.api_key.as_ref().unwrap().is_empty() {
+                warn!("AI features enabled but no API key provided, falling back to offline mode");
+                ai_config.use_online = false;
+            }
+
             let analysis_config = AnalysisConfig {
-                ai: Some(app_config.ai.to_ai_config()),
+                ai: Some(ai_config),
                 ..Default::default()
             };
 
