@@ -88,10 +88,22 @@ pub struct CaptureManager {
 impl CaptureManager {
     /// Create a new CaptureManager
     pub fn new(db_pool: sqlx::SqlitePool) -> Self {
-        Self {
-            db_pool,
+        let manager = Self {
+            db_pool: db_pool.clone(),
             running_captures: Arc::new(RwLock::new(HashMap::new())),
-        }
+        };
+
+        // Reset any stale "active" statuses from previous server runs
+        tokio::spawn(async move {
+            let stream_repo = StreamRepository::new(&db_pool);
+            if let Err(e) = stream_repo.reset_stale_active_statuses().await {
+                warn!("Failed to reset stale stream statuses: {}", e);
+            } else {
+                debug!("Reset stale stream statuses on startup");
+            }
+        });
+
+        manager
     }
 
     /// Create a new CaptureManager with custom storage configuration (legacy compatibility)

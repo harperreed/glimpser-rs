@@ -6,6 +6,7 @@
 use crate::auth::{JwtAuth, PasswordAuth};
 use askama::Template;
 use axum::{
+    body::Body,
     extract::{Form, Path, State},
     http::{
         header::{LOCATION, SET_COOKIE},
@@ -15,9 +16,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use gl_capture::{CaptureSource, FileSource};
 use gl_core::Error;
 use gl_db::{StreamRepository, UserRepository};
 use serde::{Deserialize, Serialize};
+use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tracing::{debug, warn};
 
 use crate::AppState;
@@ -274,6 +277,12 @@ pub fn create_frontend_router() -> Router<FrontendState> {
             "/api/settings/streams/:id/stop",
             axum::routing::post(admin_stop_stream),
         )
+        // Stream API endpoints
+        .route("/api/stream/:id/snapshot", get(stream_snapshot))
+        .route("/api/stream/:id/thumbnail", get(stream_thumbnail))
+        .route("/api/stream/:id/mjpeg", get(stream_mjpeg))
+        .route("/api/stream/:id/start", axum::routing::post(stream_start))
+        .route("/api/stream/:id/stop", axum::routing::post(stream_stop))
 }
 
 /// Root handler - redirect to dashboard
@@ -1416,4 +1425,257 @@ async fn admin_stop_stream(
                 .into_response()
         }
     }
+}
+
+/// Stream snapshot API endpoint
+async fn stream_snapshot(
+    Path(stream_id): Path<String>,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    use axum::response::Response;
+
+    tracing::info!("Stream snapshot requested for: {}", stream_id);
+
+    // Try to get snapshot from capture manager first
+    match frontend_state
+        .app_state
+        .capture_manager
+        .get_latest_snapshot(&stream_id)
+        .await
+    {
+        Ok(snapshot_bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "image/jpeg")
+            .header("cache-control", "no-cache")
+            .body(axum::body::Body::from(snapshot_bytes.to_vec()))
+            .unwrap()
+            .into_response(),
+        Err(_) => {
+            // Fall back to direct capture if no cached snapshot
+            match take_snapshot_direct(&frontend_state, &stream_id).await {
+                Ok(jpeg_bytes) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "image/jpeg")
+                    .header("cache-control", "no-cache")
+                    .body(axum::body::Body::from(jpeg_bytes))
+                    .unwrap()
+                    .into_response(),
+                Err(e) => {
+                    warn!("Failed to capture snapshot for stream {}: {}", stream_id, e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to capture snapshot: {}", e),
+                    )
+                        .into_response()
+                }
+            }
+        }
+    }
+}
+
+/// Stream thumbnail API endpoint
+async fn stream_thumbnail(
+    Path(stream_id): Path<String>,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    tracing::info!("Stream thumbnail requested for: {}", stream_id);
+
+    // Thumbnail is just a cached snapshot - delegate to snapshot endpoint
+    stream_snapshot(Path(stream_id), State(frontend_state)).await
+}
+
+/// MJPEG streaming API endpoint - Real multipart streaming
+async fn stream_mjpeg(
+    Path(stream_id): Path<String>,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    tracing::info!("MJPEG stream requested for: {}", stream_id);
+
+    // Check if stream exists and is active
+    match fetch_single_stream(&frontend_state, &stream_id).await {
+        Ok(Some(stream)) if stream.status == "active" => {
+            // Subscribe to the real-time frame broadcast
+            match frontend_state
+                .app_state
+                .capture_manager
+                .subscribe_to_stream(&stream_id)
+                .await
+            {
+                Some(mut frame_receiver) => {
+                    tracing::info!("🎥 Starting real MJPEG stream for: {}", stream_id);
+
+                    // Create the multipart MJPEG stream
+                    let boundary = "frame";
+                    let stream = async_stream::stream! {
+                        // Send initial boundary
+                        yield Ok::<bytes::Bytes, std::convert::Infallible>(bytes::Bytes::from(format!("\r\n--{}\r\n", boundary)));
+
+                        loop {
+                            match frame_receiver.recv().await {
+                                Ok(frame_bytes) => {
+                                    // Send MJPEG frame with proper headers
+                                    let frame_header = format!(
+                                        "Content-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+                                        frame_bytes.len()
+                                    );
+
+                                    yield Ok(bytes::Bytes::from(frame_header));
+                                    yield Ok(frame_bytes);
+                                    yield Ok(bytes::Bytes::from(format!("\r\n--{}\r\n", boundary)));
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                                    tracing::warn!("MJPEG stream {} lagged, missed {} frames", stream_id, missed);
+                                    continue;
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                    tracing::info!("MJPEG stream {} ended - capture stopped", stream_id);
+                                    break;
+                                }
+                            }
+                        }
+                    };
+
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(
+                            "content-type",
+                            format!("multipart/x-mixed-replace; boundary={}", boundary),
+                        )
+                        .header("cache-control", "no-cache, no-store, must-revalidate")
+                        .header("pragma", "no-cache")
+                        .header("expires", "0")
+                        .header("connection", "keep-alive")
+                        .body(Body::from_stream(stream))
+                        .unwrap()
+                        .into_response()
+                }
+                None => {
+                    tracing::warn!(
+                        "Stream {} is marked active but not running in capture manager",
+                        stream_id
+                    );
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Stream capture not running",
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Ok(Some(_)) => (StatusCode::SERVICE_UNAVAILABLE, "Stream is not active").into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "Stream not found").into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+            .into_response(),
+    }
+}
+
+/// Stream start API endpoint
+async fn stream_start(
+    Path(stream_id): Path<String>,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    tracing::info!("Stream start requested for: {}", stream_id);
+
+    // Use the existing start logic from admin_start_stream
+    admin_start_stream(Path(stream_id), State(frontend_state)).await
+}
+
+/// Stream stop API endpoint
+async fn stream_stop(
+    Path(stream_id): Path<String>,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    tracing::info!("Stream stop requested for: {}", stream_id);
+
+    // Use the existing stop logic from admin_stop_stream
+    admin_stop_stream(Path(stream_id), State(frontend_state)).await
+}
+
+/// Take a direct snapshot from a stream (based on Actix-web implementation)
+async fn take_snapshot_direct(
+    frontend_state: &FrontendState,
+    stream_id: &str,
+) -> Result<Vec<u8>, gl_core::Error> {
+    // Get the stream from the database
+    let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
+    let stream = stream_repo
+        .find_by_id(stream_id)
+        .await?
+        .ok_or_else(|| gl_core::Error::NotFound(format!("Stream {} not found", stream_id)))?;
+
+    // Parse the stream config to determine source type
+    let config: serde_json::Value = serde_json::from_str(&stream.config)
+        .map_err(|e| gl_core::Error::Config(format!("Invalid stream config JSON: {}", e)))?;
+
+    // Determine source type from config kind field
+    let kind = config
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| gl_core::Error::Config("Stream config missing 'kind' field".to_string()))?;
+
+    let jpeg_bytes = match kind {
+        "file" => {
+            // File-based source
+            let file_path = config
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    gl_core::Error::Config(
+                        "File stream config missing 'file_path' field".to_string(),
+                    )
+                })?;
+
+            use std::path::PathBuf;
+            let source_path = PathBuf::from(file_path);
+            let file_source = gl_capture::FileSource::new(&source_path);
+            let handle = file_source.start().await?;
+            handle.snapshot().await?
+        }
+        "website" => {
+            // Website capture - try capture manager first, then trigger manual capture
+            if let Ok(snapshot_bytes) = frontend_state
+                .app_state
+                .capture_manager
+                .get_latest_snapshot(stream_id)
+                .await
+            {
+                snapshot_bytes
+            } else {
+                // Trigger a manual capture for this website stream
+                debug!("Attempting fallback capture for stream: {}", stream_id);
+                match frontend_state
+                    .app_state
+                    .capture_manager
+                    .take_stream_snapshot_fallback(stream_id)
+                    .await
+                {
+                    Ok(jpeg_bytes) => {
+                        debug!("✅ Fallback capture successful for stream: {}", stream_id);
+                        jpeg_bytes
+                    }
+                    Err(e) => {
+                        warn!(
+                            "❌ Failed to trigger website capture for {}: {}",
+                            stream_id, e
+                        );
+                        return Err(gl_core::Error::Config(format!(
+                            "Website capture failed: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err(gl_core::Error::Config(format!(
+                "Unsupported stream type: {}",
+                kind
+            )));
+        }
+    };
+
+    Ok(jpeg_bytes.to_vec())
 }

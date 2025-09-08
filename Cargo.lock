@@ -2236,6 +2236,7 @@ dependencies = [
  "argon2",
  "askama",
  "askama_axum",
+ "async-stream",
  "axum",
  "bytes",
  "chrono",
