@@ -118,7 +118,7 @@ impl CaptureSource for WebsiteSource {
         // 2. Each capture needs its own tab context to avoid interference
         // 3. Browser crashes in one capture don't affect others
         // 4. Resource cleanup is simpler when each handle owns its browser
-        // 
+        //
         // The injected client (self.client) is preserved for API compatibility but not used.
         // This allows the same WebsiteSource instance to create multiple concurrent handles.
         let client = HeadlessChromeClient::new_boxed().map_err(|e| {
