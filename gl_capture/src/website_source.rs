@@ -112,9 +112,15 @@ impl CaptureSource for WebsiteSource {
     #[instrument(skip(self))]
     async fn start(&self) -> Result<CaptureHandle> {
         info!(url = %self.config.url, "Starting website capture");
-        // Note: For embedded mode, we always create a fresh HeadlessChromeClient
-        // since each capture session needs its own browser instance to avoid conflicts.
-        // The injected client is preserved for compatibility but not used in this mode.
+        // DESIGN DECISION: For embedded mode, we always create a fresh HeadlessChromeClient
+        // for each capture handle. This is intentional because:
+        // 1. Browser instances cannot be safely shared between concurrent captures
+        // 2. Each capture needs its own tab context to avoid interference
+        // 3. Browser crashes in one capture don't affect others
+        // 4. Resource cleanup is simpler when each handle owns its browser
+        // 
+        // The injected client (self.client) is preserved for API compatibility but not used.
+        // This allows the same WebsiteSource instance to create multiple concurrent handles.
         let client = HeadlessChromeClient::new_boxed().map_err(|e| {
             Error::Config(format!("Failed to create embedded Chrome client: {}", e))
         })?;
@@ -463,56 +469,67 @@ impl WebDriverClient for HeadlessChromeClient {
                 })?
             };
 
-            // Get element bounding box for clipping
-            let rect_obj = element
-                .call_js_fn(
-                    "function() { 
-                        const r = this.getBoundingClientRect(); 
-                        return {x: r.x, y: r.y, width: r.width, height: r.height}; 
-                    }",
-                    vec![],
-                    false,
-                )
-                .map_err(|e| Error::Config(format!("Failed to get element bounding box: {}", e)))?
-                .value
-                .ok_or_else(|| Error::Config("Element bounding box missing".to_string()))?;
-
-            let x = rect_obj
-                .get("x")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| Error::Config("Element x coordinate missing".to_string()))?;
-            let y = rect_obj
-                .get("y")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| Error::Config("Element y coordinate missing".to_string()))?;
-            let width = rect_obj
-                .get("width")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| Error::Config("Element width missing".to_string()))?;
-            let height = rect_obj
-                .get("height")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| Error::Config("Element height missing".to_string()))?;
-
-            if width <= 0.0 || height <= 0.0 {
-                return Err(Error::Config("Element has zero size".to_string()));
+            // Try to get element screenshot with clipping, fallback to element screenshot
+            match element.call_js_fn(
+                "function() {
+                    const r = this.getBoundingClientRect();
+                    return {x: r.x, y: r.y, width: r.width, height: r.height};
+                }",
+                vec![],
+                false,
+            ) {
+                Ok(result) => {
+                    if let Some(rect_obj) = result.value {
+                        if let (Some(x), Some(y), Some(width), Some(height)) = (
+                            rect_obj.get("x").and_then(|v| v.as_f64()),
+                            rect_obj.get("y").and_then(|v| v.as_f64()),
+                            rect_obj.get("width").and_then(|v| v.as_f64()),
+                            rect_obj.get("height").and_then(|v| v.as_f64()),
+                        ) {
+                            if width > 0.0 && height > 0.0 {
+                                let clip = headless_chrome::protocol::cdp::Page::Viewport {
+                                    x,
+                                    y,
+                                    width,
+                                    height,
+                                    scale: 1.0,
+                                };
+                                tab.capture_screenshot(
+                                    headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                                    None,
+                                    Some(clip),
+                                    true,
+                                )
+                                .map_err(|e| Error::Config(format!("Failed to capture element screenshot with clipping: {}", e)))?
+                            } else {
+                                return Err(Error::Config("Element has zero size".to_string()));
+                            }
+                        } else {
+                            // Fallback to regular element screenshot
+                            element
+                                .capture_screenshot(
+                                    headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                                )
+                                .map_err(|e| Error::Config(format!("Failed to capture element screenshot: {}", e)))?
+                        }
+                    } else {
+                        // Fallback to regular element screenshot
+                        element
+                            .capture_screenshot(
+                                headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                            )
+                            .map_err(|e| Error::Config(format!("Failed to capture element screenshot: {}", e)))?
+                    }
+                }
+                Err(_) => {
+                    // Fallback to regular element screenshot if bounding box detection fails
+                    element
+                        .capture_screenshot(
+                            headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                        )
+                        .map_err(|e| Error::Config(format!("Failed to capture element screenshot: {}", e)))?
+                }
             }
-
-            let clip = headless_chrome::protocol::cdp::Page::Viewport {
-                x,
-                y,
-                width,
-                height,
-                scale: 1.0,
-            };
-
-            tab.capture_screenshot(
-                headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
-                None,
-                Some(clip),
-                true,
-            )
-            .map_err(|e| Error::Config(format!("Failed to capture element screenshot: {}", e)))?
         } else {
             // Full page screenshot
             tab.capture_screenshot(
