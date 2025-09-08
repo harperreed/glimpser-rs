@@ -28,7 +28,7 @@ jobs:
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \
-            libgstreamer-rtsp-server-1.0-dev \
+            libgstreamer-plugins-good1.0-dev \
             libclang-dev \
             llvm-dev
 
