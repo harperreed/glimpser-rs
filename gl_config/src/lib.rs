@@ -352,7 +352,7 @@ impl Config {
             .set_default("security.argon2_params.memory_cost", 19456)?
             .set_default("security.argon2_params.time_cost", 2)?
             .set_default("security.argon2_params.parallelism", 1)?
-            .set_default("security.secure_cookies", false)?
+            .set_default("security.secure_cookies", true)?
             .set_default("features.enable_rtsp", false)?
             .set_default("features.enable_ai", false)?
             .set_default("storage.artifacts_dir", "data/artifacts")?
