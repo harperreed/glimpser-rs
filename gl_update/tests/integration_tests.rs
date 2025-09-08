@@ -1,5 +1,5 @@
-// ABOUTME: Provides integration tests for the update system.
-// ABOUTME: Verifies release fetching, signature validation, and health checks.
+//! Integration tests for the update system.
+//! Verifies release fetching, signature validation, and health checks.
 //! Integration tests for the update system
 
 use bytes::Bytes;
