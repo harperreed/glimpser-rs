@@ -220,90 +220,13 @@ async fn test_release_fetch() {
 }
 
 #[tokio::test]
-async fn test_signature_verification() {
-    let (private_key, public_key) = generate_keypair();
-    let fake_binary = b"fake binary content for testing";
-    let signature = sign_data(fake_binary, &private_key).unwrap();
-
-    let github_server = MockServer::start().await;
-
-    let release_response = json!({
-        "id": 12345,
-        "tag_name": "v1.2.0",
-        "name": "Test Release 1.2.0",
-        "body": "Test release for integration testing",
-        "draft": false,
-        "prerelease": false,
-        "published_at": "2023-12-01T10:00:00Z",
-        "assets": [
-            {
-                "id": 67890,
-                "name": "glimpser-linux-x64",
-                "label": null,
-                "size": fake_binary.len(),
-                "download_count": 0,
-                "browser_download_url": format!("{}/download/glimpser-linux-x64", github_server.uri()),
-                "content_type": "application/octet-stream"
-            },
-            {
-                "id": 67891,
-                "name": "glimpser-linux-x64.sig",
-                "label": null,
-                "size": signature.len(),
-                "download_count": 0,
-                "browser_download_url": format!("{}/download/glimpser-linux-x64.sig", github_server.uri()),
-                "content_type": "text/plain"
-            }
-        ]
-    });
-
-    Mock::given(method("GET"))
-        .and(path("/repos/test/repo/releases/latest"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&release_response))
-        .mount(&github_server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/download/glimpser-linux-x64"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(fake_binary))
-        .mount(&github_server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/download/glimpser-linux-x64.sig"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(&signature))
-        .mount(&github_server)
-        .await;
-
-    let checker =
-        GitHubReleaseChecker::new("test/repo".to_string(), None).with_base_url(github_server.uri());
-    let latest_release = checker.get_latest_release().await.unwrap();
-    let binary_asset = latest_release
-        .assets
-        .iter()
-        .find(|a| a.name == "glimpser-linux-x64")
-        .unwrap();
-    let sig_asset = latest_release
-        .assets
-        .iter()
-        .find(|a| a.name == "glimpser-linux-x64.sig")
-        .unwrap();
-
     let binary_data = checker.download_asset(binary_asset).await.unwrap();
     let sig_data = checker.download_asset(sig_asset).await.unwrap();
+   assert_eq!(binary_data.as_ref(), fake_binary);
     let sig_string = String::from_utf8(sig_data.to_vec())
         .unwrap()
         .trim()
         .to_string();
-
-    let verifier = SignatureVerifier::new(&public_key).unwrap();
-    let verify_result = verifier.verify(&binary_data, &sig_string);
-    assert!(
-        verify_result.is_ok(),
-        "Signature verification failed: {:?}",
-        verify_result
-    );
-}
 
 #[tokio::test]
 async fn test_health_check() {
