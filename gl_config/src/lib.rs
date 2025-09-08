@@ -266,7 +266,7 @@ pub struct StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            artifacts_dir: "./data/artifacts".to_string(),
+            artifacts_dir: "data/artifacts".to_string(),
             object_store_url: None,
             bucket: None,
         }
@@ -299,7 +299,7 @@ impl Config {
             .set_default("security.secure_cookies", false)?
             .set_default("features.enable_rtsp", false)?
             .set_default("features.enable_ai", false)?
-            .set_default("storage.artifacts_dir", "./data/artifacts")?;
+            .set_default("storage.artifacts_dir", "data/artifacts")?;
 
         // Handle nested environment variables that don't work with the standard separator
         // JWT secret

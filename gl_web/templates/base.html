@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{% endblock %} - Glimpser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 500ms ease-in;
+        }
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+        .htmx-request.htmx-indicator {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="{% block body_class %}min-h-screen bg-gray-100{% endblock %}">
+    <!-- Navigation (only show if logged in) -->
+    {% if logged_in %}
+    <nav class="bg-white border-b border-gray-300 px-8 py-4 flex justify-between items-center shadow-sm">
+        <div class="flex items-center gap-8">
+            <h1 class="text-xl font-bold text-blue-600">Glimpser</h1>
+
+            <div class="flex items-center gap-4">
+                <a href="/dashboard" class="text-sm font-medium {% block nav_dashboard %}text-gray-600 hover:text-blue-600 transition-colors duration-200{% endblock %}">Dashboard</a>
+                <a href="/streams" class="text-sm font-medium {% block nav_streams %}text-gray-600 hover:text-blue-600 transition-colors duration-200{% endblock %}">Live Streams</a>
+                <a href="/settings" class="text-sm font-medium {% block nav_admin %}text-gray-600 hover:text-blue-600 transition-colors duration-200{% endblock %}">Settings</a>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-6">
+            <span class="text-sm text-gray-500">Welcome, {{ user.username }}</span>
+            <button onclick="window.location.href='/login'" class="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 transition-all duration-200">
+                Logout
+            </button>
+        </div>
+    </nav>
+    {% endif %}
+
+    <!-- Page Header (optional) -->
+    {% block header %}{% endblock %}
+
+    <!-- Main Content -->
+    <main {% block main_attrs %}{% endblock %}>
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- HTMX loading indicator -->
+    <div id="loading-indicator" class="htmx-indicator fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded shadow-lg">
+        Loading...
+    </div>
+</body>
+</html>
