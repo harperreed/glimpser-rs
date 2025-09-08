@@ -210,8 +210,7 @@ impl WebDriverClient for MockWebDriverClient {
             selector = ?config.element_selector,
             "Mock screenshot taken"
         );
-        // Simulate some processing time
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // No artificial delay to keep tests responsive
         Ok(self.synthetic_png.clone())
     }
 
@@ -259,7 +258,7 @@ impl ThirtyfourClient {
 impl WebDriverClient for ThirtyfourClient {
     #[instrument(skip(self))]
     async fn screenshot(&self, config: &WebsiteConfig) -> Result<Bytes> {
-        use thirtyfour::By;
+        use thirtyfour::{prelude::ElementQueryable, By};
 
         info!(url = %config.url, "Taking real screenshot with WebDriver");
 
@@ -288,8 +287,12 @@ impl WebDriverClient for ThirtyfourClient {
             warn!("Basic auth should be handled via URL format for security");
         }
 
-        // Wait for page to load (simple approach)
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        // Wait for page to load by ensuring body element is present
+        driver
+            .query(By::Css("body"))
+            .first()
+            .await
+            .map_err(|e| Error::Config(format!("Page load error: {}", e)))?;
 
         // Take screenshot (element-specific or full page)
         let screenshot_data = if let Some(selector) = &config.element_selector {
@@ -405,12 +408,11 @@ impl WebDriverClient for HeadlessChromeClient {
         tab.navigate_to(&config.url)
             .map_err(|e| Error::Config(format!("Failed to navigate to {}: {}", config.url, e)))?;
 
-        // Wait for page to load
+        // Wait for page to load and DOM to be ready
         tab.wait_until_navigated()
             .map_err(|e| Error::Config(format!("Failed to wait for navigation: {}", e)))?;
-
-        // Additional wait for dynamic content
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        tab.wait_for_element("body")
+            .map_err(|e| Error::Config(format!("Failed to wait for body element: {}", e)))?;
 
         // Take screenshot
         let screenshot_data = if let Some(selector) = &config.element_selector {
@@ -461,35 +463,7 @@ impl WebDriverClient for HeadlessChromeClient {
                 })?
             };
 
-            // Debug: First check if element exists and is rendered
-            let debug_result = element
-                .call_js_fn(
-                    "function() {
-                        console.log('Element:', this);
-                        console.log('Element tagName:', this.tagName);
-                        console.log('Element id:', this.id);
-                        console.log('Element isConnected:', this.isConnected);
-                        console.log('Element clientWidth/Height:', this.clientWidth, this.clientHeight);
-                        const r = this.getBoundingClientRect();
-                        console.log('BoundingRect:', r);
-                        return {
-                            tagName: this.tagName,
-                            id: this.id,
-                            isConnected: this.isConnected,
-                            clientWidth: this.clientWidth,
-                            clientHeight: this.clientHeight,
-                            rect: r
-                        };
-                    }",
-                    vec![],
-                    false,
-                )
-                .map_err(|e| Error::Config(format!("Failed to debug element: {}", e)))?;
-                
-            let debug_value = debug_result.value.ok_or_else(|| 
-                Error::Config("Debug call returned no value".to_string()))?;
-            
-            // Now get the actual bounding box
+            // Get element bounding box for clipping
             let rect_obj = element
                 .call_js_fn(
                     "function() { 
@@ -499,22 +473,18 @@ impl WebDriverClient for HeadlessChromeClient {
                     vec![],
                     false,
                 )
-                .map_err(|e| {
-                    Error::Config(format!(
-                        "Failed to get element bounding box: {} (debug info: {:?})",
-                        e, debug_value
-                    ))
-                })?
+                .map_err(|e| Error::Config(format!("Failed to get element bounding box: {}", e)))?
                 .value
-                .ok_or_else(|| {
-                    Error::Config(format!(
-                        "Element bounding box missing (debug info: {:?})",
-                        debug_value
-                    ))
-                })?;
+                .ok_or_else(|| Error::Config("Element bounding box missing".to_string()))?;
 
-            let x = rect_obj.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let y = rect_obj.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let x = rect_obj
+                .get("x")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| Error::Config("Element x coordinate missing".to_string()))?;
+            let y = rect_obj
+                .get("y")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| Error::Config("Element y coordinate missing".to_string()))?;
             let width = rect_obj
                 .get("width")
                 .and_then(|v| v.as_f64())
@@ -523,9 +493,11 @@ impl WebDriverClient for HeadlessChromeClient {
                 .get("height")
                 .and_then(|v| v.as_f64())
                 .ok_or_else(|| Error::Config("Element height missing".to_string()))?;
+
             if width <= 0.0 || height <= 0.0 {
                 return Err(Error::Config("Element has zero size".to_string()));
             }
+
             let clip = headless_chrome::protocol::cdp::Page::Viewport {
                 x,
                 y,
@@ -641,6 +613,23 @@ mod tests {
 
         // Test stop
         handle.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_is_fast() {
+        use std::time::Instant;
+
+        let client = MockWebDriverClient::new();
+        let config = WebsiteConfig {
+            url: "https://example.com".to_string(),
+            ..Default::default()
+        };
+
+        let start = Instant::now();
+        client.screenshot(&config).await.unwrap();
+        assert!(start.elapsed() < Duration::from_millis(50));
+
+        client.close().await.unwrap();
     }
 
     #[cfg(feature = "website_embedded")]
