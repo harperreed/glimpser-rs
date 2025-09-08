@@ -1203,6 +1203,36 @@ impl CaptureManager {
             website_config.height = std::cmp::min(height, u32::MAX as u64) as u32;
         }
 
+        // Extract element selector configuration
+        if let Some(element_selector) = config.get("element_selector").and_then(|v| v.as_str()) {
+            website_config.element_selector = Some(element_selector.to_string());
+        }
+
+        if let Some(selector_type) = config.get("selector_type").and_then(|v| v.as_str()) {
+            website_config.selector_type = selector_type.to_string();
+        }
+
+        // Extract other optional fields
+        if let Some(stealth) = config.get("stealth").and_then(|v| v.as_bool()) {
+            website_config.stealth = stealth;
+        }
+
+        if let Some(basic_auth_username) =
+            config.get("basic_auth_username").and_then(|v| v.as_str())
+        {
+            website_config.basic_auth_username = Some(basic_auth_username.to_string());
+        }
+
+        if let Some(basic_auth_password) =
+            config.get("basic_auth_password").and_then(|v| v.as_str())
+        {
+            website_config.basic_auth_password = Some(basic_auth_password.to_string());
+        }
+
+        if let Some(timeout_secs) = config.get("timeout").and_then(|v| v.as_u64()) {
+            website_config.timeout = std::time::Duration::from_secs(timeout_secs);
+        }
+
         let client =
             gl_capture::website_source::HeadlessChromeClient::new_boxed().map_err(|e| {
                 Error::Config(format!("Failed to create embedded Chrome client: {}", e))

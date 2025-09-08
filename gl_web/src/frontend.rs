@@ -54,17 +54,8 @@ pub struct DashboardTemplate {
     pub stream_count: usize,
 }
 
-/// Streams list template
-#[derive(Template)]
-#[template(path = "streams_simple.html")]
-pub struct StreamsListTemplate {
-    pub user: UserInfo,
-    pub logged_in: bool,
-    pub streams: Vec<StreamInfo>,
-    pub filter: String,
-    pub error_message: String, // Use empty string for no error
-    pub has_error: bool,       // Boolean flag for template logic
-}
+// Streams list template disabled - generating full page HTML directly
+// until template character issues are resolved
 
 /// Streams grid fragment for HTMX updates
 #[derive(Template)]
@@ -435,38 +426,100 @@ async fn streams_list_handler(State(frontend_state): State<FrontendState>) -> im
     // Fetch streams from database
     match fetch_streams(&frontend_state, None).await {
         Ok(streams) => {
-            let template = StreamsListTemplate {
-                user,
-                logged_in: true,
-                streams,
-                filter: String::new(),
-                error_message: String::new(),
-                has_error: false,
+            // Build streams grid HTML
+            let streams_html = if streams.is_empty() {
+                r#"<div class="flex flex-col items-center justify-center min-h-48 bg-white rounded-md shadow-sm text-gray-500">
+                    <p class="text-lg mb-2">No streams found</p>
+                    <p class="text-sm">Try adjusting your filter or check back later.</p>
+                </div>"#.to_string()
+            } else {
+                let cards = streams.iter().map(|s| format!(
+                    r#"<div class="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden">
+                        <div class="aspect-video bg-gray-100 flex items-center justify-center">
+                            <a href="/streams/{}" class="w-full h-full flex items-center justify-center">
+                                {}
+                            </a>
+                        </div>
+                        <div class="p-4">
+                            <div class="flex justify-between items-start mb-2">
+                                <h3 class="font-semibold text-gray-800 truncate">{}</h3>
+                                <span class="px-2 py-1 text-xs rounded-full {}">
+                                    {}
+                                </span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <p class="text-sm text-gray-500">Last seen: {}</p>
+                                <a href="/streams/{}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">View</a>
+                            </div>
+                        </div>
+                    </div>"#,
+                    s.id,
+                    if s.status == "active" {
+                        format!(r#"<img src="/api/stream/{}/thumbnail" alt="{}" class="w-full h-full object-cover">"#, s.stream_id, s.name)
+                    } else {
+                        "<span class=\"text-gray-500\">Offline</span>".to_string()
+                    },
+                    s.name,
+                    if s.status == "active" { "bg-green-100 text-green-800" } else { "bg-gray-100 text-gray-600" },
+                    if s.status == "active" { "Online" } else { "Offline" },
+                    s.last_frame_at,
+                    s.id
+                )).collect::<Vec<_>>().join("");
+
+                format!(
+                    r#"<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{}</div>"#,
+                    cards
+                )
             };
 
-            match template.render() {
-                Ok(html) => Html(html).into_response(),
-                Err(e) => {
-                    warn!("Template render error: {}", e);
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response()
-                }
-            }
+            // Full page HTML with navigation
+            Html(format!(r#"<!DOCTYPE html>
+<html><head><title>Live Streams</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="min-h-screen bg-slate-50">
+    <nav class="bg-white border-b border-gray-300 px-8 py-4 flex justify-between items-center shadow-sm">
+        <div class="flex items-center gap-8">
+            <h1 class="text-xl font-bold text-blue-600">Glimpser</h1>
+            <div class="flex items-center gap-4">
+                <a href="/dashboard" class="text-sm font-medium text-gray-600 hover:text-blue-600">Dashboard</a>
+                <a href="/streams" class="text-sm font-medium text-blue-600 border-b-2 border-blue-600 pb-1">Live Streams</a>
+                <a href="/settings" class="text-sm font-medium text-gray-600 hover:text-blue-600">Settings</a>
+            </div>
+        </div>
+        <div class="flex items-center gap-6">
+            <span class="text-sm text-gray-500">Welcome, {}</span>
+            <a href="/login" class="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700">Logout</a>
+        </div>
+    </nav>
+
+    <div class="p-8 max-w-6xl mx-auto w-full">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+            <h2 class="text-2xl font-bold text-gray-800">Live Streams</h2>
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+                <button class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600">Refresh</button>
+                <select class="px-3 py-3 border border-gray-300 rounded-md text-base">
+                    <option value="">All Streams</option>
+                    <option value="active">Active Only</option>
+                    <option value="inactive">Inactive Only</option>
+                </select>
+            </div>
+        </div>
+        {}
+    </div>
+</body></html>"#, user.username, streams_html)).into_response()
         }
         Err(e) => {
             warn!("Failed to fetch streams: {}", e);
-            let template = StreamsListTemplate {
-                user,
-                logged_in: true,
-                streams: vec![],
-                filter: String::new(),
-                error_message: format!("Failed to load streams: {}", e),
-                has_error: true,
-            };
-
-            match template.render() {
-                Ok(html) => Html(html).into_response(),
-                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response(),
-            }
+            Html(format!(
+                r#"<!DOCTYPE html>
+<html><head><title>Live Streams</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-red-100 p-8">
+    <h1>Error loading streams</h1>
+    <p>{}</p>
+    <a href="/dashboard" class="text-blue-600">Back to Dashboard</a>
+</body></html>"#,
+                e
+            ))
+            .into_response()
         }
     }
 }
