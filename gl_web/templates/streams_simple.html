@@ -1,0 +1,17 @@
+<!-- Simple streams grid without problematic characters -->
+{% if streams.is_empty() %}
+    <div class="text-center p-8">
+        <p>No streams found</p>
+    </div>
+{% else %}
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for stream in streams %}
+        <div class="bg-white rounded-lg shadow p-4">
+            <h3 class="font-semibold">{{ stream.name }}</h3>
+            <p class="text-sm text-gray-500">Status: {{ stream.status }}</p>
+            <p class="text-sm text-gray-500">Last seen: {{ stream.last_frame_at }}</p>
+            <a href="/streams/{{ stream.id }}" class="text-blue-600 hover:text-blue-800">View</a>
+        </div>
+        {% endfor %}
+    </div>
+{% endif %}
