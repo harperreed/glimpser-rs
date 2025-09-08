@@ -292,6 +292,9 @@ async fn test_error_handling() {
 }
 
 /// Performance test comparing different motion detection scenarios
+/// Optional heavy benchmark; ignored by default.
+/// Run with: `cargo test -p gl_vision -- --ignored` (use `--ignored --nocapture` to see timings).
+#[ignore = "heavy benchmark; run with --ignored"]
 #[tokio::test]
 async fn test_motion_detection_performance() {
     let config = MotionConfig {

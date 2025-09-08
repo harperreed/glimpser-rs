@@ -1,0 +1,12 @@
+<div class="bg-white rounded-lg shadow-sm border p-4">
+    <div class="aspect-video bg-gray-100 mb-4 flex items-center justify-center">
+        {% if stream.status == "active" %}
+            <img src="/api/stream/{{ stream.stream_id }}/thumbnail" alt="{{ stream.name }}" class="w-full h-full object-cover">
+        {% else %}
+            <span class="text-gray-500">Offline</span>
+        {% endif %}
+    </div>
+    <h3 class="font-semibold text-gray-800 mb-2">{{ stream.name }}</h3>
+    <p class="text-sm text-gray-500">Status: {{ stream.status }}</p>
+    <p class="text-sm text-gray-500">Last seen: {{ stream.last_frame_at }}</p>
+</div>

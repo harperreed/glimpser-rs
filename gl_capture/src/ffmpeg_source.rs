@@ -46,6 +46,8 @@ pub struct FfmpegConfig {
     pub hardware_accel: HardwareAccel,
     /// Additional FFmpeg input options
     pub input_options: HashMap<String, String>,
+    /// Preferred RTSP transport protocol
+    pub rtsp_transport: RtspTransport,
     /// Video codec for processing
     pub video_codec: Option<String>,
     /// Frame rate for capture
@@ -64,12 +66,30 @@ impl Default for FfmpegConfig {
             input_url: String::new(),
             hardware_accel: HardwareAccel::None,
             input_options: HashMap::new(),
+            rtsp_transport: RtspTransport::Tcp,
             video_codec: None,
             frame_rate: None,
             buffer_size: None,
             timeout: Some(30),
             snapshot_config: SnapshotConfig::default(),
         }
+    }
+}
+
+/// RTSP transport options
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RtspTransport {
+    /// Use TCP transport
+    Tcp,
+    /// Use UDP transport
+    Udp,
+    /// Let FFmpeg decide transport
+    Auto,
+}
+
+impl Default for RtspTransport {
+    fn default() -> Self {
+        Self::Tcp
     }
 }
 
@@ -135,6 +155,10 @@ impl FfmpegSource {
             }
         }
 
+        // Determine if input is RTSP or RTSPS
+        let is_rtsp = self.config.input_url.starts_with("rtsp://")
+            || self.config.input_url.starts_with("rtsps://");
+
         // Add input options
         for (key, value) in &self.config.input_options {
             args.extend([format!("-{}", key), value.clone()]);
@@ -142,7 +166,31 @@ impl FfmpegSource {
 
         // Add timeout if specified
         if let Some(timeout) = self.config.timeout {
-            args.extend(["-timeout".to_string(), timeout.to_string()]);
+            if is_rtsp {
+                let micros = (timeout as u64) * 1_000_000;
+                args.extend(["-stimeout".to_string(), micros.to_string()]);
+            } else {
+                let micros = (timeout as u64) * 1_000_000;
+                args.extend(["-timeout".to_string(), micros.to_string()]);
+            }
+        }
+
+        // Add default RTSP options
+        if is_rtsp {
+            match self.config.rtsp_transport {
+                RtspTransport::Tcp => {
+                    args.extend(["-rtsp_transport".to_string(), "tcp".to_string()]);
+                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
+                }
+                RtspTransport::Udp => {
+                    args.extend(["-rtsp_transport".to_string(), "udp".to_string()]);
+                }
+                RtspTransport::Auto => {
+                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
+                }
+            }
+            args.extend(["-fflags".to_string(), "nobuffer".to_string()]);
+            args.extend(["-flags".to_string(), "low_delay".to_string()]);
         }
 
         // Add buffer size if specified
@@ -193,37 +241,63 @@ impl FfmpegSource {
             .timeout(self.config.snapshot_config.timeout)
     }
 
-    /// Validate FFmpeg configuration and connectivity
-    #[instrument(skip(self))]
-    pub async fn validate(&self) -> Result<()> {
-        debug!(url = %self.config.input_url, "Validating FFmpeg source");
-
-        // Build a simple probe command to test connectivity
+    /// Build FFmpeg command for connection validation
+    fn build_validate_command(&self) -> CommandSpec {
         let mut args = vec![
             "-hide_banner".to_string(),
             "-loglevel".to_string(),
             "error".to_string(),
         ];
 
-        // Add timeout
+        let is_rtsp = self.config.input_url.starts_with("rtsp://")
+            || self.config.input_url.starts_with("rtsps://");
+
         if let Some(timeout) = self.config.timeout {
-            args.extend(["-timeout".to_string(), timeout.to_string()]);
+            let micros = (timeout as u64) * 1_000_000;
+            if is_rtsp {
+                args.extend(["-stimeout".to_string(), micros.to_string()]);
+            } else {
+                args.extend(["-timeout".to_string(), micros.to_string()]);
+            }
         }
 
-        // Input
+        if is_rtsp {
+            match self.config.rtsp_transport {
+                RtspTransport::Tcp => {
+                    args.extend(["-rtsp_transport".to_string(), "tcp".to_string()]);
+                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
+                }
+                RtspTransport::Udp => {
+                    args.extend(["-rtsp_transport".to_string(), "udp".to_string()]);
+                }
+                RtspTransport::Auto => {
+                    args.extend(["-rtsp_flags".to_string(), "prefer_tcp".to_string()]);
+                }
+            }
+            args.extend(["-fflags".to_string(), "nobuffer".to_string()]);
+            args.extend(["-flags".to_string(), "low_delay".to_string()]);
+        }
+
         args.extend([
             "-i".to_string(),
             self.config.input_url.clone(),
             "-t".to_string(),
-            "1".to_string(), // Just probe for 1 second
+            "1".to_string(),
             "-f".to_string(),
             "null".to_string(),
             "-".to_string(),
         ]);
 
-        let spec = CommandSpec::new("ffmpeg".into())
+        CommandSpec::new("ffmpeg".into())
             .args(args)
-            .timeout(Duration::from_secs(10));
+            .timeout(Duration::from_secs(10))
+    }
+
+    /// Validate FFmpeg configuration and connectivity
+    #[instrument(skip(self))]
+    pub async fn validate(&self) -> Result<()> {
+        debug!(url = %self.config.input_url, "Validating FFmpeg source");
+        let spec = self.build_validate_command();
 
         debug!(command = ?spec, "Running FFmpeg validation");
 
@@ -398,6 +472,7 @@ mod tests {
             input_url: "rtsp://example.com/stream".to_string(),
             hardware_accel: HardwareAccel::None,
             input_options: HashMap::new(),
+            rtsp_transport: RtspTransport::Tcp,
             video_codec: None,
             frame_rate: None,
             buffer_size: None,
@@ -467,9 +542,19 @@ mod tests {
         assert!(args.contains(&"1".to_string()));
         assert!(args.contains(&"pipe:1".to_string()));
 
-        // Should contain timeout
-        assert!(args.contains(&"-timeout".to_string()));
-        assert!(args.contains(&"10".to_string()));
+        // Should contain RTSP defaults
+        assert!(args.contains(&"-rtsp_transport".to_string()));
+        assert!(args.contains(&"tcp".to_string()));
+        assert!(args.contains(&"-rtsp_flags".to_string()));
+        assert!(args.contains(&"prefer_tcp".to_string()));
+        assert!(args.contains(&"-fflags".to_string()));
+        assert!(args.contains(&"nobuffer".to_string()));
+        assert!(args.contains(&"-flags".to_string()));
+        assert!(args.contains(&"low_delay".to_string()));
+
+        // Should convert timeout to stimeout in microseconds
+        assert!(args.contains(&"-stimeout".to_string()));
+        assert!(args.contains(&"10000000".to_string()));
     }
 
     #[test]
@@ -520,20 +605,76 @@ mod tests {
         let mut config = create_test_config();
         config
             .input_options
-            .insert("rtsp_transport".to_string(), "tcp".to_string());
-        config
-            .input_options
-            .insert("stimeout".to_string(), "5000000".to_string());
+            .insert("user_option".to_string(), "value".to_string());
 
         let source = FfmpegSource::new(config);
         let command = source.build_snapshot_command();
         let args = &command.args;
 
-        // Should contain input options
+        // Should contain user input option along with defaults
+        assert!(args.contains(&"-user_option".to_string()));
+        assert!(args.contains(&"value".to_string()));
+        assert!(args.contains(&"-rtsp_transport".to_string()));
+        assert!(args.contains(&"tcp".to_string()));
+    }
+
+    #[test]
+    fn test_rtsp_transport_udp() {
+        let mut config = create_test_config();
+        config.rtsp_transport = RtspTransport::Udp;
+
+        let source = FfmpegSource::new(config);
+        let command = source.build_snapshot_command();
+        let args = &command.args;
+
+        assert!(args.contains(&"-rtsp_transport".to_string()));
+        assert!(args.contains(&"udp".to_string()));
+    }
+
+    #[test]
+    fn test_timeout_conversion_non_rtsp() {
+        let mut config = create_test_config();
+        config.input_url = "http://example.com/stream".to_string();
+
+        let source = FfmpegSource::new(config);
+        let command = source.build_snapshot_command();
+        let args = &command.args;
+
+        assert!(args.contains(&"-timeout".to_string()));
+        assert!(args.contains(&"10000000".to_string()));
+    }
+
+    #[test]
+    fn test_validate_command_rtsp_defaults() {
+        let config = create_test_config();
+        let source = FfmpegSource::new(config);
+        let command = source.build_validate_command();
+        let args = &command.args;
+
+        assert!(args.contains(&"-rtsp_transport".to_string()));
+        assert!(args.contains(&"tcp".to_string()));
+        assert!(args.contains(&"-rtsp_flags".to_string()));
+        assert!(args.contains(&"prefer_tcp".to_string()));
+        assert!(args.contains(&"-fflags".to_string()));
+        assert!(args.contains(&"nobuffer".to_string()));
+        assert!(args.contains(&"-flags".to_string()));
+        assert!(args.contains(&"low_delay".to_string()));
+        assert!(args.contains(&"-stimeout".to_string()));
+        assert!(args.contains(&"10000000".to_string()));
+    }
+
+    #[test]
+    fn test_rtsps_support() {
+        let mut config = create_test_config();
+        config.input_url = "rtsps://secure.example.com/stream".to_string();
+
+        let source = FfmpegSource::new(config);
+        let command = source.build_snapshot_command();
+        let args = &command.args;
+
         assert!(args.contains(&"-rtsp_transport".to_string()));
         assert!(args.contains(&"tcp".to_string()));
         assert!(args.contains(&"-stimeout".to_string()));
-        assert!(args.contains(&"5000000".to_string()));
     }
 
     #[test]

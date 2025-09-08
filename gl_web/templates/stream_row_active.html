@@ -1,0 +1,15 @@
+<tr>
+    <td class="px-6 py-4 whitespace-nowrap">
+        <div class="text-sm font-medium text-gray-900">{{ stream.name }}</div>
+        <div class="text-sm text-gray-500">ID: {{ stream.id }}</div>
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap">
+        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">active</span>
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ stream.last_frame_at }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+        <button hx-post="/api/settings/streams/{{ stream.id }}/stop" hx-target="closest tr" hx-swap="outerHTML" class="text-orange-600 hover:text-orange-900">Stop</button>
+        <a href="/settings/streams/{{ stream.id }}/edit" class="text-indigo-600 hover:text-indigo-900">Edit</a>
+        <button hx-delete="/api/settings/streams/{{ stream.id }}" hx-confirm="Delete {{ stream.name }}?" hx-target="closest tr" hx-swap="outerHTML" class="text-red-600 hover:text-red-900">Delete</button>
+    </td>
+</tr>
