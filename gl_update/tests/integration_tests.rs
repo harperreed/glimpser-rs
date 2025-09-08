@@ -169,9 +169,9 @@ async fn test_complete_update_workflow() {
 
 #[tokio::test]
 async fn test_release_fetch() {
-    let (private_key, _) = generate_keypair();
+    // Trimmed unnecessary crypto setup
     let fake_binary = b"fake binary content for testing";
-    let signature = sign_data(fake_binary, &private_key).unwrap();
+    let signature_size = 128usize;
 
     let github_server = MockServer::start().await;
 
@@ -197,7 +197,7 @@ async fn test_release_fetch() {
                 "id": 67891,
                 "name": "glimpser-linux-x64.sig",
                 "label": null,
-                "size": signature.len(),
+                "size": signature_size,
                 "download_count": 0,
                 "browser_download_url": format!("{}/download/glimpser-linux-x64.sig", github_server.uri()),
                 "content_type": "text/plain"
@@ -217,8 +217,12 @@ async fn test_release_fetch() {
     let latest_release = checker.get_latest_release().await.unwrap();
     assert_eq!(latest_release.tag_name, "v1.2.0");
     assert_eq!(latest_release.assets.len(), 2);
-}
 
+    // Stronger assertions: check that the expected asset names are present
+    let names: Vec<&str> = latest_release.assets.iter().map(|a| a.name.as_str()).collect();
+    assert!(names.contains(&"glimpser-linux-x64"));
+    assert!(names.contains(&"glimpser-linux-x64.sig"));
+}
 #[tokio::test]
     let binary_data = checker.download_asset(binary_asset).await.unwrap();
     let sig_data = checker.download_asset(sig_asset).await.unwrap();
