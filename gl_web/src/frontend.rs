@@ -1241,20 +1241,30 @@ async fn admin_start_stream(
 ) -> impl IntoResponse {
     debug!("Starting stream: {}", stream_id);
 
-    // TODO: Actually start the stream using capture manager
-    // For now, just update the execution_status
+    // Actually start the stream using capture manager
     let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
 
-    match stream_repo
-        .update_execution_status(&stream_id, "active", None)
+    // Start the capture process first
+    debug!("Attempting to start capture for stream: {}", stream_id);
+    match frontend_state
+        .app_state
+        .capture_manager
+        .start_stream(&stream_id)
         .await
     {
-        Ok(true) => {
-            // Fetch the updated stream and return the table row
-            match fetch_single_stream(&frontend_state, &stream_id).await {
-                Ok(Some(stream)) => {
-                    let row_html = format!(
-                        r#"<tr>
+        Ok(()) => {
+            debug!("✅ Capture started successfully for stream: {}", stream_id);
+            // Update database status after successful capture start
+            match stream_repo
+                .update_execution_status(&stream_id, "active", None)
+                .await
+            {
+                Ok(true) => {
+                    // Fetch the updated stream and return the table row
+                    match fetch_single_stream(&frontend_state, &stream_id).await {
+                        Ok(Some(stream)) => {
+                            let row_html = format!(
+                                r#"<tr>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="text-sm font-medium text-gray-900">{}</div>
                             <div class="text-sm text-gray-500">ID: {}</div>
@@ -1269,30 +1279,53 @@ async fn admin_start_stream(
                             <button hx-delete="/api/settings/streams/{}" hx-confirm="Delete {}?" hx-target="closest tr" hx-swap="outerHTML" class="text-red-600 hover:text-red-900">Delete</button>
                         </td>
                     </tr>"#,
-                        stream.name,
-                        stream.id,
-                        stream.last_frame_at,
-                        stream.id,
-                        stream.id,
-                        stream.id,
-                        stream.name
-                    );
-                    Html(row_html).into_response()
+                                stream.name,
+                                stream.id,
+                                stream.last_frame_at,
+                                stream.id,
+                                stream.id,
+                                stream.id,
+                                stream.name
+                            );
+                            Html(row_html).into_response()
+                        }
+                        _ => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Failed to fetch updated stream",
+                        )
+                            .into_response(),
+                    }
                 }
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to fetch updated stream",
-                )
-                    .into_response(),
+                Ok(false) => {
+                    warn!("Stream {} not found for database update", stream_id);
+                    (StatusCode::NOT_FOUND, "Stream not found").into_response()
+                }
+                Err(e) => {
+                    warn!("Failed to update stream {} status: {}", stream_id, e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to update stream status",
+                    )
+                        .into_response()
+                }
             }
         }
-        Ok(false) => {
-            warn!("Stream {} not found for start", stream_id);
-            (StatusCode::NOT_FOUND, "Stream not found").into_response()
-        }
         Err(e) => {
-            warn!("Failed to start stream {}: {}", stream_id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to start stream").into_response()
+            warn!("❌ Failed to start capture for stream {}: {}", stream_id, e);
+            // Capture start failed - make sure database status reflects this
+            let _ = stream_repo
+                .update_execution_status(&stream_id, "inactive", None)
+                .await;
+            debug!(
+                "Reset stream {} status to inactive due to capture start failure",
+                stream_id
+            );
+
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to start capture: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -1304,20 +1337,29 @@ async fn admin_stop_stream(
 ) -> impl IntoResponse {
     debug!("Stopping stream: {}", stream_id);
 
-    // TODO: Actually stop the stream using capture manager
-    // For now, just update the execution_status
+    // Actually stop the stream using capture manager
     let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
 
-    match stream_repo
-        .update_execution_status(&stream_id, "inactive", None)
+    // Stop the capture process first
+    match frontend_state
+        .app_state
+        .capture_manager
+        .stop_stream(&stream_id)
         .await
     {
-        Ok(true) => {
-            // Fetch the updated stream and return the table row
-            match fetch_single_stream(&frontend_state, &stream_id).await {
-                Ok(Some(stream)) => {
-                    let row_html = format!(
-                        r#"<tr>
+        Ok(()) => {
+            debug!("Capture stopped successfully for stream: {}", stream_id);
+            // Update database status after successful capture stop
+            match stream_repo
+                .update_execution_status(&stream_id, "inactive", None)
+                .await
+            {
+                Ok(true) => {
+                    // Fetch the updated stream and return the table row
+                    match fetch_single_stream(&frontend_state, &stream_id).await {
+                        Ok(Some(stream)) => {
+                            let row_html = format!(
+                                r#"<tr>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="text-sm font-medium text-gray-900">{}</div>
                             <div class="text-sm text-gray-500">ID: {}</div>
@@ -1332,30 +1374,44 @@ async fn admin_stop_stream(
                             <button hx-delete="/api/settings/streams/{}" hx-confirm="Delete {}?" hx-target="closest tr" hx-swap="outerHTML" class="text-red-600 hover:text-red-900">Delete</button>
                         </td>
                     </tr>"#,
-                        stream.name,
-                        stream.id,
-                        stream.last_frame_at,
-                        stream.id,
-                        stream.id,
-                        stream.id,
-                        stream.name
-                    );
-                    Html(row_html).into_response()
+                                stream.name,
+                                stream.id,
+                                stream.last_frame_at,
+                                stream.id,
+                                stream.id,
+                                stream.id,
+                                stream.name
+                            );
+                            Html(row_html).into_response()
+                        }
+                        _ => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Failed to fetch updated stream",
+                        )
+                            .into_response(),
+                    }
                 }
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to fetch updated stream",
-                )
-                    .into_response(),
+                Ok(false) => {
+                    warn!("Stream {} not found for database update", stream_id);
+                    (StatusCode::NOT_FOUND, "Stream not found").into_response()
+                }
+                Err(e) => {
+                    warn!("Failed to update stream {} status: {}", stream_id, e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to update stream status",
+                    )
+                        .into_response()
+                }
             }
         }
-        Ok(false) => {
-            warn!("Stream {} not found for stop", stream_id);
-            (StatusCode::NOT_FOUND, "Stream not found").into_response()
-        }
         Err(e) => {
-            warn!("Failed to stop stream {}: {}", stream_id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to stop stream").into_response()
+            warn!("Failed to stop capture for stream {}: {}", stream_id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to stop capture: {}", e),
+            )
+                .into_response()
         }
     }
 }
