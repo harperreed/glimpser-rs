@@ -147,7 +147,20 @@ pub struct StreamCreateForm {
     pub description: Option<String>,
     pub config_kind: String,
     pub is_default: Option<String>, // Checkbox comes as Option<String>
-    pub capture_interval: Option<u32>, // Capture interval in seconds
+
+    // Common fields for all stream types
+    pub snapshot_interval: Option<u32>, // How often to take snapshots
+
+    // RTSP fields
+    pub rtsp_url: Option<String>,
+    pub rtsp_width: Option<u32>,
+    pub rtsp_height: Option<u32>,
+
+    // FFmpeg fields
+    pub ffmpeg_source: Option<String>,
+    pub ffmpeg_args: Option<String>,
+    pub ffmpeg_width: Option<u32>,
+    pub ffmpeg_height: Option<u32>,
 
     // File source fields
     pub file_path: Option<String>,
@@ -156,18 +169,21 @@ pub struct StreamCreateForm {
     pub website_url: Option<String>,
     pub website_width: Option<u32>,
     pub website_height: Option<u32>,
+    pub website_timeout: Option<u32>,
     pub element_selector: Option<String>,
     pub selector_type: Option<String>, // "css" or "xpath"
     pub headless: Option<String>,
     pub stealth: Option<String>,
-
-    // FFmpeg fields
-    pub ffmpeg_source: Option<String>,
-    pub ffmpeg_args: Option<String>,
+    pub auth_username: Option<String>, // Basic auth username
+    pub auth_password: Option<String>, // Basic auth password
 
     // YouTube/yt-dlp fields
-    pub yt_url: Option<String>,
-    pub quality: Option<String>,
+    pub youtube_url: Option<String>,
+    pub youtube_format: Option<String>, // Quality/format
+    pub youtube_is_live: Option<String>, // Checkbox for live stream
+
+    // Legacy fields for backward compatibility
+    pub capture_interval: Option<u32>, // Legacy field - maps to snapshot_interval
 }
 
 /// Shared stream form template for both create and edit
@@ -191,7 +207,18 @@ pub struct StreamConfigForEdit {
     pub description: String,
     pub config_kind: String,
     pub is_default: bool,
-    pub capture_interval: u32,
+
+    // Common fields
+    pub snapshot_interval: u32, // How often to take snapshots
+    pub width: u32, // Default width for streams that support it
+    pub height: u32, // Default height for streams that support it
+
+    // RTSP fields
+    pub rtsp_url: String,
+
+    // FFmpeg fields
+    pub ffmpeg_source: String,
+    pub ffmpeg_args: String,
 
     // File fields
     pub file_path: String,
@@ -200,18 +227,21 @@ pub struct StreamConfigForEdit {
     pub website_url: String,
     pub website_width: u32,
     pub website_height: u32,
+    pub website_timeout: u32,
     pub element_selector: String,
     pub selector_type: String, // "css" or "xpath"
     pub headless: bool,
     pub stealth: bool,
+    pub auth_username: String, // Basic auth username
+    pub auth_password: String, // Basic auth password
 
-    // FFmpeg fields
-    pub ffmpeg_source: String,
-    pub ffmpeg_args: String,
+    // YouTube fields
+    pub youtube_url: String,
+    pub youtube_format: String,
+    pub youtube_is_live: bool,
 
-    // yt-dlp fields
-    pub yt_url: String,
-    pub quality: String,
+    // Legacy field for backward compatibility
+    pub capture_interval: u32, // Maps to snapshot_interval
 }
 
 impl StreamConfigForEdit {
@@ -223,19 +253,41 @@ impl StreamConfigForEdit {
             description: String::new(),
             config_kind: String::new(),
             is_default: false,
-            capture_interval: 30,
+            
+            // Common fields
+            snapshot_interval: 30,
+            width: 1920,
+            height: 1080,
+
+            // RTSP fields
+            rtsp_url: String::new(),
+
+            // FFmpeg fields
+            ffmpeg_source: String::new(),
+            ffmpeg_args: String::new(),
+
+            // File fields
             file_path: String::new(),
+
+            // Website fields
             website_url: String::new(),
             website_width: 1920,
             website_height: 1080,
+            website_timeout: 30,
             element_selector: String::new(),
             selector_type: "css".to_string(),
             headless: true,
-            stealth: true,
-            ffmpeg_source: String::new(),
-            ffmpeg_args: String::new(),
-            yt_url: String::new(),
-            quality: "best".to_string(),
+            stealth: false,
+            auth_username: String::new(),
+            auth_password: String::new(),
+
+            // YouTube fields
+            youtube_url: String::new(),
+            youtube_format: "best".to_string(),
+            youtube_is_live: false,
+
+            // Legacy field
+            capture_interval: 5, // Same as snapshot_interval for compatibility
         }
     }
 }
@@ -774,16 +826,31 @@ fn parse_stream_config_for_edit(db_stream: &gl_db::Stream) -> StreamConfigForEdi
         .unwrap_or("file")
         .to_string();
 
+    // Handle legacy field names
+    let snapshot_interval = config
+        .get("snapshot_interval_seconds")
+        .or_else(|| config.get("capture_interval_seconds"))
+        .and_then(|c| c.as_u64())
+        .unwrap_or(30) as u32;
+
     StreamConfigForEdit {
         id: db_stream.id.clone(),
         name: db_stream.name.clone(),
         description: db_stream.description.clone().unwrap_or_default(),
         config_kind: kind.clone(),
         is_default: db_stream.is_default,
-        capture_interval: config
-            .get("capture_interval_seconds")
-            .and_then(|c| c.as_u64())
-            .unwrap_or(30) as u32,
+        
+        // Common fields
+        snapshot_interval,
+        width: config.get("width").and_then(|w| w.as_u64()).unwrap_or(1920) as u32,
+        height: config.get("height").and_then(|h| h.as_u64()).unwrap_or(1080) as u32,
+        
+        // RTSP fields
+        rtsp_url: if kind == "rtsp" {
+            config.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string()
+        } else {
+            String::new()
+        },
 
         // File fields
         file_path: config
@@ -792,17 +859,27 @@ fn parse_stream_config_for_edit(db_stream: &gl_db::Stream) -> StreamConfigForEdi
             .unwrap_or("")
             .to_string(),
 
-        // Website fields
-        website_url: config
-            .get("url")
-            .and_then(|u| u.as_str())
+        // FFmpeg fields
+        ffmpeg_source: config
+            .get("source")
+            .and_then(|s| s.as_str())
             .unwrap_or("")
             .to_string(),
+        ffmpeg_args: config
+            .get("args")
+            .and_then(|a| a.as_str())
+            .unwrap_or("")
+            .to_string(),
+
+        // Website fields
+        website_url: if kind == "website" {
+            config.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string()
+        } else {
+            String::new()
+        },
         website_width: config.get("width").and_then(|w| w.as_u64()).unwrap_or(1920) as u32,
-        website_height: config
-            .get("height")
-            .and_then(|h| h.as_u64())
-            .unwrap_or(1080) as u32,
+        website_height: config.get("height").and_then(|h| h.as_u64()).unwrap_or(1080) as u32,
+        website_timeout: config.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30) as u32,
         element_selector: config
             .get("element_selector")
             .and_then(|e| e.as_str())
@@ -821,30 +898,35 @@ fn parse_stream_config_for_edit(db_stream: &gl_db::Stream) -> StreamConfigForEdi
             .get("stealth")
             .and_then(|s| s.as_bool())
             .unwrap_or(true),
-
-        // FFmpeg fields
-        ffmpeg_source: config
-            .get("source")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string(),
-        ffmpeg_args: config
-            .get("args")
-            .and_then(|a| a.as_str())
-            .unwrap_or("")
-            .to_string(),
-
-        // yt-dlp fields
-        yt_url: config
-            .get("url")
+        auth_username: config
+            .get("auth_username")
             .and_then(|u| u.as_str())
             .unwrap_or("")
             .to_string(),
-        quality: config
-            .get("quality")
+        auth_password: config
+            .get("auth_password")
+            .and_then(|p| p.as_str())
+            .unwrap_or("")
+            .to_string(),
+
+        // YouTube fields (handle both legacy "yt" and new "youtube" kinds)
+        youtube_url: if kind == "youtube" || kind == "yt" {
+            config.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string()
+        } else {
+            String::new()
+        },
+        youtube_format: config
+            .get("format")
             .and_then(|q| q.as_str())
             .unwrap_or("best")
             .to_string(),
+        youtube_is_live: config
+            .get("is_live")
+            .and_then(|l| l.as_bool())
+            .unwrap_or(false),
+        
+        // Legacy field for backward compatibility
+        capture_interval: snapshot_interval,
     }
 }
 
@@ -982,16 +1064,43 @@ async fn admin_stream_create(
     use gl_db::CreateStreamRequest;
 
     let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
+    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
+
+    // Get the actual admin user from database instead of hardcoding
+    let admin_user = match user_repo.find_by_email("admin@test.com").await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            warn!("Admin user not found in database");
+            return Html("Admin user not found. Please ensure admin user exists.").into_response();
+        }
+        Err(e) => {
+            warn!("Failed to query admin user: {}", e);
+            return Html("Database error while finding admin user").into_response();
+        }
+    };
 
     // Build JSON config based on stream type
-    let capture_interval = form.capture_interval.unwrap_or(30);
+    let snapshot_interval = form.snapshot_interval.or(form.capture_interval).unwrap_or(30);
     let config_json = match form.config_kind.as_str() {
+        "rtsp" => {
+            let url = form.rtsp_url.unwrap_or_default();
+            let width = form.rtsp_width.unwrap_or(1920);
+            let height = form.rtsp_height.unwrap_or(1080);
+            serde_json::json!({
+                "kind": "rtsp",
+                "url": url,
+                "width": width,
+                "height": height,
+                "snapshot_interval_seconds": snapshot_interval
+            })
+            .to_string()
+        }
         "file" => {
             let file_path = form.file_path.unwrap_or_default();
             serde_json::json!({
                 "kind": "file",
                 "file_path": file_path,
-                "capture_interval_seconds": capture_interval
+                "snapshot_interval_seconds": snapshot_interval
             })
             .to_string()
         }
@@ -999,21 +1108,31 @@ async fn admin_stream_create(
             let url = form.website_url.unwrap_or_default();
             let width = form.website_width.unwrap_or(1920);
             let height = form.website_height.unwrap_or(1080);
+            let timeout = form.website_timeout.unwrap_or(30);
             let headless = form.headless.is_some();
             let stealth = form.stealth.is_some();
+            let selector_type = form.selector_type.unwrap_or_else(|| "css".to_string());
 
             let mut config = serde_json::json!({
                 "kind": "website",
                 "url": url,
                 "width": width,
                 "height": height,
+                "timeout": timeout,
                 "headless": headless,
                 "stealth": stealth,
-                "capture_interval_seconds": capture_interval
+                "selector_type": selector_type,
+                "snapshot_interval_seconds": snapshot_interval
             });
 
             if let Some(selector) = form.element_selector.filter(|s| !s.is_empty()) {
                 config["element_selector"] = serde_json::Value::String(selector);
+            }
+            if let Some(username) = form.auth_username.filter(|s| !s.is_empty()) {
+                config["auth_username"] = serde_json::Value::String(username);
+            }
+            if let Some(password) = form.auth_password.filter(|s| !s.is_empty()) {
+                config["auth_password"] = serde_json::Value::String(password);
             }
 
             config.to_string()
@@ -1021,23 +1140,29 @@ async fn admin_stream_create(
         "ffmpeg" => {
             let source = form.ffmpeg_source.unwrap_or_default();
             let args = form.ffmpeg_args.unwrap_or_default();
+            let width = form.ffmpeg_width.unwrap_or(1920);
+            let height = form.ffmpeg_height.unwrap_or(1080);
             serde_json::json!({
                 "kind": "ffmpeg",
                 "source": source,
                 "args": args,
-                "capture_interval_seconds": capture_interval
+                "width": width,
+                "height": height,
+                "snapshot_interval_seconds": snapshot_interval
             })
             .to_string()
         }
-        "yt" => {
-            let url = form.yt_url.unwrap_or_default();
-            let quality = form.quality.unwrap_or_else(|| "best".to_string());
+        "youtube" => {
+            let url = form.youtube_url.unwrap_or_default();
+            let format = form.youtube_format.unwrap_or_else(|| "best".to_string());
+            let is_live = form.youtube_is_live.is_some();
 
             serde_json::json!({
-                "kind": "yt",
+                "kind": "youtube",
                 "url": url,
-                "format": quality,
-                "capture_interval_seconds": capture_interval
+                "format": format,
+                "is_live": is_live,
+                "snapshot_interval_seconds": snapshot_interval
             })
             .to_string()
         }
@@ -1047,7 +1172,7 @@ async fn admin_stream_create(
     };
 
     let create_request = CreateStreamRequest {
-        user_id: "admin".to_string(), // TODO: Get actual user ID from session
+        user_id: admin_user.id.clone(), // Use actual admin user ID from database
         name: form.name,
         description: form.description.filter(|s| !s.is_empty()),
         config: config_json,
@@ -1095,29 +1220,27 @@ async fn admin_stream_edit_page(
             // Parse the JSON config to populate form fields
             let config_for_edit = parse_stream_config_for_edit(&db_stream);
 
-            // Temporary simple edit page showing parsed data until template issues resolved
-            Html(format!(r#"
-                <!DOCTYPE html>
-                <html><head><title>Edit Stream</title><script src="https://cdn.tailwindcss.com"></script></head>
-                <body class="bg-slate-50 p-8">
-                    <div class="max-w-2xl mx-auto">
-                        <a href="/settings" class="text-blue-600">← Back to Settings</a>
-                        <h1 class="text-3xl font-bold mt-4 mb-8">Edit Stream: {}</h1>
-                        <div class="bg-white p-6 rounded-lg shadow space-y-4">
-                            <p><strong>Type:</strong> {}</p>
-                            <p><strong>Capture Interval:</strong> {} seconds</p>
-                            <p><strong>File Path:</strong> {}</p>
-                            <p><strong>Website URL:</strong> {}</p>
-                            <p><strong>Dimensions:</strong> {}x{}</p>
-                            <p><strong>Element Selector:</strong> {} ({})</p>
-                            <p class="text-gray-500 mt-4">Full edit form with dynamic fields coming next...</p>
-                        </div>
-                    </div>
-                </body></html>
-            "#, config_for_edit.name, config_for_edit.config_kind, config_for_edit.capture_interval,
-               config_for_edit.file_path, config_for_edit.website_url,
-               config_for_edit.website_width, config_for_edit.website_height,
-               config_for_edit.element_selector, config_for_edit.selector_type)).into_response()
+            let template = StreamFormTemplate {
+                user: UserInfo {
+                    id: "temp".to_string(),
+                    username: "Admin User".to_string(),
+                    is_admin: true,
+                },
+                logged_in: true,
+                error_message: String::new(),
+                form_title: format!("Edit Stream: {}", config_for_edit.name),
+                form_action: format!("/settings/streams/{}/edit", stream_id),
+                submit_button_text: "Update Stream".to_string(),
+                stream_data: config_for_edit,
+            };
+
+            match template.render() {
+                Ok(html) => Html(html).into_response(),
+                Err(e) => {
+                    warn!("Stream form template render error: {}", e);
+                    (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response()
+                }
+            }
         }
         Ok(None) => (StatusCode::NOT_FOUND, "Stream not found").into_response(),
         Err(e) => {
@@ -1138,14 +1261,27 @@ async fn admin_stream_update(
     let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
 
     // Build JSON config based on stream type (same logic as create)
-    let capture_interval = form.capture_interval.unwrap_or(30);
+    let snapshot_interval = form.snapshot_interval.or(form.capture_interval).unwrap_or(30);
     let config_json = match form.config_kind.as_str() {
+        "rtsp" => {
+            let url = form.rtsp_url.unwrap_or_default();
+            let width = form.rtsp_width.unwrap_or(1920);
+            let height = form.rtsp_height.unwrap_or(1080);
+            serde_json::json!({
+                "kind": "rtsp",
+                "url": url,
+                "width": width,
+                "height": height,
+                "snapshot_interval_seconds": snapshot_interval
+            })
+            .to_string()
+        }
         "file" => {
             let file_path = form.file_path.unwrap_or_default();
             serde_json::json!({
                 "kind": "file",
                 "file_path": file_path,
-                "capture_interval_seconds": capture_interval
+                "snapshot_interval_seconds": snapshot_interval
             })
             .to_string()
         }
@@ -1153,6 +1289,7 @@ async fn admin_stream_update(
             let url = form.website_url.unwrap_or_default();
             let width = form.website_width.unwrap_or(1920);
             let height = form.website_height.unwrap_or(1080);
+            let timeout = form.website_timeout.unwrap_or(30);
             let headless = form.headless.is_some();
             let stealth = form.stealth.is_some();
             let selector_type = form.selector_type.unwrap_or_else(|| "css".to_string());
@@ -1162,14 +1299,21 @@ async fn admin_stream_update(
                 "url": url,
                 "width": width,
                 "height": height,
+                "timeout": timeout,
                 "headless": headless,
                 "stealth": stealth,
                 "selector_type": selector_type,
-                "capture_interval_seconds": capture_interval
+                "snapshot_interval_seconds": snapshot_interval
             });
 
             if let Some(selector) = form.element_selector.filter(|s| !s.is_empty()) {
                 config["element_selector"] = serde_json::Value::String(selector);
+            }
+            if let Some(username) = form.auth_username.filter(|s| !s.is_empty()) {
+                config["auth_username"] = serde_json::Value::String(username);
+            }
+            if let Some(password) = form.auth_password.filter(|s| !s.is_empty()) {
+                config["auth_password"] = serde_json::Value::String(password);
             }
 
             config.to_string()
@@ -1177,23 +1321,29 @@ async fn admin_stream_update(
         "ffmpeg" => {
             let source = form.ffmpeg_source.unwrap_or_default();
             let args = form.ffmpeg_args.unwrap_or_default();
+            let width = form.ffmpeg_width.unwrap_or(1920);
+            let height = form.ffmpeg_height.unwrap_or(1080);
             serde_json::json!({
                 "kind": "ffmpeg",
                 "source": source,
                 "args": args,
-                "capture_interval_seconds": capture_interval
+                "width": width,
+                "height": height,
+                "snapshot_interval_seconds": snapshot_interval
             })
             .to_string()
         }
-        "yt" => {
-            let url = form.yt_url.unwrap_or_default();
-            let quality = form.quality.unwrap_or_else(|| "best".to_string());
+        "youtube" => {
+            let url = form.youtube_url.unwrap_or_default();
+            let format = form.youtube_format.unwrap_or_else(|| "best".to_string());
+            let is_live = form.youtube_is_live.is_some();
 
             serde_json::json!({
-                "kind": "yt",
+                "kind": "youtube",
                 "url": url,
-                "format": quality,
-                "capture_interval_seconds": capture_interval
+                "format": format,
+                "is_live": is_live,
+                "snapshot_interval_seconds": snapshot_interval
             })
             .to_string()
         }
