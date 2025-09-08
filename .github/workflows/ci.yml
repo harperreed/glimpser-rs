@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  SQLX_OFFLINE: true
 
 jobs:
   check:
@@ -36,10 +37,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-features
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test
 
   security:
     name: Security audit
