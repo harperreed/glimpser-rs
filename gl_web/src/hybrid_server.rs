@@ -4,7 +4,7 @@
 use crate::{frontend, AppState};
 use axum::{
     body::Body,
-    http::{Method, StatusCode, Uri},
+    http::{StatusCode, Uri},
     response::IntoResponse,
     routing::any,
     Router,
@@ -19,14 +19,11 @@ pub async fn start_hybrid_server(bind_addr: &str, state: AppState) -> Result<()>
     let frontend_state = frontend::FrontendState::from(state.clone());
     let frontend_router = frontend::create_frontend_router().with_state(frontend_state);
 
-    // Create the main router that handles both frontend and API placeholder routes
+    // Create the main router that handles both frontend and API routes
     let app = Router::new()
-        // API routes - placeholder for now
-        .route("/api/*path", any(api_handler))
-        .route("/docs/*path", any(api_handler))
         // Static files
         .route("/static/*path", any(static_handler))
-        // All other routes go to frontend
+        // All other routes go to frontend (including API routes)
         .merge(frontend_router)
         .with_state(state);
 
@@ -45,20 +42,7 @@ pub async fn start_hybrid_server(bind_addr: &str, state: AppState) -> Result<()>
     Ok(())
 }
 
-// Hybrid router functionality moved inline to main function
-
-/// Handler for API routes - currently returns placeholder
-async fn api_handler(uri: Uri, method: Method) -> impl IntoResponse {
-    // TODO: Proxy to Actix-web or implement API handlers directly in Axum
-    let path = uri.path();
-    tracing::info!("API request: {} {}", method, path);
-
-    axum::Json(serde_json::json!({
-        "error": "API not yet implemented in hybrid mode",
-        "path": path,
-        "method": method.as_str()
-    }))
-}
+// All API routes now handled by the frontend router
 
 /// Handler for static files
 async fn static_handler(uri: Uri) -> impl IntoResponse {
