@@ -1020,13 +1020,14 @@ async fn admin_stream_create(
             })
             .to_string()
         }
-        "yt_dlp" => {
+        "yt" => {
             let url = form.yt_url.unwrap_or_default();
             let quality = form.quality.unwrap_or_else(|| "best".to_string());
+
             serde_json::json!({
-                "kind": "yt_dlp",
+                "kind": "yt",
                 "url": url,
-                "quality": quality,
+                "format": quality,
                 "capture_interval_seconds": capture_interval
             })
             .to_string()
@@ -1175,13 +1176,14 @@ async fn admin_stream_update(
             })
             .to_string()
         }
-        "yt_dlp" => {
+        "yt" => {
             let url = form.yt_url.unwrap_or_default();
             let quality = form.quality.unwrap_or_else(|| "best".to_string());
+
             serde_json::json!({
-                "kind": "yt_dlp",
+                "kind": "yt",
                 "url": url,
-                "quality": quality,
+                "format": quality,
                 "capture_interval_seconds": capture_interval
             })
             .to_string()
