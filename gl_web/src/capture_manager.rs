@@ -2,6 +2,7 @@
 //! ABOUTME: Coordinates stream execution, status tracking, and resource management
 
 use bytes::Bytes;
+use gl_analysis::{AnalysisConfig, AnalysisService, ProcessorContext, ProcessorInput};
 use gl_capture::{
     artifact_storage::{ArtifactStorageConfig, ArtifactStorageService},
     CaptureHandle, CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel,
@@ -9,8 +10,10 @@ use gl_capture::{
 };
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
+use gl_config::Config as AppConfig;
 use gl_core::{time::now_iso8601, Error, Result};
 use gl_db::{CreateSnapshotRequest, SnapshotRepository, Stream, StreamRepository};
+use gl_notify::NotificationManager;
 use gl_storage::StorageManager;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -83,6 +86,7 @@ impl std::fmt::Debug for CaptureTask {
 pub struct CaptureManager {
     db_pool: sqlx::SqlitePool,
     running_captures: Arc<RwLock<HashMap<String, CaptureTask>>>,
+    analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
 }
 
 impl CaptureManager {
@@ -91,6 +95,7 @@ impl CaptureManager {
         let manager = Self {
             db_pool: db_pool.clone(),
             running_captures: Arc::new(RwLock::new(HashMap::new())),
+            analysis_service: None,
         };
 
         // Reset any stale "active" statuses from previous server runs
@@ -113,6 +118,56 @@ impl CaptureManager {
     ) -> Self {
         // Storage service is now created per-task for thread safety
         Self::new(db_pool)
+    }
+
+    /// Create a new CaptureManager with analysis services enabled
+    pub fn with_analysis_config(
+        db_pool: sqlx::SqlitePool,
+        _storage_config: gl_config::StorageConfig,
+        app_config: &AppConfig,
+    ) -> Result<Self> {
+        let mut manager = Self {
+            db_pool: db_pool.clone(),
+            running_captures: Arc::new(RwLock::new(HashMap::new())),
+            analysis_service: None,
+        };
+
+        // Initialize analysis service if AI is enabled
+        if app_config.features.enable_ai {
+            info!("Initializing analysis service with AI enabled");
+
+            // Create analysis configuration
+            let analysis_config = AnalysisConfig {
+                ai: Some(app_config.ai.to_ai_config()),
+                ..Default::default()
+            };
+
+            // Create notification manager (stub for now, can be enhanced later)
+            let notification_manager = NotificationManager::new();
+
+            // Create analysis service with persistence
+            let analysis_service = AnalysisService::with_persistence(
+                analysis_config,
+                gl_db::Db::from_pool(db_pool.clone()),
+                notification_manager,
+            )?;
+
+            manager.analysis_service = Some(Arc::new(tokio::sync::Mutex::new(analysis_service)));
+            info!("Analysis service initialized successfully");
+        } else {
+            info!("AI features disabled, analysis service not initialized");
+        }
+
+        // Reset any stale "active" statuses from previous server runs
+        let reset_db_pool = db_pool.clone();
+        tokio::spawn(async move {
+            let stream_repo = StreamRepository::new(&reset_db_pool);
+            if let Err(e) = stream_repo.reset_stale_active_statuses().await {
+                warn!("Failed to reset stale stream statuses: {}", e);
+            }
+        });
+
+        Ok(manager)
     }
 
     /// Start a capture from a stream
@@ -163,6 +218,7 @@ impl CaptureManager {
         let stream_id_clone = stream_id.to_string();
         let frame_sender_clone = frame_sender.clone();
         let latest_snapshot_clone = latest_snapshot.clone();
+        let analysis_service_clone = self.analysis_service.clone();
         // Note: We pass storage_service by reference to avoid clone issues
         // The spawned task will create its own copy of necessary components
 
@@ -190,6 +246,7 @@ impl CaptureManager {
                 stream_id_clone.clone(),
                 frame_sender_clone,
                 latest_snapshot_clone,
+                analysis_service_clone,
             )
             .await;
 
@@ -382,6 +439,7 @@ impl CaptureManager {
         stream_id: String,
         frame_sender: broadcast::Sender<Bytes>,
         latest_snapshot: Arc<RwLock<Option<Bytes>>>,
+        analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
     ) -> Result<()> {
         info!(stream_id = %stream_id, "Running persistent capture task with broadcast");
 
@@ -467,6 +525,46 @@ impl CaptureManager {
                                     error = %e,
                                     "Failed to store snapshot"
                                 );
+                            }
+
+                            // Process through analysis service if available
+                            if let Some(analysis_service) = &analysis_service {
+                                let analysis_clone = analysis_service.clone();
+                                let stream_id_clone = stream_id.clone();
+                                let snapshot_clone = snapshot_data.clone();
+
+                                // Spawn analysis task to avoid blocking capture loop
+                                tokio::spawn(async move {
+                                    let mut service_guard = analysis_clone.lock().await;
+
+                                    let processor_input = ProcessorInput {
+                                        template_id: stream_id_clone.clone(),
+                                        frame_data: Some(snapshot_clone),
+                                        frame_format: Some("jpeg".to_string()), // Most captures are JPEG
+                                        text_content: None,
+                                        context: ProcessorContext::new(stream_id_clone.clone()),
+                                        timestamp: chrono::Utc::now(),
+                                    };
+
+                                    match service_guard.analyze(processor_input).await {
+                                        Ok(events) => {
+                                            if !events.is_empty() {
+                                                debug!(
+                                                    stream_id = %stream_id_clone,
+                                                    event_count = events.len(),
+                                                    "Analysis completed with events"
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                stream_id = %stream_id_clone,
+                                                error = %e,
+                                                "Analysis failed for snapshot"
+                                            );
+                                        }
+                                    }
+                                });
                             }
                         }
                         Err(e) => {

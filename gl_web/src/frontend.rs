@@ -179,7 +179,7 @@ pub struct StreamCreateForm {
 
     // YouTube/yt-dlp fields
     pub youtube_url: Option<String>,
-    pub youtube_format: Option<String>, // Quality/format
+    pub youtube_format: Option<String>,  // Quality/format
     pub youtube_is_live: Option<String>, // Checkbox for live stream
 
     // Legacy fields for backward compatibility
@@ -210,8 +210,8 @@ pub struct StreamConfigForEdit {
 
     // Common fields
     pub snapshot_interval: u32, // How often to take snapshots
-    pub width: u32, // Default width for streams that support it
-    pub height: u32, // Default height for streams that support it
+    pub width: u32,             // Default width for streams that support it
+    pub height: u32,            // Default height for streams that support it
 
     // RTSP fields
     pub rtsp_url: String,
@@ -253,7 +253,7 @@ impl StreamConfigForEdit {
             description: String::new(),
             config_kind: String::new(),
             is_default: false,
-            
+
             // Common fields
             snapshot_interval: 30,
             width: 1920,
@@ -839,15 +839,22 @@ fn parse_stream_config_for_edit(db_stream: &gl_db::Stream) -> StreamConfigForEdi
         description: db_stream.description.clone().unwrap_or_default(),
         config_kind: kind.clone(),
         is_default: db_stream.is_default,
-        
+
         // Common fields
         snapshot_interval,
         width: config.get("width").and_then(|w| w.as_u64()).unwrap_or(1920) as u32,
-        height: config.get("height").and_then(|h| h.as_u64()).unwrap_or(1080) as u32,
-        
+        height: config
+            .get("height")
+            .and_then(|h| h.as_u64())
+            .unwrap_or(1080) as u32,
+
         // RTSP fields
         rtsp_url: if kind == "rtsp" {
-            config.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string()
+            config
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string()
         } else {
             String::new()
         },
@@ -873,12 +880,19 @@ fn parse_stream_config_for_edit(db_stream: &gl_db::Stream) -> StreamConfigForEdi
 
         // Website fields
         website_url: if kind == "website" {
-            config.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string()
+            config
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string()
         } else {
             String::new()
         },
         website_width: config.get("width").and_then(|w| w.as_u64()).unwrap_or(1920) as u32,
-        website_height: config.get("height").and_then(|h| h.as_u64()).unwrap_or(1080) as u32,
+        website_height: config
+            .get("height")
+            .and_then(|h| h.as_u64())
+            .unwrap_or(1080) as u32,
         website_timeout: config.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30) as u32,
         element_selector: config
             .get("element_selector")
@@ -911,7 +925,11 @@ fn parse_stream_config_for_edit(db_stream: &gl_db::Stream) -> StreamConfigForEdi
 
         // YouTube fields (handle both legacy "yt" and new "youtube" kinds)
         youtube_url: if kind == "youtube" || kind == "yt" {
-            config.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string()
+            config
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string()
         } else {
             String::new()
         },
@@ -924,7 +942,7 @@ fn parse_stream_config_for_edit(db_stream: &gl_db::Stream) -> StreamConfigForEdi
             .get("is_live")
             .and_then(|l| l.as_bool())
             .unwrap_or(false),
-        
+
         // Legacy field for backward compatibility
         capture_interval: snapshot_interval,
     }
@@ -1080,7 +1098,10 @@ async fn admin_stream_create(
     };
 
     // Build JSON config based on stream type
-    let snapshot_interval = form.snapshot_interval.or(form.capture_interval).unwrap_or(30);
+    let snapshot_interval = form
+        .snapshot_interval
+        .or(form.capture_interval)
+        .unwrap_or(30);
     let config_json = match form.config_kind.as_str() {
         "rtsp" => {
             let url = form.rtsp_url.unwrap_or_default();
@@ -1261,7 +1282,10 @@ async fn admin_stream_update(
     let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
 
     // Build JSON config based on stream type (same logic as create)
-    let snapshot_interval = form.snapshot_interval.or(form.capture_interval).unwrap_or(30);
+    let snapshot_interval = form
+        .snapshot_interval
+        .or(form.capture_interval)
+        .unwrap_or(30);
     let config_json = match form.config_kind.as_str() {
         "rtsp" => {
             let url = form.rtsp_url.unwrap_or_default();

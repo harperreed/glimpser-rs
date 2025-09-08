@@ -66,7 +66,10 @@ async fn main() {
         }
         Commands::Start => {
             tracing::info!("glimpser starting");
-            start_server(config, db).await;
+            if let Err(e) = start_server(config, db).await {
+                tracing::error!("Failed to start server: {}", e);
+                process::exit(1);
+            }
         }
     }
 }
@@ -288,7 +291,7 @@ async fn create_example_templates(db: &Db, user_id: &str) {
     println!("   • Take snapshots via API: /api/stream/<stream_id>/snapshot");
 }
 
-async fn start_server(config: Config, db: Db) {
+async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
     tracing::info!(
         host = %config.server.host,
         port = %config.server.port,
@@ -312,12 +315,13 @@ async fn start_server(config: Config, db: Db) {
         },
     };
 
-    // Initialize capture manager with configured storage
+    // Initialize capture manager with analysis and storage configuration
     let capture_manager = std::sync::Arc::new(
-        gl_web::capture_manager::CaptureManager::with_storage_config(
+        gl_web::capture_manager::CaptureManager::with_analysis_config(
             db.pool().clone(),
             config.storage.clone(),
-        ),
+            &config,
+        )?,
     );
 
     // Initialize stream manager for MJPEG streaming
@@ -369,6 +373,8 @@ async fn start_server(config: Config, db: Db) {
 
     if let Err(e) = result {
         tracing::error!("Server error: {}", e);
-        process::exit(1);
+        return Err(gl_core::Error::External(format!("Server error: {}", e)));
     }
+
+    Ok(())
 }

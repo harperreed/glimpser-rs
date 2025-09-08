@@ -2035,6 +2035,7 @@ name = "gl_config"
 version = "0.1.0"
 dependencies = [
  "config",
+ "gl_ai",
  "gl_core",
  "serde",
  "serde_json",
@@ -2241,6 +2242,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "gl_analysis",
  "gl_cap",
  "gl_capture",
  "gl_config",

@@ -22,6 +22,8 @@ pub struct Config {
     pub external: ExternalConfig,
     #[validate(nested)]
     pub storage: StorageConfig,
+    #[validate(nested)]
+    pub ai: AiConfig,
 }
 
 /// Server configuration
@@ -186,6 +188,54 @@ pub struct FeaturesConfig {
     pub enable_ai: bool,
 }
 
+/// AI service configuration
+#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+#[serde(default)]
+pub struct AiConfig {
+    /// Whether to use online AI services (true) or stub (false)
+    pub use_online: bool,
+    /// OpenAI API key
+    pub api_key: Option<String>,
+    /// Base URL for OpenAI API (defaults to OpenAI)
+    pub base_url: Option<String>,
+    /// Request timeout in seconds
+    #[validate(range(min = 5, max = 300))]
+    pub timeout_seconds: u64,
+    /// Maximum retries for failed requests
+    #[validate(range(min = 0, max = 10))]
+    pub max_retries: u32,
+    /// Model name to use (e.g., "gpt-4", "gpt-3.5-turbo")
+    #[validate(length(min = 1))]
+    pub model: String,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            use_online: false, // Safe default - requires explicit enablement
+            api_key: None,
+            base_url: None,
+            timeout_seconds: 30,
+            max_retries: 3,
+            model: "gpt-3.5-turbo".to_string(),
+        }
+    }
+}
+
+impl AiConfig {
+    /// Convert to gl_ai::AiConfig for use with analysis services
+    pub fn to_ai_config(&self) -> gl_ai::AiConfig {
+        gl_ai::AiConfig {
+            api_key: self.api_key.clone(),
+            base_url: self.base_url.clone(),
+            timeout_seconds: self.timeout_seconds,
+            max_retries: self.max_retries,
+            model: self.model.clone(),
+            use_online: self.use_online,
+        }
+    }
+}
+
 /// External service configuration with secret redaction
 #[derive(Clone, Deserialize, Serialize, Validate, Default)]
 #[serde(default)]
@@ -299,7 +349,11 @@ impl Config {
             .set_default("security.secure_cookies", false)?
             .set_default("features.enable_rtsp", false)?
             .set_default("features.enable_ai", false)?
-            .set_default("storage.artifacts_dir", "data/artifacts")?;
+            .set_default("storage.artifacts_dir", "data/artifacts")?
+            .set_default("ai.use_online", false)?
+            .set_default("ai.timeout_seconds", 30)?
+            .set_default("ai.max_retries", 3)?
+            .set_default("ai.model", "gpt-3.5-turbo")?;
 
         // Handle nested environment variables that don't work with the standard separator
         // JWT secret
@@ -324,6 +378,26 @@ impl Config {
         // Server observability port
         if let Ok(obs_port) = std::env::var("GLIMPSER_SERVER_OBS_PORT") {
             builder = builder.set_override("server.obs_port", obs_port)?;
+        }
+
+        // AI configuration
+        if let Ok(ai_use_online) = std::env::var("GLIMPSER_AI_USE_ONLINE") {
+            builder = builder.set_override("ai.use_online", ai_use_online)?;
+        }
+        if let Ok(ai_api_key) = std::env::var("GLIMPSER_AI_API_KEY") {
+            builder = builder.set_override("ai.api_key", ai_api_key)?;
+        }
+        if let Ok(ai_base_url) = std::env::var("GLIMPSER_AI_BASE_URL") {
+            builder = builder.set_override("ai.base_url", ai_base_url)?;
+        }
+        if let Ok(ai_model) = std::env::var("GLIMPSER_AI_MODEL") {
+            builder = builder.set_override("ai.model", ai_model)?;
+        }
+        if let Ok(ai_timeout) = std::env::var("GLIMPSER_AI_TIMEOUT_SECONDS") {
+            builder = builder.set_override("ai.timeout_seconds", ai_timeout)?;
+        }
+        if let Ok(ai_retries) = std::env::var("GLIMPSER_AI_MAX_RETRIES") {
+            builder = builder.set_override("ai.max_retries", ai_retries)?;
         }
 
         // Try to load from .env file if it exists (optional)
