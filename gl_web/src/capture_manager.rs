@@ -87,6 +87,7 @@ pub struct CaptureManager {
     db_pool: sqlx::SqlitePool,
     running_captures: Arc<RwLock<HashMap<String, CaptureTask>>>,
     analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
+    storage_config: gl_config::StorageConfig,
 }
 
 impl CaptureManager {
@@ -96,6 +97,7 @@ impl CaptureManager {
             db_pool: db_pool.clone(),
             running_captures: Arc::new(RwLock::new(HashMap::new())),
             analysis_service: None,
+            storage_config: gl_config::StorageConfig::default(),
         };
 
         // Reset any stale "active" statuses from previous server runs
@@ -114,22 +116,27 @@ impl CaptureManager {
     /// Create a new CaptureManager with custom storage configuration (legacy compatibility)
     pub fn with_storage_config(
         db_pool: sqlx::SqlitePool,
-        _storage_config: gl_config::StorageConfig,
+        storage_config: gl_config::StorageConfig,
     ) -> Self {
-        // Storage service is now created per-task for thread safety
-        Self::new(db_pool)
+        Self {
+            db_pool: db_pool.clone(),
+            running_captures: Arc::new(RwLock::new(HashMap::new())),
+            analysis_service: None,
+            storage_config,
+        }
     }
 
     /// Create a new CaptureManager with analysis services enabled
     pub fn with_analysis_config(
         db_pool: sqlx::SqlitePool,
-        _storage_config: gl_config::StorageConfig,
+        storage_config: gl_config::StorageConfig,
         app_config: &AppConfig,
     ) -> Result<Self> {
         let mut manager = Self {
             db_pool: db_pool.clone(),
             running_captures: Arc::new(RwLock::new(HashMap::new())),
             analysis_service: None,
+            storage_config,
         };
 
         // Initialize analysis service if AI is enabled
@@ -222,10 +229,10 @@ impl CaptureManager {
         // Note: We pass storage_service by reference to avoid clone issues
         // The spawned task will create its own copy of necessary components
 
+        let storage_config_clone = self.storage_config.clone();
         let handle = tokio::spawn(async move {
             // Create fresh storage service instance for the async task
-            let storage_config = gl_config::StorageConfig::default();
-            let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
+            let artifacts_dir = PathBuf::from(&storage_config_clone.artifacts_dir);
             let gl_storage_config = gl_storage::StorageConfig {
                 base_dir: Some(artifacts_dir),
                 ..Default::default()
@@ -233,7 +240,7 @@ impl CaptureManager {
             let storage_manager = StorageManager::new(gl_storage_config)
                 .expect("Failed to create storage manager for async task");
             let artifact_config = ArtifactStorageConfig {
-                base_uri: format!("file://{}", storage_config.artifacts_dir),
+                base_uri: format!("file://{}", storage_config_clone.artifacts_dir),
                 snapshot_extension: "jpg".to_string(),
                 include_timestamp: true,
             };
@@ -1471,8 +1478,7 @@ impl CaptureManager {
         snapshot_data: &[u8],
     ) -> Result<()> {
         // Create storage service for this operation
-        let storage_config = gl_config::StorageConfig::default();
-        let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
+        let artifacts_dir = PathBuf::from(&self.storage_config.artifacts_dir);
         let gl_storage_config = gl_storage::StorageConfig {
             base_dir: Some(artifacts_dir),
             ..Default::default()
@@ -1480,7 +1486,7 @@ impl CaptureManager {
         let storage_manager =
             StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
         let artifact_config = ArtifactStorageConfig {
-            base_uri: format!("file://{}", storage_config.artifacts_dir),
+            base_uri: format!("file://{}", self.storage_config.artifacts_dir),
             snapshot_extension: "jpg".to_string(),
             include_timestamp: true,
         };

@@ -143,10 +143,16 @@ impl Default for SecurityConfig {
             .unwrap_or_default()
             .as_nanos();
 
+        // Auto-detect production-like environment for secure cookies
+        let is_production = std::env::var("GLIMPSER_PRODUCTION").is_ok()
+            || std::env::var("NODE_ENV").is_ok_and(|v| v == "production")
+            || std::env::var("ENVIRONMENT").is_ok_and(|v| v == "production")
+            || std::env::var("DEPLOY_ENV").is_ok_and(|v| v == "production");
+
         Self {
             jwt_secret: format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", timestamp),
             argon2_params: Argon2Config::default(),
-            secure_cookies: false, // Default to false for development
+            secure_cookies: is_production, // Auto-enable in production environments
         }
     }
 }
@@ -378,6 +384,11 @@ impl Config {
         // Server observability port
         if let Ok(obs_port) = std::env::var("GLIMPSER_SERVER_OBS_PORT") {
             builder = builder.set_override("server.obs_port", obs_port)?;
+        }
+
+        // Security configuration
+        if let Ok(secure_cookies) = std::env::var("GLIMPSER_SECURITY_SECURE_COOKIES") {
+            builder = builder.set_override("security.secure_cookies", secure_cookies)?;
         }
 
         // AI configuration
