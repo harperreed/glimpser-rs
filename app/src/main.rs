@@ -353,7 +353,7 @@ async fn start_server(config: Config, db: Db) {
 
     // Run both servers concurrently
     let obs_future = gl_obs::start_server(&obs_bind_addr, obs_state);
-    let web_future = gl_web::start_server(&web_bind_addr, web_app_state);
+    let web_future = gl_web::start_hybrid_server(&web_bind_addr, web_app_state);
 
     // Use select to run both concurrently - either succeeding means the app runs
     let result = tokio::select! {

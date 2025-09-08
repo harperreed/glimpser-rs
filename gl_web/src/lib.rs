@@ -10,6 +10,8 @@ use gl_stream::StreamManager;
 pub mod auth;
 pub mod capture_manager;
 pub mod error;
+pub mod frontend;
+pub mod hybrid_server;
 pub mod middleware;
 pub mod models;
 pub mod routes;
@@ -37,7 +39,7 @@ pub struct AppState {
 // Re-export the create_app function from routing module for backward compatibility
 pub use routing::create_app;
 
-/// Start the web server
+/// Start the web server (Actix-web only - legacy)
 pub async fn start_server(bind_addr: &str, state: AppState) -> Result<()> {
     tracing::info!("Starting web server on {}", bind_addr);
 
@@ -49,4 +51,9 @@ pub async fn start_server(bind_addr: &str, state: AppState) -> Result<()> {
         .map_err(|e| gl_core::Error::Config(format!("Web server error: {}", e)))?;
 
     Ok(())
+}
+
+/// Start the hybrid server (Axum frontend + Actix API)
+pub async fn start_hybrid_server(bind_addr: &str, state: AppState) -> Result<()> {
+    hybrid_server::start_hybrid_server(bind_addr, state).await
 }

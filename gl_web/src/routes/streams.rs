@@ -370,6 +370,31 @@ pub async fn create_stream(
         actix_web::error::ErrorBadRequest("Invalid config JSON")
     })?;
 
+    // Verify the user exists in the database before creating stream
+    let user_repo = gl_db::UserRepository::new(state.db.pool());
+    match user_repo.find_by_id(&user.id).await {
+        Ok(Some(_)) => {
+            info!(user_id = %user.id, "User exists, proceeding with stream creation");
+        }
+        Ok(None) => {
+            warn!(
+                user_id = %user.id,
+                "User from JWT token not found in database - token may be stale"
+            );
+            return Ok(HttpResponse::Unauthorized().json(ApiResponse::<()>::error(
+                "Authentication token is invalid or stale. Please log in again.".to_string(),
+            )));
+        }
+        Err(e) => {
+            warn!(error = %e, user_id = %user.id, "Failed to verify user exists");
+            return Ok(
+                HttpResponse::InternalServerError().json(ApiResponse::<()>::error(
+                    "Database error while verifying user".to_string(),
+                )),
+            );
+        }
+    }
+
     let request = CreateStreamRequest {
         user_id: user.id.clone(),
         name: payload.name.clone(),
@@ -380,7 +405,20 @@ pub async fn create_stream(
 
     let repo = StreamRepository::new(state.db.pool());
     let stream = repo.create(request).await.map_err(|e| {
-        warn!(error = %e, "Failed to create stream");
+        let error_msg = e.to_string();
+        warn!(error = %e, user_id = %user.id, "Failed to create stream");
+
+        // Check if this is a foreign key constraint error
+        if error_msg.contains("FOREIGN KEY constraint failed") {
+            warn!(
+                user_id = %user.id,
+                "Foreign key constraint failed - user may not exist in database"
+            );
+            return actix_web::error::ErrorBadRequest(
+                "Failed to create stream: Database error: Failed to create stream: error returned from database: (code: 787) FOREIGN KEY constraint failed".to_string()
+            );
+        }
+
         actix_web::error::ErrorInternalServerError("Database error")
     })?;
 

@@ -1,0 +1,31 @@
+<!-- Stream cards grid fragment for HTMX updates -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for stream in streams %}
+    <div class="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden">
+        <div class="aspect-video bg-gray-100 flex items-center justify-center">
+            <a href="/streams/{{ stream.id }}" class="w-full h-full flex items-center justify-center">
+                {% if stream.status == "active" %}
+                    <img src="/api/stream/{{ stream.stream_id }}/thumbnail" alt="{{ stream.name }}" class="w-full h-full object-cover">
+                {% else %}
+                    <span class="text-gray-500">Offline</span>
+                {% endif %}
+            </a>
+        </div>
+
+        <div class="p-4">
+            <div class="flex justify-between items-start mb-2">
+                <h3 class="font-semibold text-gray-800 truncate">{{ stream.name }}</h3>
+                <span class="px-2 py-1 text-xs rounded-full {% if stream.status == 'active' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {% if stream.status == "active" %}Online{% else %}Offline{% endif %}
+                </span>
+            </div>
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-gray-500">Last seen: {{ stream.last_frame_at }}</p>
+                <a href="/streams/{{ stream.id }}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                    View
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>

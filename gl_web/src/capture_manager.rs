@@ -88,10 +88,22 @@ pub struct CaptureManager {
 impl CaptureManager {
     /// Create a new CaptureManager
     pub fn new(db_pool: sqlx::SqlitePool) -> Self {
-        Self {
-            db_pool,
+        let manager = Self {
+            db_pool: db_pool.clone(),
             running_captures: Arc::new(RwLock::new(HashMap::new())),
-        }
+        };
+
+        // Reset any stale "active" statuses from previous server runs
+        tokio::spawn(async move {
+            let stream_repo = StreamRepository::new(&db_pool);
+            if let Err(e) = stream_repo.reset_stale_active_statuses().await {
+                warn!("Failed to reset stale stream statuses: {}", e);
+            } else {
+                debug!("Reset stale stream statuses on startup");
+            }
+        });
+
+        manager
     }
 
     /// Create a new CaptureManager with custom storage configuration (legacy compatibility)
@@ -1201,6 +1213,36 @@ impl CaptureManager {
 
         if let Some(height) = config.get("height").and_then(|v| v.as_u64()) {
             website_config.height = std::cmp::min(height, u32::MAX as u64) as u32;
+        }
+
+        // Extract element selector configuration
+        if let Some(element_selector) = config.get("element_selector").and_then(|v| v.as_str()) {
+            website_config.element_selector = Some(element_selector.to_string());
+        }
+
+        if let Some(selector_type) = config.get("selector_type").and_then(|v| v.as_str()) {
+            website_config.selector_type = selector_type.to_string();
+        }
+
+        // Extract other optional fields
+        if let Some(stealth) = config.get("stealth").and_then(|v| v.as_bool()) {
+            website_config.stealth = stealth;
+        }
+
+        if let Some(basic_auth_username) =
+            config.get("basic_auth_username").and_then(|v| v.as_str())
+        {
+            website_config.basic_auth_username = Some(basic_auth_username.to_string());
+        }
+
+        if let Some(basic_auth_password) =
+            config.get("basic_auth_password").and_then(|v| v.as_str())
+        {
+            website_config.basic_auth_password = Some(basic_auth_password.to_string());
+        }
+
+        if let Some(timeout_secs) = config.get("timeout").and_then(|v| v.as_u64()) {
+            website_config.timeout = std::time::Duration::from_secs(timeout_secs);
         }
 
         let client =

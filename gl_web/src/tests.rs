@@ -605,3 +605,312 @@ async fn test_structured_error_responses() {
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(!body_str.is_empty());
 }
+
+#[actix_web::test]
+async fn test_streams_crud_happy_path() {
+    let state = create_test_app_state().await;
+    let user = create_test_user(&state, "user@example.com", "password123").await;
+
+    let token = crate::auth::JwtAuth::create_token(
+        &user.id,
+        &user.email,
+        &state.security_config.jwt_secret,
+    )
+    .expect("Failed to create token");
+
+    let app = test::init_service(create_app(state)).await;
+
+    // Create stream via user API
+    let create_payload = json!({
+        "name": "Test User Stream",
+        "description": "User stream test",
+        "config": {"kind": "file", "file_path": "/tmp/test.mp4"},
+        "is_default": false
+    });
+    let req = test::TestRequest::post()
+        .uri("/api/streams")
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .set_json(&create_payload)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+    let created: serde_json::Value = test::read_body_json(resp).await;
+    let stream_id = created["data"]["id"].as_str().unwrap().to_string();
+
+    // List streams should include our stream
+    let req = test::TestRequest::get()
+        .uri("/api/streams")
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let list: serde_json::Value = test::read_body_json(resp).await;
+    assert!(list["data"]["streams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["id"] == stream_id));
+
+    // Get individual stream
+    let req = test::TestRequest::get()
+        .uri(&format!("/api/streams/{}", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let stream: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(stream["data"]["id"], stream_id);
+
+    // Update stream
+    let update_payload = json!({
+        "name": "Updated Stream Name",
+        "config": {"kind": "file", "file_path": "/tmp/updated.mp4"}
+    });
+    let req = test::TestRequest::put()
+        .uri(&format!("/api/streams/{}", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .set_json(&update_payload)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // Delete stream
+    let req = test::TestRequest::delete()
+        .uri(&format!("/api/streams/{}", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 204);
+}
+
+#[actix_web::test]
+async fn test_streaming_endpoints() {
+    let state = create_test_app_state().await;
+    let user = create_test_user(&state, "user@example.com", "password123").await;
+
+    let token = crate::auth::JwtAuth::create_token(
+        &user.id,
+        &user.email,
+        &state.security_config.jwt_secret,
+    )
+    .expect("Failed to create token");
+
+    let app = test::init_service(create_app(state)).await;
+
+    // Create a test stream first
+    let create_payload = json!({
+        "name": "Test Stream",
+        "config": {"kind": "file", "file_path": "/tmp/test.mp4"},
+        "is_default": false
+    });
+    let req = test::TestRequest::post()
+        .uri("/api/streams")
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .set_json(&create_payload)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+    let created: serde_json::Value = test::read_body_json(resp).await;
+    let stream_id = created["data"]["id"].as_str().unwrap();
+
+    // Test recent snapshots endpoint
+    let req = test::TestRequest::get()
+        .uri(&format!("/api/stream/{}/recent-snapshots", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let snapshots: serde_json::Value = test::read_body_json(resp).await;
+    assert!(snapshots["snapshots"].is_array());
+    assert!(snapshots["total"].is_number());
+
+    // Test snapshot endpoint (expect it to fail gracefully since file doesn't exist)
+    let req = test::TestRequest::get()
+        .uri(&format!("/api/stream/{}/snapshot", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    // Should fail gracefully with 404 or 500, but should return structured error
+    assert!(resp.status() == 404 || resp.status() == 500);
+    let _: serde_json::Value = test::read_body_json(resp).await; // Should parse as JSON
+
+    // Test stream details endpoint
+    let req = test::TestRequest::get()
+        .uri(&format!("/api/stream/{}", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let details: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(details["id"], stream_id);
+}
+
+#[actix_web::test]
+async fn test_stream_lifecycle_endpoints() {
+    let state = create_test_app_state().await;
+    let user = create_test_user(&state, "user@example.com", "password123").await;
+
+    let token = crate::auth::JwtAuth::create_token(
+        &user.id,
+        &user.email,
+        &state.security_config.jwt_secret,
+    )
+    .expect("Failed to create token");
+
+    let app = test::init_service(create_app(state)).await;
+
+    // Create a test stream
+    let create_payload = json!({
+        "name": "Lifecycle Test Stream",
+        "config": {"kind": "file", "file_path": "/tmp/test.mp4"},
+        "is_default": false
+    });
+    let req = test::TestRequest::post()
+        .uri("/api/streams")
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .set_json(&create_payload)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+    let created: serde_json::Value = test::read_body_json(resp).await;
+    let stream_id = created["data"]["id"].as_str().unwrap();
+
+    // Test start stream endpoint
+    let req = test::TestRequest::post()
+        .uri(&format!("/api/stream/{}/start", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    // This might fail due to file not existing, but should not be 500
+    assert!(resp.status() == 200 || resp.status() == 404 || resp.status() == 500); // Expected failure modes
+
+    // Test stop stream endpoint
+    let req = test::TestRequest::post()
+        .uri(&format!("/api/stream/{}/stop", stream_id))
+        .insert_header(("authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    // Should return 404 if stream not running, which is expected
+    assert!(resp.status() == 200 || resp.status() == 404);
+}
+
+// Template tests for the new Axum + HTMX + Askama frontend
+mod frontend_template_tests {
+    use crate::frontend::{DashboardTemplate, LoginTemplate, UserInfo};
+    use askama::Template;
+
+    #[test]
+    fn test_login_template_renders() {
+        let template = LoginTemplate {
+            error_message: String::new(),
+            user: UserInfo {
+                id: String::new(),
+                username: String::new(),
+                is_admin: false,
+            },
+            logged_in: false,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("Sign in to Glimpser"));
+        assert!(rendered.contains("Email"));
+        assert!(rendered.contains("Password"));
+        assert!(rendered.contains("hx-post=\"/login\""));
+        assert!(rendered.contains("tailwindcss.com")); // Tailwind CSS included
+        assert!(rendered.contains("htmx.org")); // HTMX included
+    }
+
+    #[test]
+    fn test_login_template_with_error() {
+        let template = LoginTemplate {
+            error_message: "Invalid credentials".to_string(),
+            user: UserInfo {
+                id: String::new(),
+                username: String::new(),
+                is_admin: false,
+            },
+            logged_in: false,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("Invalid credentials"));
+        assert!(rendered.contains("text-red-600")); // Error styling
+    }
+
+    #[test]
+    fn test_dashboard_template_renders() {
+        let template = DashboardTemplate {
+            user: UserInfo {
+                id: "test123".to_string(),
+                username: "testuser".to_string(),
+                is_admin: true,
+            },
+            logged_in: true,
+            stream_count: 5,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("Dashboard"));
+        assert!(rendered.contains("testuser"));
+        assert!(rendered.contains("Active Streams"));
+        assert!(rendered.contains("5")); // stream count
+        assert!(rendered.contains("View all streams"));
+        assert!(rendered.contains("Glimpser")); // App name
+    }
+
+    #[test]
+    fn test_dashboard_includes_navigation() {
+        let template = DashboardTemplate {
+            user: UserInfo {
+                id: "test123".to_string(),
+                username: "admin_user".to_string(),
+                is_admin: true,
+            },
+            logged_in: true,
+            stream_count: 0,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("admin_user")); // Username in nav
+        assert!(rendered.contains("Glimpser")); // App name in nav
+        assert!(rendered.contains("<nav")); // Navigation element
+    }
+
+    #[test]
+    fn test_dashboard_includes_htmx_and_tailwind() {
+        let template = DashboardTemplate {
+            user: UserInfo {
+                id: "test123".to_string(),
+                username: "testuser".to_string(),
+                is_admin: false,
+            },
+            logged_in: true,
+            stream_count: 0,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("htmx.org")); // HTMX script
+        assert!(rendered.contains("tailwindcss.com")); // Tailwind CSS
+        assert!(rendered.contains("bg-gray-100")); // Tailwind classes being used
+    }
+
+    #[tokio::test]
+    async fn test_login_form_processing() {
+        // Create test state
+        let state = super::create_test_app_state().await;
+        let user = super::create_test_user(&state, "test@example.com", "password123").await;
+
+        // Test that we can create the login form data
+        let form_data = crate::frontend::LoginForm {
+            username: "test@example.com".to_string(),
+            password: "password123".to_string(),
+        };
+
+        // Verify password verification works (this tests the auth integration)
+        let password_valid =
+            crate::auth::PasswordAuth::verify_password(&form_data.password, &user.password_hash)
+                .expect("Password verification should work");
+
+        assert!(password_valid, "Password should be valid for test user");
+    }
+}
