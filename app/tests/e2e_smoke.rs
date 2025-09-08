@@ -179,6 +179,14 @@ impl E2ETestSetup {
             body_limits_config: gl_web::middleware::bodylimits::BodyLimitsConfig::new(1024 * 1024)
                 .with_override("/api/admin", 1024 * 1024)
                 .with_override("/api/upload", 10 * 1024 * 1024),
+            update_service: {
+                // Create a test update service with dummy configuration
+                let mut update_config = gl_update::UpdateConfig::default();
+                update_config.public_key = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string();
+                let service = gl_update::UpdateService::new(update_config)
+                    .expect("Failed to create test update service");
+                std::sync::Arc::new(tokio::sync::Mutex::new(service))
+            },
         };
 
         // Start servers on random ports for testing

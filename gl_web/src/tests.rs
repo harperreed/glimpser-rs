@@ -32,6 +32,14 @@ async fn create_test_app_state() -> AppState {
         body_limits_config: middleware::bodylimits::BodyLimitsConfig::default(),
         capture_manager,
         stream_manager,
+        update_service: {
+            // Create a test update service with dummy configuration
+            let mut update_config = gl_update::UpdateConfig::default();
+            update_config.public_key = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string();
+            let service = gl_update::UpdateService::new(update_config)
+                .expect("Failed to create test update service");
+            std::sync::Arc::new(tokio::sync::Mutex::new(service))
+        },
     }
 }
 

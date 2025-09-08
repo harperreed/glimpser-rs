@@ -4,6 +4,7 @@ use gl_core::telemetry;
 use gl_db::{CreateStreamRequest, Db, StreamRepository, UserRepository};
 use gl_obs::ObsState;
 use gl_stream::{StreamManager, StreamMetrics};
+use gl_update::{UpdateConfig, UpdateService, UpdateStrategyType};
 use gl_web::AppState;
 use std::process;
 
@@ -345,6 +346,35 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
         .with_override("/api/upload", config.server.body_limits.upload_limit),
         capture_manager,
         stream_manager,
+        update_service: {
+            // Create a basic update configuration
+            // In production, these values would come from the main config
+            let update_config = UpdateConfig {
+                repository: "owner/glimpser".to_string(), // This should be from config
+                current_version: env!("CARGO_PKG_VERSION").to_string(),
+                public_key: String::new(), // Should be from config
+                strategy: UpdateStrategyType::Sidecar,
+                check_interval_seconds: 3600,
+                health_check_timeout_seconds: 30,
+                health_check_url: format!("http://127.0.0.1:{}/healthz", config.server.port),
+                binary_name: "glimpser".to_string(),
+                install_dir: std::path::PathBuf::from("/usr/local/bin"),
+                auto_apply: false,
+                github_token: None,
+            };
+
+            match UpdateService::new(update_config) {
+                Ok(service) => std::sync::Arc::new(tokio::sync::Mutex::new(service)),
+                Err(e) => {
+                    tracing::warn!("Failed to initialize update service: {}", e);
+                    // Create a stub service - in production you might want to handle this differently
+                    let stub_config = UpdateConfig::default();
+                    std::sync::Arc::new(tokio::sync::Mutex::new(
+                        UpdateService::new(stub_config).expect("Default config should work"),
+                    ))
+                }
+            }
+        },
     };
 
     // Start observability server

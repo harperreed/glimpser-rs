@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, oneshot, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -229,6 +229,9 @@ impl CaptureManager {
         // Note: We pass storage_service by reference to avoid clone issues
         // The spawned task will create its own copy of necessary components
 
+        // Create channel to receive the capture handle for efficient snapshotting
+        let (capture_handle_sender, capture_handle_receiver) = oneshot::channel();
+
         let storage_config_clone = self.storage_config.clone();
         let handle = tokio::spawn(async move {
             // Create fresh storage service instance for the async task
@@ -254,6 +257,7 @@ impl CaptureManager {
                 frame_sender_clone,
                 latest_snapshot_clone,
                 analysis_service_clone,
+                Some(capture_handle_sender),
             )
             .await;
 
@@ -291,13 +295,26 @@ impl CaptureManager {
         let task = CaptureTask {
             handle,
             info: capture_info,
-            capture_handle: None, // TODO: Store actual capture handle for snapshot access
+            capture_handle: None, // Will be updated when capture handle is received
             frame_sender,
             latest_snapshot,
         };
 
         captures.insert(stream_id.to_string(), task);
         drop(captures); // Explicitly release lock
+
+        // Spawn a task to update the capture handle when it becomes available
+        let running_captures_clone = self.running_captures.clone();
+        let stream_id_for_handle = stream_id.to_string();
+        tokio::spawn(async move {
+            if let Ok(capture_handle) = capture_handle_receiver.await {
+                let mut captures = running_captures_clone.write().await;
+                if let Some(task) = captures.get_mut(&stream_id_for_handle) {
+                    task.capture_handle = Some(capture_handle);
+                    debug!(stream_id = %stream_id_for_handle, "Updated capture handle for efficient snapshotting");
+                }
+            }
+        });
 
         debug!(stream_id = %stream_id, "Stream capture started");
         Ok(())
@@ -371,6 +388,34 @@ impl CaptureManager {
             }
         }
 
+        // Try to take a fresh snapshot from the running capture handle (efficient)
+        if let Some(capture_handle) = {
+            let captures = self.running_captures.read().await;
+            captures
+                .get(stream_id)
+                .and_then(|task| task.capture_handle.clone())
+        } {
+            debug!(stream_id = %stream_id, "Taking fresh snapshot from running capture handle");
+            match capture_handle.snapshot().await {
+                Ok(snapshot_data) => {
+                    // Cache the snapshot for future requests
+                    if let Some(latest_snapshot) = {
+                        let captures = self.running_captures.read().await;
+                        captures
+                            .get(stream_id)
+                            .map(|task| task.latest_snapshot.clone())
+                    } {
+                        let mut snapshot_guard = latest_snapshot.write().await;
+                        *snapshot_guard = Some(snapshot_data.clone());
+                    }
+                    return Ok(snapshot_data);
+                }
+                Err(e) => {
+                    warn!(stream_id = %stream_id, error = %e, "Failed to take snapshot from capture handle, falling back");
+                }
+            }
+        }
+
         // Fall back to database for the latest stored snapshot
         let repo = SnapshotRepository::new(&self.db_pool);
         if let Some(latest_snapshot) = repo.get_latest_by_template(stream_id).await? {
@@ -439,6 +484,7 @@ impl CaptureManager {
     }
 
     /// Internal method to run a persistent capture task with broadcast capabilities
+    #[allow(clippy::too_many_arguments)]
     async fn run_persistent_capture_task(
         db_pool: sqlx::SqlitePool,
         storage_service: ArtifactStorageService<StorageManager>,
@@ -447,6 +493,7 @@ impl CaptureManager {
         frame_sender: broadcast::Sender<Bytes>,
         latest_snapshot: Arc<RwLock<Option<Bytes>>>,
         analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
+        capture_handle_sender: Option<oneshot::Sender<Arc<CaptureHandle>>>,
     ) -> Result<()> {
         info!(stream_id = %stream_id, "Running persistent capture task with broadcast");
 
@@ -473,6 +520,11 @@ impl CaptureManager {
             "yt" => Self::create_yt_capture(&config).await?,
             _ => return Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
         };
+
+        // Send the capture handle back to the main thread for efficient snapshotting
+        if let Some(sender) = capture_handle_sender {
+            let _ = sender.send(capture_handle.clone());
+        }
 
         // Get snapshot interval from config (default: 5 seconds)
         let snapshot_interval = config
