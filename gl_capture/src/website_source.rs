@@ -126,7 +126,7 @@ impl CaptureSource for WebsiteSource {
         // Try to use real WebDriver first, fallback to mock if not available
         #[cfg(feature = "website")]
         let client = {
-            match ThirtyfourClient::new(self.config.webdriver_url.clone()).await {
+            match ThirtyfourClient::new(None).await {
                 Ok(real_client) => {
                     info!("Using real ThirtyfourClient for website capture");
                     Box::new(real_client) as Box<dyn WebDriverClient>
@@ -203,8 +203,7 @@ impl WebDriverClient for MockWebDriverClient {
             selector = ?config.element_selector,
             "Mock screenshot taken"
         );
-        // Simulate some processing time
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // No artificial delay to keep tests responsive
         Ok(self.synthetic_png.clone())
     }
 
@@ -252,7 +251,7 @@ impl ThirtyfourClient {
 impl WebDriverClient for ThirtyfourClient {
     #[instrument(skip(self))]
     async fn screenshot(&self, config: &WebsiteConfig) -> Result<Bytes> {
-        use thirtyfour::By;
+        use thirtyfour::{prelude::ElementQueryable, By};
 
         info!(url = %config.url, "Taking real screenshot with WebDriver");
 
@@ -281,8 +280,12 @@ impl WebDriverClient for ThirtyfourClient {
             warn!("Basic auth should be handled via URL format for security");
         }
 
-        // Wait for page to load (simple approach)
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        // Wait for page to load by ensuring body element is present
+        driver
+            .query(By::Css("body"))
+            .first()
+            .await
+            .map_err(|e| Error::Config(format!("Page load error: {}", e)))?;
 
         // Take screenshot (element-specific or full page)
         let screenshot_data = if let Some(selector) = &config.element_selector {
@@ -387,12 +390,11 @@ impl WebDriverClient for HeadlessChromeClient {
         tab.navigate_to(&config.url)
             .map_err(|e| Error::Config(format!("Failed to navigate to {}: {}", config.url, e)))?;
 
-        // Wait for page to load
+        // Wait for page to load and DOM to be ready
         tab.wait_until_navigated()
             .map_err(|e| Error::Config(format!("Failed to wait for navigation: {}", e)))?;
-
-        // Additional wait for dynamic content
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        tab.wait_for_element("body")
+            .map_err(|e| Error::Config(format!("Failed to wait for body element: {}", e)))?;
 
         // Take screenshot
         let screenshot_data = if let Some(selector) = &config.element_selector {
@@ -552,6 +554,23 @@ mod tests {
 
         // Test stop
         handle.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_is_fast() {
+        use std::time::Instant;
+
+        let client = MockWebDriverClient::new();
+        let config = WebsiteConfig {
+            url: "https://example.com".to_string(),
+            ..Default::default()
+        };
+
+        let start = Instant::now();
+        client.screenshot(&config).await.unwrap();
+        assert!(start.elapsed() < Duration::from_millis(50));
+
+        client.close().await.unwrap();
     }
 
     #[cfg(feature = "website_live")]
