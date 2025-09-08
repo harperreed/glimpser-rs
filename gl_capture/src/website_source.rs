@@ -461,20 +461,57 @@ impl WebDriverClient for HeadlessChromeClient {
                 })?
             };
 
+            // Debug: First check if element exists and is rendered
+            let debug_result = element
+                .call_js_fn(
+                    "function() {
+                        console.log('Element:', this);
+                        console.log('Element tagName:', this.tagName);
+                        console.log('Element id:', this.id);
+                        console.log('Element isConnected:', this.isConnected);
+                        console.log('Element clientWidth/Height:', this.clientWidth, this.clientHeight);
+                        const r = this.getBoundingClientRect();
+                        console.log('BoundingRect:', r);
+                        return {
+                            tagName: this.tagName,
+                            id: this.id,
+                            isConnected: this.isConnected,
+                            clientWidth: this.clientWidth,
+                            clientHeight: this.clientHeight,
+                            rect: r
+                        };
+                    }",
+                    vec![],
+                    false,
+                )
+                .map_err(|e| Error::Config(format!("Failed to debug element: {}", e)))?;
+                
+            let debug_value = debug_result.value.ok_or_else(|| 
+                Error::Config("Debug call returned no value".to_string()))?;
+            
+            // Now get the actual bounding box
             let rect_obj = element
                 .call_js_fn(
-                    "function() { const r = this.getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height}; }",
+                    "function() { 
+                        const r = this.getBoundingClientRect(); 
+                        return {x: r.x, y: r.y, width: r.width, height: r.height}; 
+                    }",
                     vec![],
                     false,
                 )
                 .map_err(|e| {
                     Error::Config(format!(
-                        "Failed to get element bounding box: {}",
-                        e
+                        "Failed to get element bounding box: {} (debug info: {:?})",
+                        e, debug_value
                     ))
                 })?
                 .value
-                .ok_or_else(|| Error::Config("Element bounding box missing".to_string()))?;
+                .ok_or_else(|| {
+                    Error::Config(format!(
+                        "Element bounding box missing (debug info: {:?})",
+                        debug_value
+                    ))
+                })?;
 
             let x = rect_obj.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let y = rect_obj.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -610,15 +647,10 @@ mod tests {
     #[tokio::test]
     async fn test_headless_element_screenshot_size() {
         use image::ImageFormat;
-        use std::io::Write;
 
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        writeln!(
-            file,
-            "<html><body><div id='box' style='width:120px;height:80px;background:red;'>hi</div></body></html>"
-        )
-        .unwrap();
-        let url = format!("file://{}", file.path().display());
+        // Use data URL to avoid file system issues
+        let html = "<html><body><div id='box' style='width:120px;height:80px;background:red;'>hi</div></body></html>";
+        let url = format!("data:text/html,{}", html);
         let config = WebsiteConfig {
             url,
             element_selector: Some("#box".into()),
@@ -628,10 +660,6 @@ mod tests {
         let client = HeadlessChromeClient::new_boxed().unwrap();
         let source = WebsiteSource::new(config, client);
         let handle = source.start().await.unwrap();
-        
-        // Small delay to ensure file is written and Chrome can load it
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        
         let bytes = handle.snapshot().await.unwrap();
         handle.stop().await.unwrap();
 
