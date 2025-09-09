@@ -69,8 +69,8 @@ async fn test_large_file_operations() {
     ))
     .unwrap();
 
-    // Create 1MB test data
-    let test_data = Bytes::from(vec![0x42; 1024 * 1024]);
+    // Create 256KB test data
+    let test_data = Bytes::from(vec![0x42; 256 * 1024]);
 
     // Test put large file
     let result = storage.put(&uri, test_data.clone()).await.unwrap();

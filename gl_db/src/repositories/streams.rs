@@ -286,4 +286,27 @@ impl<'a> StreamRepository<'a> {
 
         Ok(result.rows_affected() > 0)
     }
+
+    /// Reset all streams with "active" or "starting" status to "inactive" on startup
+    /// This fixes stale statuses when server restarts but capture processes are gone
+    pub async fn reset_stale_active_statuses(&self) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE streams
+             SET execution_status = 'inactive',
+                 last_error_message = 'Reset on server restart'
+             WHERE execution_status IN ('active', 'starting')",
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to reset stale statuses: {}", e)))?;
+
+        if result.rows_affected() > 0 {
+            tracing::info!(
+                "Reset {} stale stream statuses to inactive",
+                result.rows_affected()
+            );
+        }
+
+        Ok(())
+    }
 }

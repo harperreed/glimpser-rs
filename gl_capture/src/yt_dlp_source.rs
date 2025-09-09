@@ -1,7 +1,7 @@
 //! ABOUTME: yt-dlp capture source for YouTube and other video platforms
 //! ABOUTME: Implements CaptureSource trait with live and VOD support
 
-use crate::{generate_snapshot_with_ffmpeg, CaptureHandle, CaptureSource, SnapshotConfig};
+use crate::{CaptureHandle, CaptureSource, SnapshotConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
@@ -10,7 +10,7 @@ use metrics::{counter, histogram};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -69,7 +69,6 @@ impl Default for YtDlpConfig {
 /// yt-dlp-based capture source
 pub struct YtDlpSource {
     config: YtDlpConfig,
-    temp_file: Arc<Mutex<Option<PathBuf>>>,
     #[allow(dead_code)]
     process_handle: Arc<Mutex<Option<String>>>,
     restart_count: Arc<Mutex<u32>>,
@@ -79,7 +78,6 @@ impl YtDlpSource {
     pub fn new(config: YtDlpConfig) -> Self {
         Self {
             config,
-            temp_file: Arc::new(Mutex::new(None)),
             process_handle: Arc::new(Mutex::new(None)),
             restart_count: Arc::new(Mutex::new(0)),
         }
@@ -148,92 +146,17 @@ impl YtDlpSource {
             .timeout(timeout)
     }
 
-    /// Build yt-dlp command for downloading
-    async fn build_download_command(&self) -> Result<CommandSpec> {
-        let mut temp_guard = self.temp_file.lock().await;
-
-        // Create temp file for download
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join(format!(
-            "yt_dlp_{}_{}.%(ext)s",
-            gl_core::Id::new(),
-            chrono::Utc::now().timestamp()
-        ));
-
-        let mut args = vec![
-            "--no-playlist".to_string(),
-            "--output".to_string(),
-            temp_file.to_string_lossy().to_string(),
-        ];
-
-        // Add format selection (skip for Best to let yt-dlp auto-choose)
-        match &self.config.format {
-            OutputFormat::Best => {
-                // Don't add format selection - let yt-dlp auto-choose the best format
-            }
-            OutputFormat::Worst => args.extend(["--format".to_string(), "worst".to_string()]),
-            OutputFormat::FormatId(id) => args.extend(["--format".to_string(), id.clone()]),
-            OutputFormat::BestWithHeight(height) => {
-                args.extend(["--format".to_string(), format!("best[height<={}]", height)]);
-            }
-        }
-
-        // For live streams, add live-specific options
-        if self.config.is_live {
-            args.extend([
-                "--live-from-start".to_string(),
-                "--wait-for-video".to_string(),
-                "5".to_string(),
-            ]);
-        }
-
-        // Add custom options
-        for (key, value) in &self.config.options {
-            if !key.starts_with('-') {
-                args.push(format!("--{}", key));
-            } else {
-                args.push(key.clone());
-            }
-            if !value.is_empty() {
-                args.push(value.clone());
-            }
-        }
-
-        args.push(self.config.url.clone());
-
-        *temp_guard = Some(temp_file.clone());
-
-        let timeout = Duration::from_secs(
-            self.config.timeout.unwrap_or(300) as u64, // Longer timeout for downloads
+    /// Build command to capture a single frame via yt-dlp and ffmpeg
+    fn build_snapshot_command(&self, output_path: &Path) -> CommandSpec {
+        let cmd = format!(
+            r#"ffmpeg -i "$(yt-dlp -g '{}')" -vframes 1 -f image2 -q:v 2 -y '{}'"#,
+            self.config.url,
+            output_path.to_string_lossy()
         );
 
-        Ok(CommandSpec::new("yt-dlp".into())
-            .args(args)
-            .timeout(timeout))
-    }
-
-    /// Find the actual downloaded file (yt-dlp resolves %(ext)s)
-    async fn find_downloaded_file(&self) -> Result<PathBuf> {
-        let temp_guard = self.temp_file.lock().await;
-        let template_path = temp_guard
-            .as_ref()
-            .ok_or_else(|| Error::Config("No temp file set".to_string()))?;
-
-        let template_str = template_path.to_string_lossy();
-        let base_path = template_str.replace(".%(ext)s", "");
-
-        // Common video extensions to check
-        let extensions = ["mp4", "mkv", "webm", "m4v", "mov", "avi", "flv"];
-
-        for ext in &extensions {
-            let candidate = PathBuf::from(format!("{}.{}", base_path, ext));
-            if candidate.exists() {
-                debug!(path = %candidate.display(), "Found downloaded file");
-                return Ok(candidate);
-            }
-        }
-
-        Err(Error::Config("Could not find downloaded file".to_string()))
+        CommandSpec::new("sh".into())
+            .args(vec!["-c".to_string(), cmd])
+            .timeout(Duration::from_secs(15))
     }
 }
 
@@ -282,21 +205,6 @@ impl CaptureSource for YtDlpSource {
             );
         }
 
-        // Start download process for non-live streams
-        if !is_live_stream {
-            let download_spec = self.build_download_command().await?;
-            debug!(command = ?download_spec, "Starting download");
-
-            let download_result = run(download_spec).await?;
-            if !download_result.success() {
-                counter!("yt_dlp_failures_total").increment(1);
-                return Err(Error::Config(format!(
-                    "yt-dlp download failed: {}",
-                    download_result.stderr
-                )));
-            }
-        }
-
         counter!("yt_dlp_starts_total").increment(1);
         histogram!("yt_dlp_start_duration_seconds").record(start_time.elapsed().as_secs_f64());
 
@@ -313,59 +221,30 @@ impl CaptureSource for YtDlpSource {
     async fn snapshot(&self) -> Result<Bytes> {
         info!(url = %self.config.url, "Taking yt-dlp snapshot");
 
-        // For live streams, pipe yt-dlp directly to ffmpeg
-        if self.config.is_live {
-            let temp_path =
-                std::env::temp_dir().join(format!("yt_live_snapshot_{}.jpg", gl_core::Id::new()));
+        let temp_path =
+            std::env::temp_dir().join(format!("yt_snapshot_{}.jpg", gl_core::Id::new()));
 
-            // Use yt-dlp -g to get URL, then ffmpeg to capture frame
-            let cmd = format!(
-                r#"ffmpeg -i "$(yt-dlp -g '{}')" -vframes 1 -f image2 -q:v 2 -y '{}'"#,
-                self.config.url,
-                temp_path.to_string_lossy()
-            );
-
-            let cmd_spec = CommandSpec::new("sh".into())
-                .args(vec!["-c".to_string(), cmd])
-                .timeout(Duration::from_secs(15));
-
-            let cmd_result = run(cmd_spec).await?;
-            if !cmd_result.success() {
-                return Err(Error::Config(format!(
-                    "yt-dlp+ffmpeg command failed: {}",
-                    cmd_result.stderr
-                )));
-            }
-
-            // Read the generated image
-            let image_data = fs::read(&temp_path)
-                .await
-                .map_err(|e| Error::Config(format!("Failed to read snapshot: {}", e)))?;
-
-            // Clean up temp file
-            let _ = fs::remove_file(&temp_path).await;
-
-            Ok(Bytes::from(image_data))
-        } else {
-            // For VOD, use the downloaded file
-            let downloaded_file = self.find_downloaded_file().await?;
-            generate_snapshot_with_ffmpeg(&downloaded_file, &self.config.snapshot_config).await
+        let cmd_spec = self.build_snapshot_command(&temp_path);
+        let cmd_result = run(cmd_spec).await?;
+        if !cmd_result.success() {
+            return Err(Error::Config(format!(
+                "yt-dlp+ffmpeg command failed: {}",
+                cmd_result.stderr
+            )));
         }
+
+        let image_data = fs::read(&temp_path)
+            .await
+            .map_err(|e| Error::Config(format!("Failed to read snapshot: {}", e)))?;
+
+        let _ = fs::remove_file(&temp_path).await;
+
+        Ok(Bytes::from(image_data))
     }
 
     #[instrument(skip(self))]
     async fn stop(&self) -> Result<()> {
         info!(url = %self.config.url, "Stopping yt-dlp capture");
-
-        // Clean up temp file if it exists
-        let mut temp_guard = self.temp_file.lock().await;
-        if let Some(_temp_file) = temp_guard.take() {
-            // Try to find and remove actual downloaded file
-            if let Ok(actual_file) = self.find_downloaded_file().await {
-                debug!(path = %actual_file.display(), "Removing downloaded file");
-                let _ = fs::remove_file(&actual_file).await;
-            }
-        }
 
         counter!("yt_dlp_stops_total").increment(1);
         Ok(())
@@ -483,6 +362,20 @@ mod tests {
         assert!(spec.args.contains(&"/path/to/cookies.txt".to_string()));
         assert!(spec.args.contains(&"--user-agent".to_string()));
         assert!(spec.args.contains(&"Custom Agent".to_string()));
+    }
+
+    #[test]
+    fn test_snapshot_command_uses_streaming() {
+        let config = YtDlpConfig {
+            url: "https://youtube.com/watch?v=test".to_string(),
+            ..Default::default()
+        };
+
+        let source = YtDlpSource::new(config);
+        let output = std::path::PathBuf::from("/tmp/out.jpg");
+        let spec = source.build_snapshot_command(&output);
+
+        assert!(spec.args.iter().any(|a| a.contains("yt-dlp -g")));
     }
 
     #[tokio::test]

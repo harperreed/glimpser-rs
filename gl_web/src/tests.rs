@@ -793,3 +793,124 @@ async fn test_stream_lifecycle_endpoints() {
     // Should return 404 if stream not running, which is expected
     assert!(resp.status() == 200 || resp.status() == 404);
 }
+
+// Template tests for the new Axum + HTMX + Askama frontend
+mod frontend_template_tests {
+    use crate::frontend::{DashboardTemplate, LoginTemplate, UserInfo};
+    use askama::Template;
+
+    #[test]
+    fn test_login_template_renders() {
+        let template = LoginTemplate {
+            error_message: String::new(),
+            user: UserInfo {
+                id: String::new(),
+                username: String::new(),
+                is_admin: false,
+            },
+            logged_in: false,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("Sign in to Glimpser"));
+        assert!(rendered.contains("Email"));
+        assert!(rendered.contains("Password"));
+        assert!(rendered.contains("hx-post=\"/login\""));
+        assert!(rendered.contains("tailwindcss.com")); // Tailwind CSS included
+        assert!(rendered.contains("htmx.org")); // HTMX included
+    }
+
+    #[test]
+    fn test_login_template_with_error() {
+        let template = LoginTemplate {
+            error_message: "Invalid credentials".to_string(),
+            user: UserInfo {
+                id: String::new(),
+                username: String::new(),
+                is_admin: false,
+            },
+            logged_in: false,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("Invalid credentials"));
+        assert!(rendered.contains("text-red-600")); // Error styling
+    }
+
+    #[test]
+    fn test_dashboard_template_renders() {
+        let template = DashboardTemplate {
+            user: UserInfo {
+                id: "test123".to_string(),
+                username: "testuser".to_string(),
+                is_admin: true,
+            },
+            logged_in: true,
+            stream_count: 5,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("Dashboard"));
+        assert!(rendered.contains("testuser"));
+        assert!(rendered.contains("Active Streams"));
+        assert!(rendered.contains("5")); // stream count
+        assert!(rendered.contains("View all streams"));
+        assert!(rendered.contains("Glimpser")); // App name
+    }
+
+    #[test]
+    fn test_dashboard_includes_navigation() {
+        let template = DashboardTemplate {
+            user: UserInfo {
+                id: "test123".to_string(),
+                username: "admin_user".to_string(),
+                is_admin: true,
+            },
+            logged_in: true,
+            stream_count: 0,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("admin_user")); // Username in nav
+        assert!(rendered.contains("Glimpser")); // App name in nav
+        assert!(rendered.contains("<nav")); // Navigation element
+    }
+
+    #[test]
+    fn test_dashboard_includes_htmx_and_tailwind() {
+        let template = DashboardTemplate {
+            user: UserInfo {
+                id: "test123".to_string(),
+                username: "testuser".to_string(),
+                is_admin: false,
+            },
+            logged_in: true,
+            stream_count: 0,
+        };
+
+        let rendered = template.render().expect("Template should render");
+        assert!(rendered.contains("htmx.org")); // HTMX script
+        assert!(rendered.contains("tailwindcss.com")); // Tailwind CSS
+        assert!(rendered.contains("bg-gray-100")); // Tailwind classes being used
+    }
+
+    #[tokio::test]
+    async fn test_login_form_processing() {
+        // Create test state
+        let state = super::create_test_app_state().await;
+        let user = super::create_test_user(&state, "test@example.com", "password123").await;
+
+        // Test that we can create the login form data
+        let form_data = crate::frontend::LoginForm {
+            username: "test@example.com".to_string(),
+            password: "password123".to_string(),
+        };
+
+        // Verify password verification works (this tests the auth integration)
+        let password_valid =
+            crate::auth::PasswordAuth::verify_password(&form_data.password, &user.password_hash)
+                .expect("Password verification should work");
+
+        assert!(password_valid, "Password should be valid for test user");
+    }
+}

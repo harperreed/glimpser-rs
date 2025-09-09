@@ -4,26 +4,23 @@
 version: '3.8'
 
 services:
-  # Development Rust backend with hot-reload
+  # Development Rust backend
   backend-dev:
     build:
       context: .
-      dockerfile: Dockerfile.backend.lean
+      dockerfile: Dockerfile.backend
+      target: runtime
     container_name: glimpser-backend-dev
     restart: unless-stopped
     ports:
       - "3000:3000"
-      - "9229:9229" # Debug port
     environment:
       - RUST_LOG=debug
       - BIND_ADDRESS=0.0.0.0:3000
     networks:
       - glimpser-dev-network
     volumes:
-      - .:/app
-      - cargo_cache:/usr/local/cargo/registry
-      - target_cache:/app/target
-    command: cargo watch -x 'run --bin glimpser'
+      - glimpser_dev_data:/app/data
 
   # Development Next.js frontend with hot-reload
   frontend-dev:
@@ -56,9 +53,6 @@ networks:
     name: glimpser-dev-network
 
 volumes:
-  cargo_cache:
+  glimpser_dev_data:
     driver: local
-    name: glimpser-cargo-cache
-  target_cache:
-    driver: local
-    name: glimpser-target-cache
+    name: glimpser-dev-app-data

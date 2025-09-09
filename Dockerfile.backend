@@ -1,88 +1,46 @@
-# ABOUTME: Multi-stage Dockerfile for Rust backend with cargo-chef optimization
-# ABOUTME: Provides fast incremental builds by separating dependency compilation from source compilation
+# ABOUTME: Lean Dockerfile for Rust backend with minimal disk usage
+# ABOUTME: Multi-stage build that only copies necessary files and cleans up after build
 
-# Use stable Rust and install nightly for edition2024 support
-FROM rust:1.83 AS chef
+FROM rust:1.83 AS builder
 
-# Install Chromium and its dependencies (ARM64 compatible)
+# Install Chromium and build dependencies
 RUN apt-get update && apt-get install -y \
     chromium \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libdrm2 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libxss1 \
-    libnss3 \
-    libxkbcommon0 \
-    libgtk-3-0 \
+    pkg-config \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Install nightly Rust for edition2024 support
 RUN rustup toolchain install nightly && rustup default nightly
-RUN cargo install cargo-chef
+
 WORKDIR /app
 
-# First stage: Plan dependencies
-FROM chef AS planner
+# Copy all source code and build in one go
 COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
 
-# Second stage: Cache dependencies
-FROM chef AS builder
-COPY --from=planner /app/recipe.json recipe.json
-
-# Build dependencies - this layer will be cached unless dependencies change
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Copy source code and build the application
-COPY . .
+# Build the application (efficient but simple)
 RUN cargo build --release --bin glimpser
 
-# Final stage: Runtime image
+# Final runtime stage
 FROM debian:bookworm-slim AS runtime
 
-# Install runtime dependencies including Chromium
+# Install only runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     chromium \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libdrm2 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libxss1 \
-    libnss3 \
-    libxkbcommon0 \
-    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app user for security
+# Create app user
 RUN useradd -r -s /bin/false -m -d /app app
 
 WORKDIR /app
 
-# Copy the binary from builder stage
+# Copy only the binary
 COPY --from=builder --chown=app:app /app/target/release/glimpser ./glimpser
-
-# Copy any required config files or static assets
 COPY --chown=app:app gl_db/migrations ./gl_db/migrations
 
-# Switch to app user
 USER app
-
-# Expose the port the app runs on
 EXPOSE 3000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD ./glimpser --help > /dev/null || exit 1
-
-# Run the application
 ENTRYPOINT ["./glimpser"]
