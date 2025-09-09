@@ -1,0 +1,64 @@
+# ABOUTME: Multi-stage Dockerfile for Next.js frontend with optimized build caching
+# ABOUTME: Provides fast incremental builds by separating dependency installation from source compilation
+
+# Stage 1: Dependencies
+FROM node:20-alpine AS deps
+
+# Install libc6-compat for Alpine compatibility
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+# Copy package files
+COPY frontend/package.json frontend/package-lock.json* ./
+
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Stage 2: Builder
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ .
+
+# Build the application with turbopack
+RUN npm run build
+
+# Stage 3: Production runner
+FROM node:20-alpine AS runner
+
+# Install dumb-init for proper signal handling
+RUN apk add --no-cache dumb-init
+
+WORKDIR /app
+
+# Create nextjs user for security
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy built application
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Switch to nextjs user
+USER nextjs
+
+# Expose the port the app runs on
+EXPOSE 3000
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD node --version || exit 1
+
+# Run the application with dumb-init
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "server.js"]
