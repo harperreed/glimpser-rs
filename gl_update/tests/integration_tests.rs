@@ -219,18 +219,14 @@ async fn test_release_fetch() {
     assert_eq!(latest_release.assets.len(), 2);
 
     // Stronger assertions: check that the expected asset names are present
-    let names: Vec<&str> = latest_release.assets.iter().map(|a| a.name.as_str()).collect();
+    let names: Vec<&str> = latest_release
+        .assets
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect();
     assert!(names.contains(&"glimpser-linux-x64"));
     assert!(names.contains(&"glimpser-linux-x64.sig"));
 }
-#[tokio::test]
-    let binary_data = checker.download_asset(binary_asset).await.unwrap();
-    let sig_data = checker.download_asset(sig_asset).await.unwrap();
-   assert_eq!(binary_data.as_ref(), fake_binary);
-    let sig_string = String::from_utf8(sig_data.to_vec())
-        .unwrap()
-        .trim()
-        .to_string();
 
 #[tokio::test]
 async fn test_health_check() {
