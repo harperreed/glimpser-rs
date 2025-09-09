@@ -166,13 +166,8 @@ impl FfmpegSource {
 
         // Add timeout if specified
         if let Some(timeout) = self.config.timeout {
-            if is_rtsp {
-                let micros = (timeout as u64) * 1_000_000;
-                args.extend(["-stimeout".to_string(), micros.to_string()]);
-            } else {
-                let micros = (timeout as u64) * 1_000_000;
-                args.extend(["-timeout".to_string(), micros.to_string()]);
-            }
+            let micros = (timeout as u64) * 1_000_000;
+            args.extend(["-timeout".to_string(), micros.to_string()]);
         }
 
         // Add default RTSP options
@@ -254,11 +249,7 @@ impl FfmpegSource {
 
         if let Some(timeout) = self.config.timeout {
             let micros = (timeout as u64) * 1_000_000;
-            if is_rtsp {
-                args.extend(["-stimeout".to_string(), micros.to_string()]);
-            } else {
-                args.extend(["-timeout".to_string(), micros.to_string()]);
-            }
+            args.extend(["-timeout".to_string(), micros.to_string()]);
         }
 
         if is_rtsp {
@@ -552,8 +543,8 @@ mod tests {
         assert!(args.contains(&"-flags".to_string()));
         assert!(args.contains(&"low_delay".to_string()));
 
-        // Should convert timeout to stimeout in microseconds
-        assert!(args.contains(&"-stimeout".to_string()));
+        // Should convert timeout to microseconds
+        assert!(args.contains(&"-timeout".to_string()));
         assert!(args.contains(&"10000000".to_string()));
     }
 
@@ -659,7 +650,7 @@ mod tests {
         assert!(args.contains(&"nobuffer".to_string()));
         assert!(args.contains(&"-flags".to_string()));
         assert!(args.contains(&"low_delay".to_string()));
-        assert!(args.contains(&"-stimeout".to_string()));
+        assert!(args.contains(&"-timeout".to_string()));
         assert!(args.contains(&"10000000".to_string()));
     }
 
@@ -674,7 +665,7 @@ mod tests {
 
         assert!(args.contains(&"-rtsp_transport".to_string()));
         assert!(args.contains(&"tcp".to_string()));
-        assert!(args.contains(&"-stimeout".to_string()));
+        assert!(args.contains(&"-timeout".to_string()));
     }
 
     #[test]

@@ -82,12 +82,37 @@ fn validate_stream_config(config: &Value) -> Result<(), String> {
 
     // Validate based on kind
     match kind {
+        "rtsp" => validate_rtsp_config(config_obj),
         "ffmpeg" => validate_ffmpeg_config(config_obj),
         "file" => validate_file_config(config_obj),
         "website" => validate_website_config(config_obj),
         "yt" => validate_yt_config(config_obj),
         _ => Err(format!("Unknown stream kind: {}", kind)),
     }
+}
+
+fn validate_rtsp_config(config: &Map<String, Value>) -> Result<(), String> {
+    // Require url for RTSP streams
+    if !config.contains_key("url") {
+        return Err("rtsp config must have 'url' field".to_string());
+    }
+
+    // Validate url is a string and starts with rtsp:// or rtsps://
+    if let Some(url) = config.get("url") {
+        if !url.is_string() {
+            return Err("rtsp 'url' must be a string".to_string());
+        }
+        let url_str = url.as_str().unwrap();
+        if url_str.is_empty() {
+            return Err("rtsp 'url' cannot be empty".to_string());
+        }
+        if !url_str.starts_with("rtsp://") && !url_str.starts_with("rtsps://") {
+            return Err("rtsp 'url' must start with rtsp:// or rtsps://".to_string());
+        }
+    }
+
+    // Optional: width, height, transport protocol, etc.
+    Ok(())
 }
 
 fn validate_ffmpeg_config(config: &Map<String, Value>) -> Result<(), String> {

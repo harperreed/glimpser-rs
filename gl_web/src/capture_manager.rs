@@ -6,7 +6,7 @@ use gl_analysis::{AnalysisConfig, AnalysisService, ProcessorContext, ProcessorIn
 use gl_capture::{
     artifact_storage::{ArtifactStorageConfig, ArtifactStorageService},
     CaptureHandle, CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel,
-    OutputFormat, YtDlpConfig, YtDlpSource,
+    OutputFormat, RtspTransport, YtDlpConfig, YtDlpSource,
 };
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
@@ -487,6 +487,7 @@ impl CaptureManager {
         // Create a temporary capture source to get snapshot
         match kind {
             "file" => Self::take_file_snapshot(&config).await,
+            "rtsp" => Self::take_rtsp_snapshot(&config).await,
             "ffmpeg" => Self::take_ffmpeg_snapshot(&config).await,
             "website" => Self::take_website_snapshot(&config).await,
             "yt" => Self::take_yt_snapshot(&config).await,
@@ -526,6 +527,7 @@ impl CaptureManager {
         // Create and start the capture source based on stream type
         let capture_handle = match kind {
             "file" => Self::create_file_capture(&config).await?,
+            "rtsp" => Self::create_rtsp_capture(&config).await?,
             "ffmpeg" => Self::create_ffmpeg_capture(&config).await?,
             "website" => Self::create_website_capture(&config).await?,
             "yt" => Self::create_yt_capture(&config).await?,
@@ -722,6 +724,11 @@ impl CaptureManager {
                     .run_yt_capture(&config, &stream_id, &stream.user_id)
                     .await
             }
+            "rtsp" => {
+                capture_manager
+                    .run_rtsp_capture(&config, &stream_id, &stream.user_id)
+                    .await
+            }
             _ => Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
         }
     }
@@ -881,6 +888,78 @@ impl CaptureManager {
             }
 
             if std::time::Instant::now() >= end_time {
+                break;
+            }
+        }
+
+        drop(handle);
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    async fn run_rtsp_capture(&self, config: &Value, stream_id: &str, user_id: &str) -> Result<()> {
+        let rtsp_url = config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Config("RTSP stream config missing 'url' field".to_string()))?;
+
+        // Use FFmpeg to handle RTSP with optimized settings
+        let mut ffmpeg_config = FfmpegConfig {
+            input_url: rtsp_url.to_string(),
+            rtsp_transport: RtspTransport::Tcp, // Default to TCP for reliability
+            ..Default::default()
+        };
+
+        // Parse optional RTSP-specific configuration
+        if let Some(transport) = config.get("transport").and_then(|v| v.as_str()) {
+            ffmpeg_config.rtsp_transport = match transport.to_lowercase().as_str() {
+                "tcp" => RtspTransport::Tcp,
+                "udp" => RtspTransport::Udp,
+                _ => RtspTransport::Auto,
+            };
+        }
+
+        // Parse optional timeout (RTSP streams often need longer timeouts)
+        if let Some(timeout_val) = config.get("timeout").and_then(|v| v.as_u64()) {
+            let safe_timeout = std::cmp::min(timeout_val, u32::MAX as u64) as u32;
+            ffmpeg_config.timeout = Some(safe_timeout);
+        } else {
+            // Default timeout for RTSP
+            ffmpeg_config.timeout = Some(10);
+        }
+
+        let ffmpeg_source = FfmpegSource::new(ffmpeg_config);
+        let handle = ffmpeg_source.start().await?;
+
+        // Setup snapshot capture loop
+        let duration = config.get("duration").and_then(|v| v.as_u64()).unwrap_or(0); // Default to continuous for RTSP
+        let snapshot_interval = config
+            .get("snapshot_interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5); // Default 5 seconds between snapshots
+
+        let safe_duration = std::cmp::min(duration, u32::MAX as u64) as u32;
+        let mut snapshot_timer =
+            tokio::time::interval(std::time::Duration::from_secs(snapshot_interval));
+        let end_time =
+            std::time::Instant::now() + std::time::Duration::from_secs(safe_duration as u64);
+
+        loop {
+            snapshot_timer.tick().await;
+
+            match handle.snapshot().await {
+                Ok(jpeg_bytes) => {
+                    if let Err(e) = self.store_snapshot(stream_id, user_id, &jpeg_bytes).await {
+                        warn!("Failed to store RTSP snapshot: {}", e);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to capture RTSP snapshot: {}", e);
+                }
+            }
+
+            // For RTSP, continue indefinitely if duration is 0
+            if safe_duration > 0 && std::time::Instant::now() >= end_time {
                 break;
             }
         }
@@ -1192,6 +1271,45 @@ impl CaptureManager {
         Ok(snapshot)
     }
 
+    /// Take a snapshot from an RTSP source
+    async fn take_rtsp_snapshot(config: &Value) -> Result<bytes::Bytes> {
+        let rtsp_url = config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Config("RTSP stream config missing 'url' field".to_string()))?;
+
+        // Use FFmpeg to handle RTSP with optimized settings
+        let mut ffmpeg_config = FfmpegConfig {
+            input_url: rtsp_url.to_string(),
+            rtsp_transport: RtspTransport::Tcp, // Default to TCP for reliability
+            ..Default::default()
+        };
+
+        // Parse optional RTSP-specific configuration
+        if let Some(transport) = config.get("transport").and_then(|v| v.as_str()) {
+            ffmpeg_config.rtsp_transport = match transport.to_lowercase().as_str() {
+                "tcp" => RtspTransport::Tcp,
+                "udp" => RtspTransport::Udp,
+                _ => RtspTransport::Auto,
+            };
+        }
+
+        // Parse optional timeout (RTSP streams often need longer timeouts)
+        if let Some(timeout_val) = config.get("timeout").and_then(|v| v.as_u64()) {
+            let safe_timeout = std::cmp::min(timeout_val, u32::MAX as u64) as u32;
+            ffmpeg_config.timeout = Some(safe_timeout);
+        } else {
+            // Default timeout for RTSP
+            ffmpeg_config.timeout = Some(10);
+        }
+
+        let ffmpeg_source = FfmpegSource::new(ffmpeg_config);
+        let handle = ffmpeg_source.start().await?;
+        let snapshot = handle.snapshot().await?;
+        drop(handle);
+        Ok(snapshot)
+    }
+
     /// Take a snapshot from a website source
     #[cfg(feature = "website")]
     async fn take_website_snapshot(config: &Value) -> Result<bytes::Bytes> {
@@ -1351,6 +1469,43 @@ impl CaptureManager {
         if let Some(timeout_val) = config.get("timeout").and_then(|v| v.as_u64()) {
             let safe_timeout = std::cmp::min(timeout_val, u32::MAX as u64) as u32;
             ffmpeg_config.timeout = Some(safe_timeout);
+        }
+
+        let ffmpeg_source = FfmpegSource::new(ffmpeg_config);
+        let handle = ffmpeg_source.start().await?;
+        Ok(Arc::new(handle))
+    }
+
+    /// Create RTSP capture source
+    async fn create_rtsp_capture(config: &Value) -> Result<Arc<CaptureHandle>> {
+        let rtsp_url = config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Config("RTSP stream config missing 'url' field".to_string()))?;
+
+        // Use FFmpeg to handle RTSP with optimized settings
+        let mut ffmpeg_config = FfmpegConfig {
+            input_url: rtsp_url.to_string(),
+            rtsp_transport: RtspTransport::Tcp, // Default to TCP for reliability
+            ..Default::default()
+        };
+
+        // Parse optional RTSP-specific configuration
+        if let Some(transport) = config.get("transport").and_then(|v| v.as_str()) {
+            ffmpeg_config.rtsp_transport = match transport.to_lowercase().as_str() {
+                "tcp" => RtspTransport::Tcp,
+                "udp" => RtspTransport::Udp,
+                _ => RtspTransport::Auto,
+            };
+        }
+
+        // Parse optional timeout (RTSP streams often need longer timeouts)
+        if let Some(timeout_val) = config.get("timeout").and_then(|v| v.as_u64()) {
+            let safe_timeout = std::cmp::min(timeout_val, u32::MAX as u64) as u32;
+            ffmpeg_config.timeout = Some(safe_timeout);
+        } else {
+            // Default timeout for RTSP
+            ffmpeg_config.timeout = Some(10);
         }
 
         let ffmpeg_source = FfmpegSource::new(ffmpeg_config);

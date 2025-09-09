@@ -1843,6 +1843,27 @@ async fn take_snapshot_direct(
                 }
             }
         }
+        "rtsp" | "ffmpeg" | "yt" => {
+            // For streaming sources, use the capture manager
+            match frontend_state
+                .app_state
+                .capture_manager
+                .take_stream_snapshot_fallback(stream_id)
+                .await
+            {
+                Ok(jpeg_bytes) => jpeg_bytes,
+                Err(e) => {
+                    warn!(
+                        "Failed to capture snapshot for {} stream {}: {}",
+                        kind, stream_id, e
+                    );
+                    return Err(gl_core::Error::Config(format!(
+                        "{} capture failed: {}",
+                        kind, e
+                    )));
+                }
+            }
+        }
         _ => {
             return Err(gl_core::Error::Config(format!(
                 "Unsupported stream type: {}",

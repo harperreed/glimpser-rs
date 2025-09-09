@@ -4,7 +4,7 @@
 use actix_web::{web, HttpResponse, Result as ActixResult};
 use gl_capture::{
     CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel, OutputFormat,
-    YtDlpConfig, YtDlpSource,
+    RtspTransport, YtDlpConfig, YtDlpSource,
 };
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
@@ -527,6 +527,40 @@ async fn take_snapshot_impl(stream_id: String, state: &AppState) -> Result<Vec<u
 
             let ytdlp_source = YtDlpSource::new(ytdlp_config);
             let handle = ytdlp_source.start().await?;
+            handle.snapshot().await?
+        }
+        "rtsp" => {
+            // RTSP stream handling
+            let rtsp_url = config.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+                Error::Config("RTSP stream config missing 'url' field".to_string())
+            })?;
+
+            // Use FFmpeg to handle RTSP with optimized settings
+            let mut ffmpeg_config = FfmpegConfig {
+                input_url: rtsp_url.to_string(),
+                rtsp_transport: RtspTransport::Tcp, // Default to TCP for reliability
+                ..Default::default()
+            };
+
+            // Parse optional RTSP-specific configuration
+            if let Some(transport) = config.get("transport").and_then(|v| v.as_str()) {
+                ffmpeg_config.rtsp_transport = match transport.to_lowercase().as_str() {
+                    "tcp" => RtspTransport::Tcp,
+                    "udp" => RtspTransport::Udp,
+                    _ => RtspTransport::Auto,
+                };
+            }
+
+            // Parse optional timeout (RTSP streams often need longer timeouts)
+            if let Some(timeout_val) = config.get("timeout").and_then(|v| v.as_u64()) {
+                ffmpeg_config.timeout = Some(timeout_val as u32);
+            } else {
+                // Default timeout for RTSP
+                ffmpeg_config.timeout = Some(10);
+            }
+
+            let ffmpeg_source = FfmpegSource::new(ffmpeg_config);
+            let handle = ffmpeg_source.start().await?;
             handle.snapshot().await?
         }
         _ => {

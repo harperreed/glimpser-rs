@@ -210,7 +210,11 @@ fn extract_source_from_stream_config(config: &Value) -> Option<String> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         "rtsp" => config
-            .get("rtsp_url")
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "ffmpeg" => config
+            .get("source_url")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         "file" => config
@@ -249,6 +253,7 @@ fn get_fps_for_stream_type(config: &Value) -> u32 {
     match kind {
         "website" => 1,         // Website captures are typically 1 frame per interval
         "rtsp" => 30,           // RTSP streams are usually 30 FPS
+        "ffmpeg" => 30,         // FFmpeg streams are usually 30 FPS
         "file" => 24,           // Video files often 24 FPS
         "yt" | "youtube" => 30, // YouTube streams typically 30 FPS
         _ => 1,                 // Default for unknown types
