@@ -59,29 +59,22 @@ impl JobHandler for SnapshotJobHandler {
 }
 
 impl SnapshotJobHandler {
-    /// Take a snapshot using the template system (delegates to existing capture infrastructure)
+    /// Snapshot jobs are no longer needed as continuous snapshots are handled automatically
+    /// by the CaptureManager when streams are running. This method now returns an error
+    /// to indicate that scheduled snapshots should be replaced with stream management.
     async fn take_template_snapshot(
         &self,
         template_id: &str,
         _db_pool: &crate::SqlitePool,
     ) -> Result<Vec<u8>> {
-        // Instead of duplicating all the capture logic, we should delegate to the
-        // existing snapshot endpoint logic. For now, return a placeholder.
-        //
-        // TODO: Refactor to use a shared capture service or call the existing
-        // snapshot endpoint internally to avoid code duplication.
+        warn!(
+            template_id = %template_id,
+            "Snapshot jobs are deprecated - use continuous snapshots via stream management instead"
+        );
 
-        // This is a temporary implementation that avoids the security vulnerabilities
-        // and code duplication while the proper architecture is being designed.
-
-        warn!(template_id = %template_id, "Snapshot job using placeholder implementation - needs refactoring");
-
-        // Return a minimal valid JPEG header as placeholder
-        // This prevents the job from failing while proper implementation is developed
-        Ok(vec![
-            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01,
-            0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0xFF, 0xD9,
-        ])
+        Err(gl_core::Error::Config(
+            "Snapshot jobs are deprecated. Streams automatically take snapshots at configured intervals when active.".to_string()
+        ))
     }
 }
 
@@ -238,10 +231,13 @@ mod tests {
         });
 
         let context = create_test_context(JobKind::Snapshot, config).await;
-        let result = handler.execute(context).await.unwrap();
+        let result = handler.execute(context).await;
 
-        assert!(result.contains("Snapshot job completed"));
-        assert!(result.contains("test_template"));
+        // Snapshot jobs should now return an error indicating they are deprecated
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains("deprecated"));
+        assert!(error_msg.contains("automatically"));
     }
 
     #[tokio::test]

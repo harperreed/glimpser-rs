@@ -4,6 +4,7 @@ use gl_core::telemetry;
 use gl_db::{CreateStreamRequest, Db, StreamRepository, UserRepository};
 use gl_obs::ObsState;
 use gl_stream::{StreamManager, StreamMetrics};
+use gl_update::{UpdateConfig, UpdateService, UpdateStrategyType};
 use gl_web::AppState;
 use std::process;
 
@@ -66,7 +67,10 @@ async fn main() {
         }
         Commands::Start => {
             tracing::info!("glimpser starting");
-            start_server(config, db).await;
+            if let Err(e) = start_server(config, db).await {
+                tracing::error!("Failed to start server: {}", e);
+                process::exit(1);
+            }
         }
     }
 }
@@ -288,7 +292,7 @@ async fn create_example_templates(db: &Db, user_id: &str) {
     println!("   • Take snapshots via API: /api/stream/<stream_id>/snapshot");
 }
 
-async fn start_server(config: Config, db: Db) {
+async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
     tracing::info!(
         host = %config.server.host,
         port = %config.server.port,
@@ -312,12 +316,13 @@ async fn start_server(config: Config, db: Db) {
         },
     };
 
-    // Initialize capture manager with configured storage
+    // Initialize capture manager with analysis and storage configuration
     let capture_manager = std::sync::Arc::new(
-        gl_web::capture_manager::CaptureManager::with_storage_config(
+        gl_web::capture_manager::CaptureManager::with_analysis_config(
             db.pool().clone(),
             config.storage.clone(),
-        ),
+            &config,
+        )?,
     );
 
     // Initialize stream manager for MJPEG streaming
@@ -341,6 +346,35 @@ async fn start_server(config: Config, db: Db) {
         .with_override("/api/upload", config.server.body_limits.upload_limit),
         capture_manager,
         stream_manager,
+        update_service: {
+            // Create a basic update configuration
+            // In production, these values would come from the main config
+            let update_config = UpdateConfig {
+                repository: "owner/glimpser".to_string(), // This should be from config
+                current_version: env!("CARGO_PKG_VERSION").to_string(),
+                public_key: String::new(), // Should be from config
+                strategy: UpdateStrategyType::Sidecar,
+                check_interval_seconds: 3600,
+                health_check_timeout_seconds: 30,
+                health_check_url: format!("http://127.0.0.1:{}/healthz", config.server.port),
+                binary_name: "glimpser".to_string(),
+                install_dir: std::path::PathBuf::from("/usr/local/bin"),
+                auto_apply: false,
+                github_token: None,
+            };
+
+            match UpdateService::new(update_config) {
+                Ok(service) => std::sync::Arc::new(tokio::sync::Mutex::new(service)),
+                Err(e) => {
+                    tracing::warn!("Failed to initialize update service: {}", e);
+                    // Create a stub service - in production you might want to handle this differently
+                    let stub_config = UpdateConfig::default();
+                    std::sync::Arc::new(tokio::sync::Mutex::new(
+                        UpdateService::new(stub_config).expect("Default config should work"),
+                    ))
+                }
+            }
+        },
     };
 
     // Start observability server
@@ -369,6 +403,8 @@ async fn start_server(config: Config, db: Db) {
 
     if let Err(e) = result {
         tracing::error!("Server error: {}", e);
-        process::exit(1);
+        return Err(gl_core::Error::External(format!("Server error: {}", e)));
     }
+
+    Ok(())
 }
