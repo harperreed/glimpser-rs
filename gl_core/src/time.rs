@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+// ABOUTME: Utilities for working with times and timestamps.
+// ABOUTME: Provides RFC3339 formatting and monotonic timers.
+use ::time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Get the current system time (note: not necessarily UTC)
 ///
@@ -13,8 +16,7 @@ pub fn utc_now() -> SystemTime {
     SystemTime::now()
 }
 
-/// Convert a SystemTime to a simplified timestamp string
-/// Note: This is a simplified format, not true RFC3339
+/// Convert a SystemTime to an RFC3339 timestamp string
 ///
 /// # Examples
 ///
@@ -24,22 +26,15 @@ pub fn utc_now() -> SystemTime {
 ///
 /// let time = UNIX_EPOCH + Duration::from_secs(1_609_459_200); // 2021-01-01
 /// let timestamp = to_rfc3339(time);
-/// assert!(timestamp.contains("1609459200"));
+/// assert_eq!(timestamp, "2021-01-01T00:00:00Z");
 /// ```
 pub fn to_rfc3339(time: SystemTime) -> String {
-    let duration_since_epoch = time
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| Duration::from_secs(0));
-
-    let secs = duration_since_epoch.as_secs();
-    let nanos = duration_since_epoch.subsec_nanos();
-
-    // Simple timestamp format: seconds.nanoseconds since epoch
-    // TODO: Replace with proper RFC3339 implementation when chrono is added
-    format!("{}.{:09}", secs, nanos)
+    OffsetDateTime::from(time)
+        .format(&Rfc3339)
+        .unwrap_or_default()
 }
 
-/// Get current time as ISO 8601 formatted string (simplified)
+/// Get current time as an RFC3339 formatted string
 ///
 /// # Examples
 ///
@@ -99,6 +94,7 @@ impl Default for MonotonicTimer {
 mod tests {
     use super::*;
     use std::thread;
+    use std::time::UNIX_EPOCH;
 
     #[test]
     fn test_utc_now() {
@@ -112,8 +108,7 @@ mod tests {
     fn test_to_rfc3339() {
         let time = UNIX_EPOCH + Duration::from_secs(1_609_459_200); // 2021-01-01
         let timestamp = to_rfc3339(time);
-        assert!(timestamp.contains("1609459200"));
-        assert!(timestamp.contains("."));
+        assert_eq!(timestamp, "2021-01-01T00:00:00Z");
     }
 
     #[test]
