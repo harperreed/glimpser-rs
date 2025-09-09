@@ -4,48 +4,75 @@
 version: '3.8'
 
 services:
-  # Development Rust backend
-  backend-dev:
+  # Development unified Glimpser service
+  glimpser-dev:
     build:
       context: .
-      dockerfile: Dockerfile.backend
-      target: runtime
-    container_name: glimpser-backend-dev
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for development with all tools
+    container_name: glimpser-dev
     restart: unless-stopped
     ports:
       - "3000:3000"
+      - "6669:6669"  # Chrome DevTools port for debugging
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=debug,tower_http=debug,axum=debug
+      - RUST_BACKTRACE=full
       - BIND_ADDRESS=0.0.0.0:3000
+      - DATABASE_URL=/app/data/glimpser.db
+      - STORAGE_PATH=/app/data/storage
+      - FRAMES_PATH=/app/data/frames
+      - VIDEOS_PATH=/app/data/videos
+      - JWT_SECRET=development-secret-change-in-production
+      - CHROME_PATH=/usr/bin/chromium
+      - CHROME_DRIVER_PATH=/usr/bin/chromedriver
+      # Chrome debugging flags
+      - CHROME_EXTRA_ARGS=--remote-debugging-port=6669 --remote-debugging-address=0.0.0.0
     networks:
       - glimpser-dev-network
     volumes:
+      # Mount source code for development (but not target directory)
+      - ./app:/app/app:ro
+      - ./gl_capture:/app/gl_capture:ro
+      - ./gl_config:/app/gl_config:ro
+      - ./gl_core:/app/gl_core:ro
+      - ./gl_db:/app/gl_db:ro
+      - ./gl_storage:/app/gl_storage:ro
+      - ./gl_vision:/app/gl_vision:ro
+      - ./gl_web:/app/gl_web:ro
+      - ./Cargo.toml:/app/Cargo.toml:ro
+      - ./Cargo.lock:/app/Cargo.lock:ro
+      # Persistent data volumes
       - glimpser_dev_data:/app/data
+      - glimpser_dev_logs:/app/logs
+      # Cargo cache for faster rebuilds
+      - cargo_cache:/usr/local/cargo/registry
+      - cargo_git:/usr/local/cargo/git
+      - target_cache:/app/target
+    working_dir: /app
+    # Use cargo watch for auto-reload
+    command: >
+      sh -c "
+        cargo install cargo-watch &&
+        cargo watch -x 'run --bin glimpser' -w app -w gl_capture -w gl_config -w gl_core -w gl_db -w gl_storage -w gl_vision -w gl_web
+      "
+    # Development-specific capabilities
+    cap_add:
+      - SYS_ADMIN
+      - SYS_PTRACE  # For debugging
 
-  # Development Next.js frontend with hot-reload
-  frontend-dev:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      target: deps
-    container_name: glimpser-frontend-dev
+  # Optional: Adminer for database management
+  adminer:
+    image: adminer:latest
+    container_name: glimpser-adminer
     restart: unless-stopped
     ports:
-      - "3001:3000"
-    environment:
-      - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=http://localhost:3000
-      - NEXT_TELEMETRY_DISABLED=1
-    depends_on:
-      - backend-dev
+      - "8080:8080"
     networks:
       - glimpser-dev-network
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
-    working_dir: /app
-    command: npm run dev
+    environment:
+      - ADMINER_DEFAULT_SERVER=glimpser-dev
+      - ADMINER_DESIGN=pepa-linha
 
 networks:
   glimpser-dev-network:
@@ -55,4 +82,16 @@ networks:
 volumes:
   glimpser_dev_data:
     driver: local
-    name: glimpser-dev-app-data
+    name: glimpser-dev-data
+  glimpser_dev_logs:
+    driver: local
+    name: glimpser-dev-logs
+  cargo_cache:
+    driver: local
+    name: glimpser-cargo-cache
+  cargo_git:
+    driver: local
+    name: glimpser-cargo-git
+  target_cache:
+    driver: local
+    name: glimpser-target-cache
