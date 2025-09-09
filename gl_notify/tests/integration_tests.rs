@@ -5,10 +5,13 @@ use gl_notify::{
     adapters::pushover::PushoverAdapter, circuit_breaker::CircuitBreakerWrapper,
     retry::RetryWrapper, Notification, NotificationChannel, NotificationKind, NotificationManager,
 };
+use wiremock::MockServer;
 
 #[tokio::test]
 async fn test_multi_channel_notification() {
     let mut manager = NotificationManager::new();
+    // Use a local Wiremock server so the test never touches the public internet
+    let server = MockServer::start().await;
 
     // Register adapters with retry and circuit breaker
     let pushover_adapter = PushoverAdapter::new("test_app_token".to_string());
@@ -24,7 +27,10 @@ async fn test_multi_channel_notification() {
             sound: Some("pushover".to_string()),
         },
         NotificationChannel::Webhook {
-            url: "https://httpbin.org/post".parse().unwrap(),
+            // Local endpoint provided by Wiremock to avoid external HTTP requests
+            url: format!("{}/post", server.uri())
+                .parse()
+                .expect("valid WireMock URL for webhook channel"),
             headers: None,
             method: Some("POST".to_string()),
         },
@@ -45,6 +51,8 @@ async fn test_multi_channel_notification() {
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("Adapter not found: webhook"));
+    // Verify that no HTTP calls were made to the mock server
+    assert!(server.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]
