@@ -613,6 +613,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_website_source_lifecycle() {
+        #[cfg(feature = "website_embedded")]
+        {
+            if headless_chrome::browser::default_executable().is_err() {
+                panic!("Chrome executable not found");
+            }
+        }
         let config = WebsiteConfig {
             url: "https://example.com".to_string(),
             ..Default::default()
