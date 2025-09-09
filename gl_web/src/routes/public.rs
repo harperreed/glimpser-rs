@@ -3,12 +3,12 @@
 
 use crate::{
     middleware::auth::get_http_auth_user,
-    models::{ErrorResponse, StreamInfo, StreamStatus, UserInfo},
+    models::{ErrorResponse, StreamInfo, StreamStatus, TemplateKind, UserInfo},
     AppState,
 };
 use actix_web::{get, web, HttpRequest, HttpResponse, Result};
 use gl_db::{StreamRepository, UserRepository};
-use serde_json::{json, Value};
+use serde_json::json;
 use tracing::{debug, error, warn};
 
 /// Get current user information
@@ -113,7 +113,7 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
 
             for stream in streams {
                 // Parse the config JSON string
-                let config: Value = match serde_json::from_str(&stream.config) {
+                let config: TemplateKind = match serde_json::from_str(&stream.config) {
                     Ok(config) => config,
                     Err(e) => {
                         error!(
@@ -200,63 +200,35 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
 }
 
 /// Extract source URL from stream configuration JSON
-fn extract_source_from_stream_config(config: &Value) -> Option<String> {
-    // Get the template kind/type
-    let kind = config.get("kind").and_then(|v| v.as_str())?;
-
-    match kind {
-        "website" => config
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "rtsp" => config
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "ffmpeg" => config
-            .get("source_url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "file" => config
-            .get("file_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "yt" | "youtube" => config
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        _ => {
-            warn!("Unknown template kind: {}", kind);
-            None
-        }
+fn extract_source_from_stream_config(config: &TemplateKind) -> Option<String> {
+    match config {
+        TemplateKind::Website(c) => Some(c.url.clone()),
+        TemplateKind::Rtsp(c) => Some(c.url.clone()),
+        TemplateKind::Ffmpeg(c) => Some(c.source_url.clone()),
+        TemplateKind::File(c) => Some(c.file_path.clone()),
+        TemplateKind::Yt(c) => Some(c.url.clone()),
     }
 }
 
-/// Extract resolution from template configuration JSON
-fn extract_resolution_from_config(config: &Value) -> Option<String> {
-    // Website streams have width and height fields
-    if let Some(width) = config.get("width").and_then(|v| v.as_u64()) {
-        if let Some(height) = config.get("height").and_then(|v| v.as_u64()) {
-            return Some(format!("{}x{}", width, height));
-        }
+/// Extract resolution from template configuration
+fn extract_resolution_from_config(config: &TemplateKind) -> Option<String> {
+    match config {
+        TemplateKind::Website(c) => match (c.width, c.height) {
+            (Some(w), Some(h)) => Some(format!("{}x{}", w, h)),
+            _ => None,
+        },
+        _ => None,
     }
-    None
 }
 
 /// Get appropriate FPS value based on template type
-fn get_fps_for_stream_type(config: &Value) -> u32 {
-    let kind = config
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-
-    match kind {
-        "website" => 1,         // Website captures are typically 1 frame per interval
-        "rtsp" => 30,           // RTSP streams are usually 30 FPS
-        "ffmpeg" => 30,         // FFmpeg streams are usually 30 FPS
-        "file" => 24,           // Video files often 24 FPS
-        "yt" | "youtube" => 30, // YouTube streams typically 30 FPS
-        _ => 1,                 // Default for unknown types
+fn get_fps_for_stream_type(config: &TemplateKind) -> u32 {
+    match config {
+        TemplateKind::Website(_) => 1, // Website captures are typically 1 frame per interval
+        TemplateKind::Rtsp(_) => 30,   // RTSP streams are usually 30 FPS
+        TemplateKind::Ffmpeg(_) => 30, // FFmpeg streams are usually 30 FPS
+        TemplateKind::File(_) => 24,   // Video files often 24 FPS
+        TemplateKind::Yt(_) => 30,     // YouTube streams typically 30 FPS
     }
 }
 
@@ -264,4 +236,87 @@ fn get_fps_for_stream_type(config: &Value) -> u32 {
 #[get("/alerts")]
 pub async fn alerts() -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(json!([])))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{
+        FileTemplate, FfmpegTemplate, RtspTemplate, TemplateKind, WebsiteTemplate, YtTemplate,
+    };
+
+    #[test]
+    fn extract_source_from_rtsp_config() {
+        let config = TemplateKind::Rtsp(RtspTemplate {
+            url: "rtsp://camera".into(),
+        });
+        assert_eq!(
+            extract_source_from_stream_config(&config).as_deref(),
+            Some("rtsp://camera")
+        );
+    }
+
+    #[test]
+    fn extract_source_from_file_config() {
+        let config = TemplateKind::File(FileTemplate {
+            file_path: "/tmp/video.mp4".into(),
+        });
+        assert_eq!(
+            extract_source_from_stream_config(&config).as_deref(),
+            Some("/tmp/video.mp4")
+        );
+    }
+
+    #[test]
+    fn extract_source_from_ffmpeg_config() {
+        let config = TemplateKind::Ffmpeg(FfmpegTemplate {
+            source_url: "rtsp://cam".into(),
+        });
+        assert_eq!(
+            extract_source_from_stream_config(&config).as_deref(),
+            Some("rtsp://cam")
+        );
+    }
+
+    #[test]
+    fn extract_source_from_website_config() {
+        let config = TemplateKind::Website(WebsiteTemplate {
+            url: "https://example.com".into(),
+            headless: None,
+            stealth: None,
+            width: Some(800),
+            height: Some(600),
+            element_selector: None,
+        });
+        assert_eq!(
+            extract_source_from_stream_config(&config).as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(extract_resolution_from_config(&config).as_deref(), Some("800x600"));
+        assert_eq!(get_fps_for_stream_type(&config), 1);
+    }
+
+    #[test]
+    fn extract_source_from_yt_config() {
+        let config = TemplateKind::Yt(YtTemplate {
+            url: "https://youtu.be/test".into(),
+            format: None,
+            is_live: None,
+            timeout: None,
+            options: None,
+        });
+        assert_eq!(
+            extract_source_from_stream_config(&config).as_deref(),
+            Some("https://youtu.be/test")
+        );
+        assert_eq!(get_fps_for_stream_type(&config), 30);
+    }
+
+    #[test]
+    fn fps_for_file_config() {
+        let config = TemplateKind::File(FileTemplate {
+            file_path: "/tmp/video.mp4".into(),
+        });
+        assert_eq!(get_fps_for_stream_type(&config), 24);
+    }
 }
