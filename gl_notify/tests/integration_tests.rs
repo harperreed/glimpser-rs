@@ -51,7 +51,7 @@ async fn test_multi_channel_notification() {
 async fn test_notification_with_metadata_and_attachments() {
     let mut manager = NotificationManager::new();
 
-    let pushover_adapter = PushoverAdapter::new("test_token_with_metadata".to_string());
+    let pushover_adapter = PushoverAdapter::with_resilience("test_token_with_metadata".to_string());
     manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));
 
     let channels = vec![NotificationChannel::Pushover {
@@ -91,7 +91,8 @@ async fn test_health_check_integration() {
     let mut manager = NotificationManager::new();
 
     // Register multiple adapters
-    let pushover_adapter = PushoverAdapter::new("azGDORePK8gMaC0QOYAMyEEuzJnyUi".to_string()); // 30 chars
+    let pushover_adapter =
+        PushoverAdapter::with_resilience("azGDORePK8gMaC0QOYAMyEEuzJnyUi".to_string()); // 30 chars
     manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));
 
     // Test health check

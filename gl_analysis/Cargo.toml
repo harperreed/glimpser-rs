@@ -10,7 +10,7 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_vision = { path = "../gl_vision" }
-gl_ai = { path = "../gl_ai" }
+gl_ai = { path = "../gl_ai", features = ["ai_online"] }
 gl_db = { path = "../gl_db" }
 gl_notify = { path = "../gl_notify" }
 serde.workspace = true

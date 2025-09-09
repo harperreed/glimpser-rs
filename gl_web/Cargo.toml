@@ -17,6 +17,8 @@ gl_stream = { path = "../gl_stream" }
 gl_notify = { path = "../gl_notify" }
 gl_cap = { path = "../gl_cap" }
 gl_update = { path = "../gl_update" }
+gl_analysis = { path = "../gl_analysis" }
+gl_ai = { path = "../gl_ai", features = ["ai_online"] }
 
 actix-web.workspace = true
 serde.workspace = true

@@ -286,8 +286,8 @@ mod tests {
 
         let mut manager = NotificationManager::new();
 
-        // Register a Pushover adapter
-        let pushover_adapter = PushoverAdapter::new("test_token".to_string());
+        // Register a Pushover adapter with resilience mechanisms
+        let pushover_adapter = PushoverAdapter::with_resilience("test_token".to_string());
         manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));
 
         assert_eq!(manager.adapters().len(), 1);

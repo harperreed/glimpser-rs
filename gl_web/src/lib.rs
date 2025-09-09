@@ -6,6 +6,7 @@ use gl_config::SecurityConfig;
 use gl_core::Result;
 use gl_db::{DatabaseCache, Db};
 use gl_stream::StreamManager;
+use gl_update::UpdateService;
 
 pub mod auth;
 pub mod capture_manager;
@@ -34,6 +35,7 @@ pub struct AppState {
     pub body_limits_config: middleware::bodylimits::BodyLimitsConfig,
     pub capture_manager: Arc<capture_manager::CaptureManager>,
     pub stream_manager: Arc<StreamManager>,
+    pub update_service: Arc<tokio::sync::Mutex<UpdateService>>,
 }
 
 // Re-export the create_app function from routing module for backward compatibility
