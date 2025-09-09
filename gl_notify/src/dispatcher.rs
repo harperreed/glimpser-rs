@@ -370,8 +370,8 @@ impl NotificationDispatcher {
             event.description, event.severity, event.confidence, event.source_id
         );
 
-        // Create a basic Pushover adapter (simplified for this example)
-        let _adapter = PushoverAdapter::new("mock_app_token".to_string());
+        // Create a resilient Pushover adapter (simplified for this example)
+        let _adapter = PushoverAdapter::with_resilience("mock_app_token".to_string());
         // In real implementation, this would use the actual Pushover API
         // adapter.send_notification(user_key, &title, &message).await
 

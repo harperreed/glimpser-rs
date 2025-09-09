@@ -32,6 +32,18 @@ async fn create_test_app_state() -> AppState {
         body_limits_config: middleware::bodylimits::BodyLimitsConfig::default(),
         capture_manager,
         stream_manager,
+        update_service: {
+            // Create a test update service with dummy configuration
+            let mut update_config = gl_update::UpdateConfig::default();
+            // Valid Ed25519 public key for testing (this is a test key, not for production)
+            update_config.public_key =
+                "8f7e3a2d4b1c9e6f8a5b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f".to_string();
+            // Use a writable temp directory for testing instead of /usr/local/bin
+            update_config.install_dir = std::env::temp_dir();
+            let service = gl_update::UpdateService::new(update_config)
+                .expect("Failed to create test update service");
+            std::sync::Arc::new(tokio::sync::Mutex::new(service))
+        },
     }
 }
 

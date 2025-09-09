@@ -146,16 +146,96 @@ impl YtDlpSource {
             .timeout(timeout)
     }
 
-    /// Build command to capture a single frame via yt-dlp and ffmpeg
-    fn build_snapshot_command(&self, output_path: &Path) -> CommandSpec {
-        let cmd = format!(
-            r#"ffmpeg -i "$(yt-dlp -g '{}')" -vframes 1 -f image2 -q:v 2 -y '{}'"#,
-            self.config.url,
-            output_path.to_string_lossy()
-        );
+    /// Get direct stream URL using yt-dlp
+    async fn get_stream_url(&self) -> Result<String> {
+        let mut args = vec!["--no-playlist".to_string(), "--get-url".to_string()];
 
-        CommandSpec::new("sh".into())
-            .args(vec!["-c".to_string(), cmd])
+        // For non-live videos, add specific optimizations
+        if !self.config.is_live {
+            // Only get the URL, don't download anything
+            args.extend([
+                "--no-download".to_string(),
+                // Use the best format for snapshots (usually mp4 or webm)
+                "--format".to_string(),
+                "best[ext=mp4]/best[ext=webm]/best".to_string(),
+            ]);
+        }
+
+        // Add format selection if specified
+        match &self.config.format {
+            OutputFormat::Best => {
+                // Already handled above for non-live, or let yt-dlp auto-choose for live
+            }
+            OutputFormat::Worst => {
+                args.pop(); // Remove the previous format if set
+                args.pop();
+                args.extend(["--format".to_string(), "worst".to_string()]);
+            }
+            OutputFormat::FormatId(id) => {
+                args.pop(); // Remove the previous format if set
+                args.pop();
+                args.extend(["--format".to_string(), id.clone()]);
+            }
+            OutputFormat::BestWithHeight(height) => {
+                args.pop(); // Remove the previous format if set
+                args.pop();
+                args.extend(["--format".to_string(), format!("best[height<={}]", height)]);
+            }
+        }
+
+        args.push(self.config.url.clone());
+
+        let spec = CommandSpec::new("yt-dlp".into())
+            .args(args)
+            .timeout(Duration::from_secs(30));
+
+        let result = run(spec).await?;
+        if !result.success() {
+            return Err(Error::Config(format!(
+                "Failed to get stream URL: {}",
+                result.stderr
+            )));
+        }
+
+        let url = result.stdout.trim();
+        if url.is_empty() {
+            return Err(Error::Config(
+                "Got empty stream URL from yt-dlp".to_string(),
+            ));
+        }
+
+        Ok(url.to_string())
+    }
+
+    /// Build optimized ffmpeg command for direct stream capture
+    fn build_direct_ffmpeg_command(&self, stream_url: &str, output_path: &Path) -> CommandSpec {
+        let mut args = vec![
+            "-i".to_string(),
+            stream_url.to_string(),
+            "-vframes".to_string(),
+            "1".to_string(),
+            "-f".to_string(),
+            "image2".to_string(),
+        ];
+
+        // For non-live videos, we can add additional optimizations
+        if !self.config.is_live {
+            // Seek to a specific time for better frame quality (avoid black screens)
+            args.extend([
+                "-ss".to_string(),
+                "00:00:02".to_string(), // Seek 2 seconds in
+            ]);
+        }
+
+        args.extend([
+            "-q:v".to_string(),
+            "2".to_string(),  // High quality
+            "-y".to_string(), // Overwrite output file
+            output_path.to_string_lossy().to_string(),
+        ]);
+
+        CommandSpec::new("ffmpeg".into())
+            .args(args)
             .timeout(Duration::from_secs(15))
     }
 }
@@ -219,16 +299,22 @@ impl CaptureSource for YtDlpSource {
 
     #[instrument(skip(self))]
     async fn snapshot(&self) -> Result<Bytes> {
-        info!(url = %self.config.url, "Taking yt-dlp snapshot");
+        info!(url = %self.config.url, is_live = %self.config.is_live, "Taking yt-dlp snapshot");
 
         let temp_path =
             std::env::temp_dir().join(format!("yt_snapshot_{}.jpg", gl_core::Id::new()));
 
-        let cmd_spec = self.build_snapshot_command(&temp_path);
+        // First get the direct stream URL
+        let stream_url = self.get_stream_url().await?;
+        debug!(stream_url = %stream_url, "Got direct stream URL");
+
+        // Then use ffmpeg directly on the stream URL
+        let cmd_spec = self.build_direct_ffmpeg_command(&stream_url, &temp_path);
         let cmd_result = run(cmd_spec).await?;
+
         if !cmd_result.success() {
             return Err(Error::Config(format!(
-                "yt-dlp+ffmpeg command failed: {}",
+                "ffmpeg command failed: {}",
                 cmd_result.stderr
             )));
         }
@@ -365,17 +451,50 @@ mod tests {
     }
 
     #[test]
-    fn test_snapshot_command_uses_streaming() {
+    fn test_direct_ffmpeg_command_for_non_live() {
         let config = YtDlpConfig {
             url: "https://youtube.com/watch?v=test".to_string(),
+            is_live: false,
             ..Default::default()
         };
 
         let source = YtDlpSource::new(config);
         let output = std::path::PathBuf::from("/tmp/out.jpg");
-        let spec = source.build_snapshot_command(&output);
+        let stream_url = "https://example.com/stream.m3u8";
 
-        assert!(spec.args.iter().any(|a| a.contains("yt-dlp -g")));
+        let spec = source.build_direct_ffmpeg_command(stream_url, &output);
+
+        assert_eq!(spec.program.to_str().unwrap(), "ffmpeg");
+        assert!(spec.args.contains(&"-i".to_string()));
+        assert!(spec.args.contains(&stream_url.to_string()));
+        assert!(spec.args.contains(&"-vframes".to_string()));
+        assert!(spec.args.contains(&"1".to_string()));
+
+        // For non-live videos, should include seek option for better frame quality
+        assert!(spec.args.contains(&"-ss".to_string()));
+        assert!(spec.args.contains(&"00:00:02".to_string()));
+    }
+
+    #[test]
+    fn test_direct_ffmpeg_command_for_live() {
+        let config = YtDlpConfig {
+            url: "https://youtube.com/watch?v=live_test".to_string(),
+            is_live: true,
+            ..Default::default()
+        };
+
+        let source = YtDlpSource::new(config);
+        let output = std::path::PathBuf::from("/tmp/out.jpg");
+        let stream_url = "https://example.com/live_stream.m3u8";
+
+        let spec = source.build_direct_ffmpeg_command(stream_url, &output);
+
+        assert_eq!(spec.program.to_str().unwrap(), "ffmpeg");
+        assert!(spec.args.contains(&"-i".to_string()));
+        assert!(spec.args.contains(&stream_url.to_string()));
+
+        // For live videos, should NOT include seek option (can't seek in live streams)
+        assert!(!spec.args.contains(&"-ss".to_string()));
     }
 
     #[tokio::test]

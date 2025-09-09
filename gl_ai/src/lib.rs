@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::Result;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, info};
 
 #[cfg(feature = "ai_online")]
 pub mod openai;

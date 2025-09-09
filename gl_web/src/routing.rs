@@ -152,6 +152,30 @@ pub fn create_app(
                 .route(web::delete().to(admin::delete_api_key_handler)),
         )
         .service(
+            web::resource("/api/settings/updates/check")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(admin::check_updates_handler)),
+        )
+        .service(
+            web::resource("/api/settings/updates/apply")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::post().to(admin::apply_update_handler)),
+        )
+        .service(
+            web::resource("/api/settings/updates/status")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(admin::get_update_status_handler)),
+        )
+        .service(
             web::resource("/api/settings/_health")
                 .wrap(middleware::ratelimit::RateLimit::new(
                     rate_limit_config.clone(),
@@ -271,6 +295,19 @@ pub fn create_app(
                         .service(
                             web::resource("api-keys/{id}")
                                 .route(web::delete().to(admin::delete_api_key_handler)),
+                        )
+                        // Software Updates
+                        .service(
+                            web::resource("updates/check")
+                                .route(web::get().to(admin::check_updates_handler)),
+                        )
+                        .service(
+                            web::resource("updates/apply")
+                                .route(web::post().to(admin::apply_update_handler)),
+                        )
+                        .service(
+                            web::resource("updates/status")
+                                .route(web::get().to(admin::get_update_status_handler)),
                         )
                         // Health
                         .service(

@@ -72,6 +72,7 @@ struct OpenAiImageUrl {
 #[derive(Debug, Deserialize)]
 struct OpenAiResponse {
     choices: Vec<OpenAiChoice>,
+    #[allow(dead_code)]
     usage: Option<OpenAiUsage>,
 }
 
@@ -79,6 +80,7 @@ struct OpenAiResponse {
 #[derive(Debug, Deserialize)]
 struct OpenAiChoice {
     message: OpenAiResponseMessage,
+    #[allow(dead_code)]
     finish_reason: Option<String>,
 }
 
@@ -90,6 +92,7 @@ struct OpenAiResponseMessage {
 
 /// OpenAI usage statistics
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAiUsage {
     total_tokens: u32,
     prompt_tokens: u32,
@@ -150,12 +153,8 @@ impl OpenAiClient {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "All retry attempts failed",
-            ))
-        }))
+        Err(last_error
+            .unwrap_or_else(|| Error::Io(std::io::Error::other("All retry attempts failed"))))
     }
 
     /// Execute a single HTTP request
@@ -163,12 +162,10 @@ impl OpenAiClient {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let response = request.send().await.map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("HTTP request failed: {}", e),
-            ))
-        })?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Io(std::io::Error::other(format!("HTTP request failed: {}", e))))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -183,10 +180,10 @@ impl OpenAiClient {
         }
 
         let response_text = response.text().await.map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read response: {}", e),
-            ))
+            Error::Io(std::io::Error::other(format!(
+                "Failed to read response: {}",
+                e
+            )))
         })?;
 
         serde_json::from_str::<T>(&response_text)
@@ -369,11 +366,7 @@ impl AiClient for OpenAiClient {
         );
 
         let openai_request = OpenAiVisionRequest {
-            model: if self.config.model.starts_with("gpt-4") {
-                "gpt-4-vision-preview".to_string()
-            } else {
-                "gpt-4-vision-preview".to_string() // Fallback to vision model
-            },
+            model: "gpt-4-vision-preview".to_string(), // Always use vision model for image analysis
             messages: vec![OpenAiVisionMessage {
                 role: "user".to_string(),
                 content: vec![

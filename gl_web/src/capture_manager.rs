@@ -2,6 +2,7 @@
 //! ABOUTME: Coordinates stream execution, status tracking, and resource management
 
 use bytes::Bytes;
+use gl_analysis::{AnalysisConfig, AnalysisService, ProcessorContext, ProcessorInput};
 use gl_capture::{
     artifact_storage::{ArtifactStorageConfig, ArtifactStorageService},
     CaptureHandle, CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel,
@@ -9,15 +10,17 @@ use gl_capture::{
 };
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
+use gl_config::Config as AppConfig;
 use gl_core::{time::now_iso8601, Error, Result};
 use gl_db::{CreateSnapshotRequest, SnapshotRepository, Stream, StreamRepository};
+use gl_notify::NotificationManager;
 use gl_storage::StorageManager;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, oneshot, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -83,6 +86,8 @@ impl std::fmt::Debug for CaptureTask {
 pub struct CaptureManager {
     db_pool: sqlx::SqlitePool,
     running_captures: Arc<RwLock<HashMap<String, CaptureTask>>>,
+    analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
+    storage_config: gl_config::StorageConfig,
 }
 
 impl CaptureManager {
@@ -91,6 +96,8 @@ impl CaptureManager {
         let manager = Self {
             db_pool: db_pool.clone(),
             running_captures: Arc::new(RwLock::new(HashMap::new())),
+            analysis_service: None,
+            storage_config: gl_config::StorageConfig::default(),
         };
 
         // Reset any stale "active" statuses from previous server runs
@@ -109,10 +116,76 @@ impl CaptureManager {
     /// Create a new CaptureManager with custom storage configuration (legacy compatibility)
     pub fn with_storage_config(
         db_pool: sqlx::SqlitePool,
-        _storage_config: gl_config::StorageConfig,
+        storage_config: gl_config::StorageConfig,
     ) -> Self {
-        // Storage service is now created per-task for thread safety
-        Self::new(db_pool)
+        Self {
+            db_pool: db_pool.clone(),
+            running_captures: Arc::new(RwLock::new(HashMap::new())),
+            analysis_service: None,
+            storage_config,
+        }
+    }
+
+    /// Create a new CaptureManager with analysis services enabled
+    pub fn with_analysis_config(
+        db_pool: sqlx::SqlitePool,
+        storage_config: gl_config::StorageConfig,
+        app_config: &AppConfig,
+    ) -> Result<Self> {
+        let mut manager = Self {
+            db_pool: db_pool.clone(),
+            running_captures: Arc::new(RwLock::new(HashMap::new())),
+            analysis_service: None,
+            storage_config,
+        };
+
+        // Initialize analysis service if AI is enabled
+        if app_config.features.enable_ai {
+            info!("Initializing analysis service with AI enabled");
+
+            // Create analysis configuration with online AI enabled
+            let mut ai_config = app_config.ai.to_ai_config();
+
+            // When AI features are enabled, ensure online mode is active
+            ai_config.use_online = true;
+
+            // Validate that we have an API key for online mode
+            if ai_config.api_key.is_none() || ai_config.api_key.as_ref().unwrap().is_empty() {
+                warn!("AI features enabled but no API key provided, falling back to offline mode");
+                ai_config.use_online = false;
+            }
+
+            let analysis_config = AnalysisConfig {
+                ai: Some(ai_config),
+                ..Default::default()
+            };
+
+            // Create notification manager (stub for now, can be enhanced later)
+            let notification_manager = NotificationManager::new();
+
+            // Create analysis service with persistence
+            let analysis_service = AnalysisService::with_persistence(
+                analysis_config,
+                gl_db::Db::from_pool(db_pool.clone()),
+                notification_manager,
+            )?;
+
+            manager.analysis_service = Some(Arc::new(tokio::sync::Mutex::new(analysis_service)));
+            info!("Analysis service initialized successfully");
+        } else {
+            info!("AI features disabled, analysis service not initialized");
+        }
+
+        // Reset any stale "active" statuses from previous server runs
+        let reset_db_pool = db_pool.clone();
+        tokio::spawn(async move {
+            let stream_repo = StreamRepository::new(&reset_db_pool);
+            if let Err(e) = stream_repo.reset_stale_active_statuses().await {
+                warn!("Failed to reset stale stream statuses: {}", e);
+            }
+        });
+
+        Ok(manager)
     }
 
     /// Start a capture from a stream
@@ -163,13 +236,17 @@ impl CaptureManager {
         let stream_id_clone = stream_id.to_string();
         let frame_sender_clone = frame_sender.clone();
         let latest_snapshot_clone = latest_snapshot.clone();
+        let analysis_service_clone = self.analysis_service.clone();
         // Note: We pass storage_service by reference to avoid clone issues
         // The spawned task will create its own copy of necessary components
 
+        // Create channel to receive the capture handle for efficient snapshotting
+        let (capture_handle_sender, capture_handle_receiver) = oneshot::channel();
+
+        let storage_config_clone = self.storage_config.clone();
         let handle = tokio::spawn(async move {
             // Create fresh storage service instance for the async task
-            let storage_config = gl_config::StorageConfig::default();
-            let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
+            let artifacts_dir = PathBuf::from(&storage_config_clone.artifacts_dir);
             let gl_storage_config = gl_storage::StorageConfig {
                 base_dir: Some(artifacts_dir),
                 ..Default::default()
@@ -177,7 +254,7 @@ impl CaptureManager {
             let storage_manager = StorageManager::new(gl_storage_config)
                 .expect("Failed to create storage manager for async task");
             let artifact_config = ArtifactStorageConfig {
-                base_uri: format!("file://{}", storage_config.artifacts_dir),
+                base_uri: format!("file://{}", storage_config_clone.artifacts_dir),
                 snapshot_extension: "jpg".to_string(),
                 include_timestamp: true,
             };
@@ -190,6 +267,8 @@ impl CaptureManager {
                 stream_id_clone.clone(),
                 frame_sender_clone,
                 latest_snapshot_clone,
+                analysis_service_clone,
+                Some(capture_handle_sender),
             )
             .await;
 
@@ -227,13 +306,26 @@ impl CaptureManager {
         let task = CaptureTask {
             handle,
             info: capture_info,
-            capture_handle: None, // TODO: Store actual capture handle for snapshot access
+            capture_handle: None, // Will be updated when capture handle is received
             frame_sender,
             latest_snapshot,
         };
 
         captures.insert(stream_id.to_string(), task);
         drop(captures); // Explicitly release lock
+
+        // Spawn a task to update the capture handle when it becomes available
+        let running_captures_clone = self.running_captures.clone();
+        let stream_id_for_handle = stream_id.to_string();
+        tokio::spawn(async move {
+            if let Ok(capture_handle) = capture_handle_receiver.await {
+                let mut captures = running_captures_clone.write().await;
+                if let Some(task) = captures.get_mut(&stream_id_for_handle) {
+                    task.capture_handle = Some(capture_handle);
+                    debug!(stream_id = %stream_id_for_handle, "Updated capture handle for efficient snapshotting");
+                }
+            }
+        });
 
         debug!(stream_id = %stream_id, "Stream capture started");
         Ok(())
@@ -307,6 +399,34 @@ impl CaptureManager {
             }
         }
 
+        // Try to take a fresh snapshot from the running capture handle (efficient)
+        if let Some(capture_handle) = {
+            let captures = self.running_captures.read().await;
+            captures
+                .get(stream_id)
+                .and_then(|task| task.capture_handle.clone())
+        } {
+            debug!(stream_id = %stream_id, "Taking fresh snapshot from running capture handle");
+            match capture_handle.snapshot().await {
+                Ok(snapshot_data) => {
+                    // Cache the snapshot for future requests
+                    if let Some(latest_snapshot) = {
+                        let captures = self.running_captures.read().await;
+                        captures
+                            .get(stream_id)
+                            .map(|task| task.latest_snapshot.clone())
+                    } {
+                        let mut snapshot_guard = latest_snapshot.write().await;
+                        *snapshot_guard = Some(snapshot_data.clone());
+                    }
+                    return Ok(snapshot_data);
+                }
+                Err(e) => {
+                    warn!(stream_id = %stream_id, error = %e, "Failed to take snapshot from capture handle, falling back");
+                }
+            }
+        }
+
         // Fall back to database for the latest stored snapshot
         let repo = SnapshotRepository::new(&self.db_pool);
         if let Some(latest_snapshot) = repo.get_latest_by_template(stream_id).await? {
@@ -375,6 +495,7 @@ impl CaptureManager {
     }
 
     /// Internal method to run a persistent capture task with broadcast capabilities
+    #[allow(clippy::too_many_arguments)]
     async fn run_persistent_capture_task(
         db_pool: sqlx::SqlitePool,
         storage_service: ArtifactStorageService<StorageManager>,
@@ -382,6 +503,8 @@ impl CaptureManager {
         stream_id: String,
         frame_sender: broadcast::Sender<Bytes>,
         latest_snapshot: Arc<RwLock<Option<Bytes>>>,
+        analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
+        capture_handle_sender: Option<oneshot::Sender<Arc<CaptureHandle>>>,
     ) -> Result<()> {
         info!(stream_id = %stream_id, "Running persistent capture task with broadcast");
 
@@ -408,6 +531,11 @@ impl CaptureManager {
             "yt" => Self::create_yt_capture(&config).await?,
             _ => return Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
         };
+
+        // Send the capture handle back to the main thread for efficient snapshotting
+        if let Some(sender) = capture_handle_sender {
+            let _ = sender.send(capture_handle.clone());
+        }
 
         // Get snapshot interval from config (default: 5 seconds)
         let snapshot_interval = config
@@ -467,6 +595,46 @@ impl CaptureManager {
                                     error = %e,
                                     "Failed to store snapshot"
                                 );
+                            }
+
+                            // Process through analysis service if available
+                            if let Some(analysis_service) = &analysis_service {
+                                let analysis_clone = analysis_service.clone();
+                                let stream_id_clone = stream_id.clone();
+                                let snapshot_clone = snapshot_data.clone();
+
+                                // Spawn analysis task to avoid blocking capture loop
+                                tokio::spawn(async move {
+                                    let mut service_guard = analysis_clone.lock().await;
+
+                                    let processor_input = ProcessorInput {
+                                        template_id: stream_id_clone.clone(),
+                                        frame_data: Some(snapshot_clone),
+                                        frame_format: Some("jpeg".to_string()), // Most captures are JPEG
+                                        text_content: None,
+                                        context: ProcessorContext::new(stream_id_clone.clone()),
+                                        timestamp: chrono::Utc::now(),
+                                    };
+
+                                    match service_guard.analyze(processor_input).await {
+                                        Ok(events) => {
+                                            if !events.is_empty() {
+                                                debug!(
+                                                    stream_id = %stream_id_clone,
+                                                    event_count = events.len(),
+                                                    "Analysis completed with events"
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                stream_id = %stream_id_clone,
+                                                error = %e,
+                                                "Analysis failed for snapshot"
+                                            );
+                                        }
+                                    }
+                                });
                             }
                         }
                         Err(e) => {
@@ -1373,8 +1541,7 @@ impl CaptureManager {
         snapshot_data: &[u8],
     ) -> Result<()> {
         // Create storage service for this operation
-        let storage_config = gl_config::StorageConfig::default();
-        let artifacts_dir = PathBuf::from(&storage_config.artifacts_dir);
+        let artifacts_dir = PathBuf::from(&self.storage_config.artifacts_dir);
         let gl_storage_config = gl_storage::StorageConfig {
             base_dir: Some(artifacts_dir),
             ..Default::default()
@@ -1382,7 +1549,7 @@ impl CaptureManager {
         let storage_manager =
             StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
         let artifact_config = ArtifactStorageConfig {
-            base_uri: format!("file://{}", storage_config.artifacts_dir),
+            base_uri: format!("file://{}", self.storage_config.artifacts_dir),
             snapshot_extension: "jpg".to_string(),
             include_timestamp: true,
         };
