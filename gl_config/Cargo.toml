@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 gl_core = { path = "../gl_core" }
+gl_ai = { path = "../gl_ai" }
 config.workspace = true
 validator.workspace = true
 serde.workspace = true

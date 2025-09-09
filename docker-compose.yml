@@ -1,0 +1,115 @@
+# ABOUTME: Production Docker Compose configuration for unified Glimpser application
+# ABOUTME: Single container deployment with persistent volumes and proper networking
+
+version: '3.8'
+
+services:
+  glimpser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: glimpser:latest
+    container_name: glimpser
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - BIND_ADDRESS=0.0.0.0:3000
+      - DATABASE_URL=/app/data/glimpser.db
+      - STORAGE_PATH=/app/data/storage
+      - FRAMES_PATH=/app/data/frames
+      - VIDEOS_PATH=/app/data/videos
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - CHROME_PATH=/usr/bin/chromium
+      - CHROME_DRIVER_PATH=/usr/bin/chromedriver
+    volumes:
+      # Persistent data volumes
+      - glimpser_data:/app/data
+      - glimpser_logs:/app/logs
+      # Optional: mount local storage for development
+      # - ./data:/app/data
+    networks:
+      - glimpser_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Resource limits for production
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      # Required for Chrome sandbox
+      - SYS_ADMIN
+
+  # Optional: PostgreSQL for production deployments
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: glimpser-db
+  #   restart: unless-stopped
+  #   environment:
+  #     - POSTGRES_DB=glimpser
+  #     - POSTGRES_USER=glimpser
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD:-change-me-in-production}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - glimpser_network
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '1'
+  #         memory: 1G
+
+  # Optional: Redis for caching and session management
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: glimpser-cache
+  #   restart: unless-stopped
+  #   command: redis-server --appendonly yes
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - glimpser_network
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.5'
+  #         memory: 256M
+
+networks:
+  glimpser_network:
+    driver: bridge
+    name: glimpser_network
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  glimpser_data:
+    driver: local
+    name: glimpser_data
+  glimpser_logs:
+    driver: local
+    name: glimpser_logs
+  # postgres_data:
+  #   driver: local
+  # redis_data:
+  #   driver: local

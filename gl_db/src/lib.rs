@@ -79,6 +79,11 @@ impl Db {
         &self.pool
     }
 
+    /// Create a Db instance from an existing pool (for testing/reuse)
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
     /// Check database health
     #[instrument(skip(self))]
     pub async fn health_check(&self) -> Result<()> {

@@ -1,0 +1,128 @@
+# ABOUTME: Docker build context exclusions for optimized builds
+# ABOUTME: Prevents unnecessary files from being sent to Docker daemon
+
+# Version control
+.git/
+.gitignore
+.github/
+
+# Build artifacts
+target/
+Dockerfile*
+docker-compose*.yml
+
+# Development files
+*.md
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+
+# Test databases (from gl_web tests)
+gl_web/test_web_*.db
+gl_web/test_web_*.db-shm
+gl_web/test_web_*.db-wal
+
+# Local data directories
+data/
+logs/
+storage/
+frames/
+videos/
+
+# Environment files
+.env
+.env.*
+
+# Documentation
+docs/
+*.txt
+
+# CI/CD
+.travis.yml
+.gitlab-ci.yml
+azure-pipelines.yml
+
+# Frontend artifacts (no longer needed)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/coverage/
+frontend/.env*
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# SSL certificates (should be mounted, not built in)
+ssl/
+*.pem
+*.key
+*.crt
+
+# Nginx config (no longer needed)
+nginx.conf
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Log files
+*.log
+
+# Package manager files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Python cache (if any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# macOS
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Desktop.ini
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk

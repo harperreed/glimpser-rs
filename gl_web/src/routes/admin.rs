@@ -8,6 +8,7 @@ use gl_db::{
     ApiKeyRepository, CreateApiKeyRequest, CreateStreamRequest, CreateUserRequest,
     StreamRepository, UpdateStreamRequest, UserRepository,
 };
+use gl_update::{UpdateCheckResult, UpdateInfo};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tracing::{debug, error, info, warn};
@@ -994,4 +995,153 @@ pub async fn import_streams(
         );
         Ok(HttpResponse::PartialContent().json(response))
     }
+}
+
+// Software Update Management Endpoints
+
+/// Request body for applying updates
+#[derive(Debug, Deserialize)]
+pub struct ApplyUpdateRequest {
+    pub update_info: UpdateInfo,
+}
+
+/// Response for update status
+#[derive(Debug, Serialize)]
+pub struct UpdateStatusResponse {
+    pub status: String,
+    pub current_version: String,
+    pub available_update: Option<UpdateInfo>,
+    pub last_check: Option<DateTime<Utc>>,
+}
+
+/// Check for available software updates
+pub async fn check_updates_handler(
+    _req: HttpRequest,
+    state: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    debug!("Checking for software updates");
+
+    let mut update_service = state.update_service.lock().await;
+
+    match update_service.check_for_updates().await {
+        Ok(check_result) => {
+            debug!(
+                "Update check completed: available={}, version={}",
+                check_result.update_available, check_result.current_version
+            );
+
+            let response = serde_json::json!({
+                "success": true,
+                "data": check_result,
+                "message": if check_result.update_available {
+                    "Update available"
+                } else {
+                    "No updates available"
+                }
+            });
+
+            Ok(HttpResponse::Ok().json(response))
+        }
+        Err(e) => {
+            error!("Failed to check for updates: {}", e);
+            let error_result = UpdateCheckResult::error(
+                "unknown".to_string(),
+                format!("Failed to check for updates: {}", e),
+            );
+
+            let response = serde_json::json!({
+                "success": false,
+                "error": "Failed to check for updates",
+                "data": error_result
+            });
+
+            Ok(HttpResponse::InternalServerError().json(response))
+        }
+    }
+}
+
+/// Apply a software update
+pub async fn apply_update_handler(
+    _req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<ApplyUpdateRequest>,
+) -> Result<HttpResponse> {
+    info!(
+        "Applying software update to version: {}",
+        body.update_info.version
+    );
+
+    let mut update_service = state.update_service.lock().await;
+
+    match update_service.apply_update(body.update_info.clone()).await {
+        Ok(update_result) => {
+            if update_result.success {
+                info!(
+                    "Update applied successfully: {} -> {}",
+                    update_result.previous_version,
+                    update_result.new_version.as_deref().unwrap_or("unknown")
+                );
+
+                let response = serde_json::json!({
+                    "success": true,
+                    "data": update_result,
+                    "message": "Update applied successfully"
+                });
+
+                Ok(HttpResponse::Ok().json(response))
+            } else {
+                warn!(
+                    "Update failed: {} -> error: {}",
+                    update_result.previous_version,
+                    update_result.error.as_deref().unwrap_or("unknown")
+                );
+
+                let response = serde_json::json!({
+                    "success": false,
+                    "error": update_result.error.as_deref().unwrap_or("Update failed"),
+                    "data": update_result
+                });
+
+                Ok(HttpResponse::InternalServerError().json(response))
+            }
+        }
+        Err(e) => {
+            error!("Failed to apply update: {}", e);
+
+            let response = serde_json::json!({
+                "success": false,
+                "error": format!("Failed to apply update: {}", e)
+            });
+
+            Ok(HttpResponse::InternalServerError().json(response))
+        }
+    }
+}
+
+/// Get current update status
+pub async fn get_update_status_handler(
+    _req: HttpRequest,
+    state: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    debug!("Getting update status");
+
+    let update_service = state.update_service.lock().await;
+    let status = update_service.status();
+
+    // For now, we'll return basic status information
+    // In a full implementation, this could include more detailed status tracking
+    let status_response = UpdateStatusResponse {
+        status: status.as_str().to_string(),
+        current_version: "unknown".to_string(), // Could be extracted from config
+        available_update: None,                 // Could be stored from last check
+        last_check: None,                       // Could be tracked separately
+    };
+
+    let response = serde_json::json!({
+        "success": true,
+        "data": status_response,
+        "message": "Update status retrieved"
+    });
+
+    Ok(HttpResponse::Ok().json(response))
 }

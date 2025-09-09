@@ -20,6 +20,12 @@ pub struct PushoverAdapter {
 
 impl PushoverAdapter {
     /// Create a new Pushover adapter with app token
+    ///
+    /// **Note:** For production use, consider using [`with_resilience()`] or [`with_custom_resilience()`]
+    /// to enable retry logic and circuit breaker patterns for better reliability.
+    ///
+    /// [`with_resilience()`]: Self::with_resilience
+    /// [`with_custom_resilience()`]: Self::with_custom_resilience
     pub fn new(app_token: String) -> Self {
         Self {
             client: Client::new(),
