@@ -34,9 +34,9 @@ impl StreamManager {
         }
     }
 
-    /// Get or create a streaming session for a template
+    /// Get a streaming session for a template
     pub fn get_session(&self, template_id: &Id) -> Option<Arc<StreamSession>> {
-        self.sessions.get(template_id).map(|s| s.clone())
+        self.sessions.get(template_id).map(|s| Arc::clone(&s))
     }
 
     /// Add a new streaming session
