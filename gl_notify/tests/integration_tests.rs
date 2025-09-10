@@ -6,6 +6,7 @@ use gl_notify::{
     retry::RetryWrapper, Notification, NotificationChannel, NotificationKind, NotificationManager,
 };
 use wiremock::MockServer;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_multi_channel_notification() {
@@ -16,7 +17,7 @@ async fn test_multi_channel_notification() {
     // Register adapters with retry and circuit breaker
     let pushover_adapter = PushoverAdapter::new("test_app_token".to_string());
     let wrapped_adapter = CircuitBreakerWrapper::new(RetryWrapper::new(pushover_adapter));
-    manager.register_adapter("pushover".to_string(), Box::new(wrapped_adapter));
+    manager.register_adapter("pushover".to_string(), Arc::new(wrapped_adapter));
 
     // Create a multi-channel notification
     let channels = vec![
@@ -60,7 +61,7 @@ async fn test_notification_with_metadata_and_attachments() {
     let mut manager = NotificationManager::new();
 
     let pushover_adapter = PushoverAdapter::with_resilience("test_token_with_metadata".to_string());
-    manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));
+    manager.register_adapter("pushover".to_string(), Arc::new(pushover_adapter));
 
     let channels = vec![NotificationChannel::Pushover {
         user_key: "test_user".to_string(),
@@ -101,7 +102,7 @@ async fn test_health_check_integration() {
     // Register multiple adapters
     let pushover_adapter =
         PushoverAdapter::with_resilience("azGDORePK8gMaC0QOYAMyEEuzJnyUi".to_string()); // 30 chars
-    manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));
+    manager.register_adapter("pushover".to_string(), Arc::new(pushover_adapter));
 
     // Test health check
     let health_results = manager.health_check().await;

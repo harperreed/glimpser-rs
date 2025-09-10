@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use gl_core::Id;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 use url::Url;
 
@@ -153,7 +154,7 @@ pub trait Notifier: Send + Sync {
 
 /// Multi-channel notification manager
 pub struct NotificationManager {
-    adapters: HashMap<String, Box<dyn Notifier>>,
+    adapters: HashMap<String, Arc<dyn Notifier>>,
 }
 
 impl NotificationManager {
@@ -165,7 +166,7 @@ impl NotificationManager {
     }
 
     /// Register a notification adapter
-    pub fn register_adapter(&mut self, name: String, adapter: Box<dyn Notifier>) {
+    pub fn register_adapter(&mut self, name: String, adapter: Arc<dyn Notifier>) {
         self.adapters.insert(name, adapter);
     }
 
@@ -215,9 +216,10 @@ impl NotificationManager {
 
 impl Clone for NotificationManager {
     fn clone(&self) -> Self {
-        // For now, clone creates a new empty manager
-        // In a real implementation, we'd need to handle adapter cloning
-        Self::new()
+        // Cloning the manager shares adapter instances via Arc
+        Self {
+            adapters: self.adapters.clone(),
+        }
     }
 }
 
@@ -230,6 +232,7 @@ impl Default for NotificationManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_notification_creation() {
@@ -288,7 +291,7 @@ mod tests {
 
         // Register a Pushover adapter with resilience mechanisms
         let pushover_adapter = PushoverAdapter::with_resilience("test_token".to_string());
-        manager.register_adapter("pushover".to_string(), Box::new(pushover_adapter));
+        manager.register_adapter("pushover".to_string(), Arc::new(pushover_adapter));
 
         assert_eq!(manager.adapters().len(), 1);
         assert!(manager.adapters().contains(&"pushover"));
@@ -296,5 +299,18 @@ mod tests {
         // Test health check
         let health_results = manager.health_check().await;
         assert!(health_results.contains_key("pushover"));
+    }
+
+    #[test]
+    fn test_clone_keeps_adapters() {
+        use crate::adapters::pushover::PushoverAdapter;
+
+        let mut manager = NotificationManager::new();
+        let adapter = Arc::new(PushoverAdapter::with_resilience("test_token".to_string()));
+        manager.register_adapter("pushover".to_string(), adapter);
+
+        let cloned = manager.clone();
+        assert!(cloned.adapters().contains(&"pushover"));
+        assert_eq!(cloned.adapters().len(), 1);
     }
 }
