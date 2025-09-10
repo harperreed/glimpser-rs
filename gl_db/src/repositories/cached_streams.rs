@@ -28,7 +28,7 @@ impl<'a> CachedStreamRepository<'a> {
         let stream = self.repo.create(request).await?;
 
         // Cache the new stream
-        self.cache.cache_stream(stream.clone());
+        self.cache.cache_stream(Arc::new(stream.clone())).await;
 
         debug!("Cached new stream: {}", stream.id);
         Ok(stream)
@@ -39,9 +39,9 @@ impl<'a> CachedStreamRepository<'a> {
         debug!("Finding stream by id with caching: {}", id);
 
         // Check cache first
-        if let Some(cached_stream) = self.cache.get_stream(id) {
+        if let Some(cached_stream) = self.cache.get_stream(id).await {
             debug!("Stream cache hit for id: {}", id);
-            return Ok(Some(cached_stream));
+            return Ok(Some((*cached_stream).clone()));
         }
 
         // Cache miss - fetch from database
@@ -50,7 +50,7 @@ impl<'a> CachedStreamRepository<'a> {
 
         // Cache the result if found
         if let Some(ref stream) = stream {
-            self.cache.cache_stream(stream.clone());
+            self.cache.cache_stream(Arc::new(stream.clone())).await;
             debug!("Cached stream from database: {}", stream.id);
         }
 
@@ -65,11 +65,13 @@ impl<'a> CachedStreamRepository<'a> {
         let updated_stream = self.repo.update(id, request).await?;
 
         // Invalidate cache entry
-        self.cache.invalidate_stream(id);
+        self.cache.invalidate_stream(id).await;
 
         // Cache the updated stream if it exists
         if let Some(ref stream) = updated_stream {
-            self.cache.cache_stream(stream.clone());
+            self.cache
+                .cache_stream(Arc::new(stream.clone()))
+                .await;
             debug!("Updated and re-cached stream: {}", stream.id);
         }
 
@@ -85,7 +87,7 @@ impl<'a> CachedStreamRepository<'a> {
 
         // Invalidate cache entry if deletion was successful
         if deleted {
-            self.cache.invalidate_stream(id);
+            self.cache.invalidate_stream(id).await;
             debug!("Deleted and invalidated stream cache: {}", id);
         }
 
@@ -121,7 +123,7 @@ impl<'a> CachedStreamRepository<'a> {
 
         // Invalidate cache since execution status changed
         if updated {
-            self.cache.invalidate_stream(id);
+            self.cache.invalidate_stream(id).await;
             debug!(
                 "Updated execution status and invalidated cache for stream: {}",
                 id
@@ -142,7 +144,7 @@ impl<'a> CachedStreamRepository<'a> {
 
         // Cache the result if found
         if let Some(ref stream) = stream {
-            self.cache.cache_stream(stream.clone());
+            self.cache.cache_stream(Arc::new(stream.clone())).await;
             debug!("Cached stream from name/user lookup: {}", stream.id);
         }
 

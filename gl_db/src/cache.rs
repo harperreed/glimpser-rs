@@ -3,9 +3,10 @@
 
 use crate::repositories::{api_keys::ApiKey, streams::Stream, users::User};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, warn};
+use tokio::sync::RwLock;
+use tracing::debug;
 
 /// Cache entry with TTL support
 #[derive(Debug, Clone)]
@@ -120,11 +121,11 @@ impl<T: Clone> LruCache<T> {
 /// Application-level cache manager for database entities
 #[derive(Debug)]
 pub struct DatabaseCache {
-    users: Arc<RwLock<LruCache<User>>>,
-    streams: Arc<RwLock<LruCache<Stream>>>,
-    api_keys: Arc<RwLock<LruCache<ApiKey>>>,
+    users: Arc<RwLock<LruCache<Arc<User>>>>,
+    streams: Arc<RwLock<LruCache<Arc<Stream>>>>,
+    api_keys: Arc<RwLock<LruCache<Arc<ApiKey>>>>,
     // Cache for user lookups by email (login optimization)
-    users_by_email: Arc<RwLock<LruCache<User>>>,
+    users_by_email: Arc<RwLock<LruCache<Arc<User>>>>,
 }
 
 impl DatabaseCache {
@@ -139,113 +140,91 @@ impl DatabaseCache {
     }
 
     /// Get user by ID from cache
-    pub fn get_user(&self, id: &str) -> Option<User> {
-        match self.users.write() {
-            Ok(mut cache) => cache.get(id),
-            Err(e) => {
-                warn!("Failed to acquire user cache lock: {}", e);
-                None
-            }
-        }
+    pub async fn get_user(&self, id: &str) -> Option<Arc<User>> {
+        let mut cache = self.users.write().await;
+        cache.get(id)
     }
 
     /// Cache user by ID
-    pub fn cache_user(&self, user: User) {
+    pub async fn cache_user(&self, user: Arc<User>) {
         let id = user.id.clone();
         let email = user.email.clone();
 
         // Cache by ID
-        if let Ok(mut cache) = self.users.write() {
+        {
+            let mut cache = self.users.write().await;
             cache.put(id, user.clone());
         }
 
         // Also cache by email for login optimization
-        if let Ok(mut cache) = self.users_by_email.write() {
+        {
+            let mut cache = self.users_by_email.write().await;
             cache.put(email, user);
         }
     }
 
     /// Get user by email from cache
-    pub fn get_user_by_email(&self, email: &str) -> Option<User> {
-        match self.users_by_email.write() {
-            Ok(mut cache) => cache.get(email),
-            Err(e) => {
-                warn!("Failed to acquire user email cache lock: {}", e);
-                None
-            }
-        }
+    pub async fn get_user_by_email(&self, email: &str) -> Option<Arc<User>> {
+        let mut cache = self.users_by_email.write().await;
+        cache.get(email)
     }
 
     /// Invalidate user cache entries
-    pub fn invalidate_user(&self, id: &str, email: Option<&str>) {
-        if let Ok(mut cache) = self.users.write() {
+    pub async fn invalidate_user(&self, id: &str, email: Option<&str>) {
+        {
+            let mut cache = self.users.write().await;
             cache.invalidate(id);
         }
         if let Some(email) = email {
-            if let Ok(mut cache) = self.users_by_email.write() {
-                cache.invalidate(email);
-            }
+            let mut cache = self.users_by_email.write().await;
+            cache.invalidate(email);
         }
     }
 
     /// Get stream by ID from cache
-    pub fn get_stream(&self, id: &str) -> Option<Stream> {
-        match self.streams.write() {
-            Ok(mut cache) => cache.get(id),
-            Err(e) => {
-                warn!("Failed to acquire stream cache lock: {}", e);
-                None
-            }
-        }
+    pub async fn get_stream(&self, id: &str) -> Option<Arc<Stream>> {
+        let mut cache = self.streams.write().await;
+        cache.get(id)
     }
 
     /// Cache stream by ID
-    pub fn cache_stream(&self, stream: Stream) {
+    pub async fn cache_stream(&self, stream: Arc<Stream>) {
         let id = stream.id.clone();
-        if let Ok(mut cache) = self.streams.write() {
-            cache.put(id, stream);
-        }
+        let mut cache = self.streams.write().await;
+        cache.put(id, stream);
     }
 
     /// Invalidate stream cache entry
-    pub fn invalidate_stream(&self, id: &str) {
-        if let Ok(mut cache) = self.streams.write() {
-            cache.invalidate(id);
-        }
+    pub async fn invalidate_stream(&self, id: &str) {
+        let mut cache = self.streams.write().await;
+        cache.invalidate(id);
     }
 
     /// Get API key by hash from cache
-    pub fn get_api_key(&self, hash: &str) -> Option<ApiKey> {
-        match self.api_keys.write() {
-            Ok(mut cache) => cache.get(hash),
-            Err(e) => {
-                warn!("Failed to acquire API key cache lock: {}", e);
-                None
-            }
-        }
+    pub async fn get_api_key(&self, hash: &str) -> Option<Arc<ApiKey>> {
+        let mut cache = self.api_keys.write().await;
+        cache.get(hash)
     }
 
     /// Cache API key by hash
-    pub fn cache_api_key(&self, api_key: ApiKey) {
+    pub async fn cache_api_key(&self, api_key: Arc<ApiKey>) {
         let hash = api_key.key_hash.clone();
-        if let Ok(mut cache) = self.api_keys.write() {
-            cache.put(hash, api_key);
-        }
+        let mut cache = self.api_keys.write().await;
+        cache.put(hash, api_key);
     }
 
     /// Invalidate API key cache entry
-    pub fn invalidate_api_key(&self, hash: &str) {
-        if let Ok(mut cache) = self.api_keys.write() {
-            cache.invalidate(hash);
-        }
+    pub async fn invalidate_api_key(&self, hash: &str) {
+        let mut cache = self.api_keys.write().await;
+        cache.invalidate(hash);
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
-        let users_size = self.users.read().map(|c| c.size()).unwrap_or(0);
-        let streams_size = self.streams.read().map(|c| c.size()).unwrap_or(0);
-        let api_keys_size = self.api_keys.read().map(|c| c.size()).unwrap_or(0);
-        let users_by_email_size = self.users_by_email.read().map(|c| c.size()).unwrap_or(0);
+    pub async fn stats(&self) -> CacheStats {
+        let users_size = self.users.read().await.size();
+        let streams_size = self.streams.read().await.size();
+        let api_keys_size = self.api_keys.read().await.size();
+        let users_by_email_size = self.users_by_email.read().await.size();
 
         CacheStats {
             users_count: users_size,
@@ -256,19 +235,11 @@ impl DatabaseCache {
     }
 
     /// Clear all caches
-    pub fn clear_all(&self) {
-        if let Ok(mut cache) = self.users.write() {
-            cache.clear();
-        }
-        if let Ok(mut cache) = self.streams.write() {
-            cache.clear();
-        }
-        if let Ok(mut cache) = self.api_keys.write() {
-            cache.clear();
-        }
-        if let Ok(mut cache) = self.users_by_email.write() {
-            cache.clear();
-        }
+    pub async fn clear_all(&self) {
+        self.users.write().await.clear();
+        self.streams.write().await.clear();
+        self.api_keys.write().await.clear();
+        self.users_by_email.write().await.clear();
     }
 }
 

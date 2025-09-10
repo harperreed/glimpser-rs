@@ -28,7 +28,7 @@ impl<'a> CachedUserRepository<'a> {
         let user = self.repo.create(request).await?;
 
         // Cache the new user
-        self.cache.cache_user(user.clone());
+        self.cache.cache_user(Arc::new(user.clone())).await;
 
         debug!("Cached new user: {}", user.id);
         Ok(user)
@@ -39,9 +39,9 @@ impl<'a> CachedUserRepository<'a> {
         debug!("Finding user by id with caching: {}", id);
 
         // Check cache first
-        if let Some(cached_user) = self.cache.get_user(id) {
+        if let Some(cached_user) = self.cache.get_user(id).await {
             debug!("User cache hit for id: {}", id);
-            return Ok(Some(cached_user));
+            return Ok(Some((*cached_user).clone()));
         }
 
         // Cache miss - fetch from database
@@ -50,7 +50,7 @@ impl<'a> CachedUserRepository<'a> {
 
         // Cache the result if found
         if let Some(ref user) = user {
-            self.cache.cache_user(user.clone());
+            self.cache.cache_user(Arc::new(user.clone())).await;
             debug!("Cached user from database: {}", user.id);
         }
 
@@ -65,7 +65,7 @@ impl<'a> CachedUserRepository<'a> {
 
         // Cache the result if found
         if let Some(ref user) = user {
-            self.cache.cache_user(user.clone());
+            self.cache.cache_user(Arc::new(user.clone())).await;
             debug!("Cached user from username lookup: {}", user.id);
         }
 
@@ -77,9 +77,9 @@ impl<'a> CachedUserRepository<'a> {
         debug!("Finding user by email with caching: {}", email);
 
         // Check cache first
-        if let Some(cached_user) = self.cache.get_user_by_email(email) {
+        if let Some(cached_user) = self.cache.get_user_by_email(email).await {
             debug!("User email cache hit for: {}", email);
-            return Ok(Some(cached_user));
+            return Ok(Some((*cached_user).clone()));
         }
 
         // Cache miss - fetch from database
@@ -88,7 +88,7 @@ impl<'a> CachedUserRepository<'a> {
 
         // Cache the result if found
         if let Some(ref user) = user {
-            self.cache.cache_user(user.clone());
+            self.cache.cache_user(Arc::new(user.clone())).await;
             debug!("Cached user from email lookup: {}", user.id);
         }
 
@@ -115,10 +115,14 @@ impl<'a> CachedUserRepository<'a> {
         let updated_user = self.repo.update(id, request).await?;
 
         // Invalidate cache entries
-        self.cache.invalidate_user(id, current_email.as_deref());
+        self.cache
+            .invalidate_user(id, current_email.as_deref())
+            .await;
 
         // Cache the updated user
-        self.cache.cache_user(updated_user.clone());
+        self.cache
+            .cache_user(Arc::new(updated_user.clone()))
+            .await;
 
         debug!("Updated and re-cached user: {}", updated_user.id);
         Ok(updated_user)
@@ -139,7 +143,10 @@ impl<'a> CachedUserRepository<'a> {
         self.repo.delete(id).await?;
 
         // Invalidate cache entries
-        self.cache.invalidate_user(id, current_email.as_deref());
+        self
+            .cache
+            .invalidate_user(id, current_email.as_deref())
+            .await;
 
         debug!("Deleted and invalidated user cache: {}", id);
         Ok(())
