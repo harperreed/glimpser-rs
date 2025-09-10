@@ -8,6 +8,7 @@ use gl_core::Id;
 use std::{
     collections::HashMap,
     pin::Pin,
+    future::Future,
     sync::{Arc, RwLock},
     task::{Context, Poll},
 };
@@ -128,10 +129,16 @@ impl Stream for MjpegStream {
             return Poll::Ready(Some(Ok(Bytes::from(initial_boundary))));
         }
 
-        // Poll for the next frame using try_recv for now
-        // Note: This is a simplified approach - a more sophisticated implementation
-        // would use proper async polling
-        match self.frame_receiver.try_recv() {
+        // Poll for the next frame using async channel support
+        let result = {
+            let recv_fut = self.frame_receiver.recv();
+            tokio::pin!(recv_fut);
+            match recv_fut.poll(cx) {
+                Poll::Ready(res) => res,
+                Poll::Pending => return Poll::Pending,
+            }
+        };
+        match result {
             Ok(frame) => {
                 debug!(
                     connection_id = %self.connection_id,
@@ -147,14 +154,14 @@ impl Stream for MjpegStream {
 
                 Poll::Ready(Some(Ok(response.freeze())))
             }
-            Err(broadcast::error::TryRecvError::Closed) => {
+            Err(broadcast::error::RecvError::Closed) => {
                 info!(
                     connection_id = %self.connection_id,
                     "Frame broadcast channel closed"
                 );
                 Poll::Ready(None)
             }
-            Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 warn!(
                     connection_id = %self.connection_id,
                     skipped_frames = skipped,
@@ -162,13 +169,6 @@ impl Stream for MjpegStream {
                 );
                 self.metrics.frames_dropped.inc_by(skipped);
 
-                // Continue polling for the next frame
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
-            Err(broadcast::error::TryRecvError::Empty) => {
-                // Register waker and return pending
-                cx.waker().wake_by_ref();
                 Poll::Pending
             }
         }
@@ -269,7 +269,14 @@ mod tests {
     use gl_capture::{CaptureSource, FileSource};
     use gl_core::Id;
     use test_support::create_test_id;
-
+    use futures_util::StreamExt;
+    use futures_util::task::{waker_ref, ArcWake};
+    use std::pin::Pin;
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::task::Context;
+    use tokio::sync::broadcast;
+    use tempfile;
+    
     #[actix_web::test]
     async fn test_mjpeg_stream_handler_invalid_template_id() {
         let metrics = StreamMetrics::new();
@@ -340,5 +347,59 @@ mod tests {
                 .content_type()
                 .contains("multipart/x-mixed-replace"));
         }
+    }
+
+    struct CounterWaker {
+        count: AtomicUsize,
+    }
+
+    impl ArcWake for CounterWaker {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    async fn create_test_session() -> Arc<StreamSession> {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp_file.path(), b"dummy").unwrap();
+        let source = FileSource::new(temp_file.path());
+        let capture = source.start().await.unwrap();
+        Arc::new(StreamSession::new(
+            Id::new(),
+            capture,
+            crate::StreamConfig::default(),
+            StreamMetrics::new(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn mjpeg_stream_poll_no_spurious_wake() {
+        let session = create_test_session().await;
+        let (_tx, frame_rx) = broadcast::channel(1);
+        let metrics = StreamMetrics::new();
+        let mut stream = MjpegStream::new(session, frame_rx, metrics);
+
+        // consume initial boundary
+        stream.next().await.unwrap().unwrap();
+
+        let counter = Arc::new(CounterWaker { count: AtomicUsize::new(0) });
+        let waker = waker_ref(&counter);
+        let mut cx = Context::from_waker(&waker);
+        assert!(Pin::new(&mut stream).poll_next(&mut cx).is_pending());
+        assert_eq!(counter.count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn mjpeg_stream_closed_channel_returns_none() {
+        let session = create_test_session().await;
+        let (tx, frame_rx) = broadcast::channel(1);
+        drop(tx);
+        let metrics = StreamMetrics::new();
+        let mut stream = MjpegStream::new(session, frame_rx, metrics);
+
+        // consume initial boundary
+        stream.next().await.unwrap().unwrap();
+
+        assert!(stream.next().await.is_none());
     }
 }
