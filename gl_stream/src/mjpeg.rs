@@ -129,49 +129,52 @@ impl Stream for MjpegStream {
             return Poll::Ready(Some(Ok(Bytes::from(initial_boundary))));
         }
 
+        
         // Poll for the next frame using async channel support
-        let result = {
-            let recv_fut = self.frame_receiver.recv();
-            tokio::pin!(recv_fut);
-            match recv_fut.poll(cx) {
-                Poll::Ready(res) => res,
-                Poll::Pending => return Poll::Pending,
-            }
-        };
-        match result {
-            Ok(frame) => {
-                debug!(
-                    connection_id = %self.connection_id,
-                    frame_size = frame.len(),
-                    "Received frame for streaming"
-                );
+        loop {
+            let result = {
+                let recv_fut = self.frame_receiver.recv();
+                tokio::pin!(recv_fut);
+                match recv_fut.poll(cx) {
+                    Poll::Ready(res) => res,
+                    Poll::Pending => return Poll::Pending,
+                }
+            };
+            match result {
+                Ok(frame) => {
+                    debug!(
+                        connection_id = %self.connection_id,
+                        frame_size = frame.len(),
+                        "Received frame for streaming",
+                    );
 
-                // Create the multipart frame with headers
-                let mut response = BytesMut::new();
-                response.extend_from_slice(&self.create_frame_header(frame.len()));
-                response.extend_from_slice(&frame);
-                response.extend_from_slice(b"\r\n");
+                    // Create the multipart frame with headers
+                    let mut response = BytesMut::new();
+                    response.extend_from_slice(&self.create_frame_header(frame.len()));
+                    response.extend_from_slice(&frame);
+                    response.extend_from_slice(b"\\r\\n");
 
-                Poll::Ready(Some(Ok(response.freeze())))
-            }
-            Err(broadcast::error::RecvError::Closed) => {
-                info!(
-                    connection_id = %self.connection_id,
-                    "Frame broadcast channel closed"
-                );
-                Poll::Ready(None)
-            }
-            Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                warn!(
-                    connection_id = %self.connection_id,
-                    skipped_frames = skipped,
-                    "Stream lagged behind, frames dropped"
-                );
-                self.metrics.frames_dropped.inc_by(skipped);
-
-                Poll::Pending
+                    return Poll::Ready(Some(Ok(response.freeze())));
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    info!(
+                        connection_id = %self.connection_id,
+                        "Frame broadcast channel closed",
+                    );
+                    return Poll::Ready(None);
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(
+                        connection_id = %self.connection_id,
+                        skipped_frames = skipped,
+                        "Stream lagged behind, frames dropped",
+                    );
+                    self.metrics.frames_dropped.inc_by(skipped);
+                    continue;
+                }
             }
         }
+
     }
 }
 
@@ -401,5 +404,37 @@ mod tests {
         stream.next().await.unwrap().unwrap();
 
         assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn mjpeg_stream_lagged_delivers_latest_frame() {
+        use bytes::Bytes;
+        use futures_util::task::noop_waker;
+        use std::task::Context;
+
+        let session = create_test_session().await;
+        let (tx, frame_rx) = broadcast::channel(1);
+        let metrics = StreamMetrics::new();
+        let mut stream = MjpegStream::new(session, frame_rx, metrics.clone());
+
+        // consume initial boundary
+        stream.next().await.unwrap().unwrap();
+
+        // first poll with no frame to register waker
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(Pin::new(&mut stream).poll_next(&mut cx).is_pending());
+
+        tx.send(Bytes::from_static(b"one")).unwrap();
+        tx.send(Bytes::from_static(b"two")).unwrap();
+        tx.send(Bytes::from_static(b"three")).unwrap();
+
+        match Pin::new(&mut stream).poll_next(&mut cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                assert!(frame.windows(5).any(|w| w == b"three"));
+                assert_eq!(metrics.frames_dropped.get(), 2);
+            }
+            other => panic!("expected Ready with frame, got {:?}", other),
+        }
     }
 }
