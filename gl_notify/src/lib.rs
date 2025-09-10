@@ -2,6 +2,7 @@
 //! ABOUTME: Sends alerts via SMTP, SMS, webhooks, and push notifications
 
 use async_trait::async_trait;
+use futures_util::future::join_all;
 use gl_core::Id;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -172,23 +173,29 @@ impl NotificationManager {
 
     /// Send a notification through all applicable adapters
     pub async fn send(&self, notification: &Notification) -> Result<()> {
-        let mut errors = Vec::new();
-
-        for channel in &notification.channels {
+        let futures = notification.channels.iter().map(|channel| {
             let adapter_name = match channel {
                 NotificationChannel::Webhook { .. } => "webhook",
                 NotificationChannel::WebPush { .. } => "webpush",
                 NotificationChannel::Pushover { .. } => "pushover",
             };
 
-            if let Some(adapter) = self.adapters.get(adapter_name) {
-                if let Err(e) = adapter.send(notification).await {
-                    errors.push(format!("{}: {}", adapter_name, e));
+            let adapter = self.adapters.get(adapter_name).map(|a| a.as_ref());
+            let adapter_name = adapter_name.to_string();
+            async move {
+                if let Some(adapter) = adapter {
+                    adapter
+                        .send(notification)
+                        .await
+                        .map_err(|e| format!("{}: {}", adapter_name, e))
+                } else {
+                    Err(format!("Adapter not found: {}", adapter_name))
                 }
-            } else {
-                errors.push(format!("Adapter not found: {}", adapter_name));
             }
-        }
+        });
+
+        let results = join_all(futures).await;
+        let errors: Vec<String> = results.into_iter().filter_map(|r| r.err()).collect();
 
         if errors.is_empty() {
             Ok(())
