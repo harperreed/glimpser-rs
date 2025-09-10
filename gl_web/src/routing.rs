@@ -54,28 +54,6 @@ pub fn create_app(
         InitError = (),
     >,
 > {
-    // Log a concise list of registered routes (one log per worker)
-    info!(
-        routes = %"\n\
-    GET  /api/auth/login\n\
-    GET  /api/me (auth)\n\
-    GET  /api/streams (auth)\n\
-    GET  /api/streams (auth)\n\
-    GET  /api/streams/{id} (auth)\n\
-    POST /api/streams (auth)\n\
-    PUT  /api/streams/{id} (auth)\n\
-    DEL  /api/streams/{id} (auth)\n\
-    GET  /api/settings/users (auth)\n\
-    GET  /api/settings/users/{id} (auth)\n\
-    POST /api/settings/users (auth)\n\
-    DEL  /api/settings/users/{id} (auth)\n\
-    GET  /api/settings/api-keys (auth)\n\
-    POST /api/settings/api-keys (auth)\n\
-    DEL  /api/settings/api-keys/{id} (auth)\n\
-    GET  /api/debug/test\n\
-    GET  /static/{filename}\n",
-        "message" = "Registered routes"
-    );
     let static_config = state.static_config.clone();
     let rate_limit_config = state.rate_limit_config.clone();
 
