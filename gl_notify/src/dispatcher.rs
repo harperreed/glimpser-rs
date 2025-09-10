@@ -445,7 +445,7 @@ impl NotificationDispatcher {
         let body = format!("{} (Severity: {})", event.description, event.severity);
 
         // Create a basic web push adapter
-        let adapter = WebPushAdapter::new();
+        let adapter = WebPushAdapter::new(vec![], vec![]);
         // In real implementation, this would send the web push
         // adapter.send_push(endpoint, &title, &body).await
 
