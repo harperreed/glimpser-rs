@@ -87,6 +87,10 @@ pub struct JobStats {
     pub last_success: Option<DateTime<Utc>>,
     /// Last failure time
     pub last_failure: Option<DateTime<Utc>>,
+    /// Number of duration samples recorded
+    pub duration_samples: u64,
+    /// Total duration of successful executions in milliseconds
+    pub total_duration_ms: u64,
     /// Average execution duration in milliseconds
     pub avg_duration_ms: Option<f64>,
 }
@@ -103,10 +107,14 @@ impl JobStats {
         self.successful_executions += 1;
         self.last_execution = Some(execution_time);
         self.last_success = Some(execution_time);
+        self.duration_samples += 1;
+        self.total_duration_ms += duration_ms;
 
-        // Update rolling average
+        // Update rolling average using sample count
         if let Some(current_avg) = self.avg_duration_ms {
-            self.avg_duration_ms = Some((current_avg + duration_ms as f64) / 2.0);
+            let n = self.duration_samples;
+            self.avg_duration_ms =
+                Some(((n - 1) as f64 * current_avg + duration_ms as f64) / n as f64);
         } else {
             self.avg_duration_ms = Some(duration_ms as f64);
         }
@@ -225,5 +233,22 @@ mod tests {
         assert_eq!(stats.total_executions, 3);
         assert!((stats.success_rate() - 66.66666666666667).abs() < 1e-10);
         assert_eq!(stats.avg_duration_ms, Some(1500.0)); // Average of 1000 and 2000
+    }
+
+    #[test]
+    fn test_multi_sample_average() {
+        let mut stats = JobStats::new();
+        let now = Utc::now();
+
+        stats.record_success(now, 100);
+        stats.record_success(now, 200);
+        stats.record_success(now, 300);
+
+        assert_eq!(stats.total_executions, 3);
+        assert_eq!(stats.successful_executions, 3);
+        assert_eq!(stats.total_duration_ms, 600);
+        assert_eq!(stats.duration_samples, 3);
+        let avg = stats.avg_duration_ms.unwrap();
+        assert!((avg - 200.0).abs() < f64::EPSILON);
     }
 }
