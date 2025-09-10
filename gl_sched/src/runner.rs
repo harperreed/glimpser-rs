@@ -112,9 +112,8 @@ impl JobStats {
 
         // Update rolling average using sample count
         if let Some(current_avg) = self.avg_duration_ms {
-            let n = self.duration_samples;
-            self.avg_duration_ms =
-                Some(((n - 1) as f64 * current_avg + duration_ms as f64) / n as f64);
+            let n = self.duration_samples as f64;
+            self.avg_duration_ms = Some(((n - 1.0) * current_avg + duration_ms as f64) / n);
         } else {
             self.avg_duration_ms = Some(duration_ms as f64);
         }
