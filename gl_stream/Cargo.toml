@@ -21,6 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 prometheus-client.workspace = true
+dashmap = "6"
 
 # Optional RTSP support via GStreamer
 glib = { version = "0.20", optional = true }

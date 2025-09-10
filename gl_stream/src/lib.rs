@@ -309,7 +309,7 @@ mod tests {
         let template_id = Id::new();
 
         // Initially no session
-        assert!(manager.get_session(&template_id).await.is_none());
+        assert!(manager.get_session(&template_id).is_none());
 
         // We can't easily create a full session without ffmpeg, so this tests the structure
         let (_temp_dir, video_path) = create_test_video_file().await;
@@ -326,12 +326,12 @@ mod tests {
             ));
 
             // Add session
-            manager.add_session(session.clone()).await;
-            assert!(manager.get_session(&template_id).await.is_some());
+            manager.add_session(session.clone());
+            assert!(manager.get_session(&template_id).is_some());
 
             // Remove session
-            manager.remove_session(&template_id).await;
-            assert!(manager.get_session(&template_id).await.is_none());
+            manager.remove_session(&template_id);
+            assert!(manager.get_session(&template_id).is_none());
         }
     }
 

@@ -8,6 +8,7 @@ use gl_notify::{
     retry::RetryWrapper, Notification, NotificationChannel, NotificationKind, NotificationManager,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::models::ApiResponse;
@@ -123,7 +124,7 @@ pub async fn test_notification(
 
         let pushover_adapter = PushoverAdapter::new(app_token);
         let wrapped_adapter = CircuitBreakerWrapper::new(RetryWrapper::new(pushover_adapter));
-        manager.register_adapter("pushover".to_string(), Box::new(wrapped_adapter));
+        manager.register_adapter("pushover".to_string(), Arc::new(wrapped_adapter));
 
         channels.push(NotificationChannel::Pushover {
             user_key: user_key.clone(),

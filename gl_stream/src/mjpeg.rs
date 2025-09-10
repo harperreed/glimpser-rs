@@ -3,12 +3,12 @@
 
 use actix_web::{web, HttpRequest, HttpResponse, Result as ActixResult};
 use bytes::{Bytes, BytesMut};
+use dashmap::DashMap;
 use futures_util::stream::Stream;
 use gl_core::Id;
 use std::{
-    collections::HashMap,
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::Arc,
     task::{Context, Poll},
 };
 use tokio::sync::broadcast;
@@ -20,7 +20,7 @@ use crate::{StreamMetrics, StreamSession};
 /// Manager for active streaming sessions
 pub struct StreamManager {
     /// Active streaming sessions by template ID
-    sessions: Arc<RwLock<HashMap<Id, Arc<StreamSession>>>>,
+    sessions: DashMap<Id, Arc<StreamSession>>,
     /// Global streaming metrics
     metrics: StreamMetrics,
 }
@@ -29,28 +29,25 @@ impl StreamManager {
     /// Create a new stream manager
     pub fn new(metrics: StreamMetrics) -> Self {
         Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions: DashMap::new(),
             metrics,
         }
     }
 
     /// Get or create a streaming session for a template
-    pub async fn get_session(&self, template_id: &Id) -> Option<Arc<StreamSession>> {
-        let sessions = self.sessions.read().ok()?;
-        sessions.get(template_id).cloned()
+    pub fn get_session(&self, template_id: &Id) -> Option<Arc<StreamSession>> {
+        self.sessions.get(template_id).map(|s| s.clone())
     }
 
     /// Add a new streaming session
-    pub async fn add_session(&self, session: Arc<StreamSession>) {
+    pub fn add_session(&self, session: Arc<StreamSession>) {
         let template_id = session.template_id.clone();
-        let mut sessions = self.sessions.write().unwrap();
-        sessions.insert(template_id, session);
+        self.sessions.insert(template_id, session);
     }
 
     /// Remove a streaming session
-    pub async fn remove_session(&self, template_id: &Id) {
-        let mut sessions = self.sessions.write().unwrap();
-        sessions.remove(template_id);
+    pub fn remove_session(&self, template_id: &Id) {
+        self.sessions.remove(template_id);
     }
 
     /// Get metrics
@@ -213,7 +210,7 @@ pub async fn mjpeg_stream_handler(
     };
 
     // Get the streaming session
-    let session = match stream_manager.get_session(&template_id).await {
+    let session = match stream_manager.get_session(&template_id) {
         Some(session) => session,
         None => {
             warn!(
