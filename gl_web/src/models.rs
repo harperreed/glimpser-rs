@@ -225,6 +225,67 @@ impl ProblemDetails {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum TemplateKind {
+    Rtsp(RtspTemplate),
+    Ffmpeg(FfmpegTemplate),
+    File(FileTemplate),
+    Website(WebsiteTemplate),
+    Yt(YtTemplate),
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+pub struct RtspTemplate {
+    #[validate(length(min = 1))]
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+pub struct FfmpegTemplate {
+    #[serde(rename = "source_url")]
+    #[validate(length(min = 1))]
+    pub source_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+pub struct FileTemplate {
+    #[serde(rename = "file_path")]
+    #[validate(length(min = 1))]
+    pub file_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+pub struct WebsiteTemplate {
+    #[validate(url)]
+    pub url: String,
+    #[serde(default)]
+    pub headless: Option<bool>,
+    #[serde(default)]
+    pub stealth: Option<bool>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(rename = "element_selector")]
+    #[serde(default)]
+    pub element_selector: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+pub struct YtTemplate {
+    #[validate(url)]
+    pub url: String,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub is_live: Option<bool>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+    #[serde(default)]
+    pub options: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
 /// Stream information response matching frontend expectations
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct StreamInfo {
@@ -275,4 +336,63 @@ pub struct ValidationError {
     pub code: String,
     pub message: String,
     pub value: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_rtsp_template() {
+        let json = r#"{"kind":"rtsp","url":"rtsp://example"}"#;
+        let config: TemplateKind = serde_json::from_str(json).unwrap();
+        match config {
+            TemplateKind::Rtsp(t) => assert_eq!(t.url, "rtsp://example"),
+            _ => panic!("expected rtsp"),
+        }
+    }
+
+    #[test]
+    fn deserialize_file_template() {
+        let json = r#"{"kind":"file","file_path":"/tmp/video.mp4"}"#;
+        let config: TemplateKind = serde_json::from_str(json).unwrap();
+        match config {
+            TemplateKind::File(t) => assert_eq!(t.file_path, "/tmp/video.mp4"),
+            _ => panic!("expected file"),
+        }
+    }
+
+    #[test]
+    fn deserialize_ffmpeg_template() {
+        let json = r#"{"kind":"ffmpeg","source_url":"rtsp://cam"}"#;
+        let config: TemplateKind = serde_json::from_str(json).unwrap();
+        match config {
+            TemplateKind::Ffmpeg(t) => assert_eq!(t.source_url, "rtsp://cam"),
+            _ => panic!("expected ffmpeg"),
+        }
+    }
+
+    #[test]
+    fn deserialize_website_template() {
+        let json = r#"{"kind":"website","url":"https://example.com","width":800,"height":600}"#;
+        let config: TemplateKind = serde_json::from_str(json).unwrap();
+        match config {
+            TemplateKind::Website(t) => {
+                assert_eq!(t.url, "https://example.com");
+                assert_eq!(t.width, Some(800));
+                assert_eq!(t.height, Some(600));
+            }
+            _ => panic!("expected website"),
+        }
+    }
+
+    #[test]
+    fn deserialize_yt_template() {
+        let json = r#"{"kind":"yt","url":"https://youtu.be/test"}"#;
+        let config: TemplateKind = serde_json::from_str(json).unwrap();
+        match config {
+            TemplateKind::Yt(t) => assert_eq!(t.url, "https://youtu.be/test"),
+            _ => panic!("expected yt"),
+        }
+    }
 }

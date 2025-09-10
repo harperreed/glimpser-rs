@@ -4,11 +4,10 @@
 use actix_web::{web, HttpRequest, HttpResponse, Result as ActixResult};
 use gl_db::{CreateStreamRequest, Stream, StreamRepository, UpdateStreamRequest};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 use tracing::{info, warn};
 use validator::Validate;
 
-use crate::{middleware::auth::get_http_auth_user, models::ApiResponse};
+use crate::{middleware::auth::get_http_auth_user, models::{ApiResponse, TemplateKind}};
 
 /// Query parameters for listing streams
 #[derive(Debug, Deserialize)]
@@ -36,7 +35,7 @@ pub struct CreateStreamApiRequest {
     pub name: String,
     #[validate(length(max = 500))]
     pub description: Option<String>,
-    pub config: Value,
+    pub config: TemplateKind,
     #[serde(default)]
     pub is_default: bool,
 }
@@ -48,7 +47,7 @@ pub struct UpdateStreamApiRequest {
     pub name: Option<String>,
     #[validate(length(max = 500))]
     pub description: Option<String>,
-    pub config: Option<Value>,
+    pub config: Option<TemplateKind>,
     pub is_default: Option<bool>,
 }
 
@@ -67,174 +66,16 @@ fn generate_etag(stream: &Stream) -> String {
     format!("\"{}\"", stream.updated_at)
 }
 
-/// Validate stream configuration JSON based on type
-fn validate_stream_config(config: &Value) -> Result<(), String> {
-    let config_obj = match config.as_object() {
-        Some(obj) => obj,
-        None => return Err("Stream config must be a JSON object".to_string()),
-    };
-
-    // Require 'kind' field
-    let kind = match config_obj.get("kind").and_then(|v| v.as_str()) {
-        Some(k) => k,
-        None => return Err("Stream config must have a 'kind' field".to_string()),
-    };
-
-    // Validate based on kind
-    match kind {
-        "rtsp" => validate_rtsp_config(config_obj),
-        "ffmpeg" => validate_ffmpeg_config(config_obj),
-        "file" => validate_file_config(config_obj),
-        "website" => validate_website_config(config_obj),
-        "yt" => validate_yt_config(config_obj),
-        _ => Err(format!("Unknown stream kind: {}", kind)),
+/// Validate stream configuration
+fn validate_stream_config(config: &TemplateKind) -> Result<(), String> {
+    match config {
+        TemplateKind::Rtsp(c) => c.validate(),
+        TemplateKind::Ffmpeg(c) => c.validate(),
+        TemplateKind::File(c) => c.validate(),
+        TemplateKind::Website(c) => c.validate(),
+        TemplateKind::Yt(c) => c.validate(),
     }
-}
-
-fn validate_rtsp_config(config: &Map<String, Value>) -> Result<(), String> {
-    // Require url for RTSP streams
-    if !config.contains_key("url") {
-        return Err("rtsp config must have 'url' field".to_string());
-    }
-
-    // Validate url is a string and starts with rtsp:// or rtsps://
-    if let Some(url) = config.get("url") {
-        if !url.is_string() {
-            return Err("rtsp 'url' must be a string".to_string());
-        }
-        let url_str = url.as_str().unwrap();
-        if url_str.is_empty() {
-            return Err("rtsp 'url' cannot be empty".to_string());
-        }
-        if !url_str.starts_with("rtsp://") && !url_str.starts_with("rtsps://") {
-            return Err("rtsp 'url' must start with rtsp:// or rtsps://".to_string());
-        }
-    }
-
-    // Optional: width, height, transport protocol, etc.
-    Ok(())
-}
-
-fn validate_ffmpeg_config(config: &Map<String, Value>) -> Result<(), String> {
-    // Require source_url for ffmpeg
-    if !config.contains_key("source_url") {
-        return Err("ffmpeg config must have 'source_url' field".to_string());
-    }
-
-    // Optional: output_format, hardware_accel, etc.
-    Ok(())
-}
-
-fn validate_file_config(config: &Map<String, Value>) -> Result<(), String> {
-    // Require file_path for file source
-    if !config.contains_key("file_path") {
-        return Err("file config must have 'file_path' field".to_string());
-    }
-    Ok(())
-}
-
-fn validate_website_config(config: &Map<String, Value>) -> Result<(), String> {
-    // Require url for website
-    if !config.contains_key("url") {
-        return Err("website config must have 'url' field".to_string());
-    }
-
-    // Validate url is a string
-    if let Some(url) = config.get("url") {
-        if !url.is_string() {
-            return Err("website 'url' must be a string".to_string());
-        }
-        let url_str = url.as_str().unwrap();
-        if url_str.is_empty() {
-            return Err("website 'url' cannot be empty".to_string());
-        }
-        // Basic URL format validation
-        if !url_str.starts_with("http://") && !url_str.starts_with("https://") {
-            return Err("website 'url' must start with http:// or https://".to_string());
-        }
-    }
-
-    // Validate optional fields
-    if let Some(headless) = config.get("headless") {
-        if !headless.is_boolean() {
-            return Err("website 'headless' must be a boolean".to_string());
-        }
-    }
-
-    if let Some(stealth) = config.get("stealth") {
-        if !stealth.is_boolean() {
-            return Err("website 'stealth' must be a boolean".to_string());
-        }
-    }
-
-    if let Some(width) = config.get("width") {
-        if !width.is_number() {
-            return Err("website 'width' must be a number".to_string());
-        }
-    }
-
-    if let Some(height) = config.get("height") {
-        if !height.is_number() {
-            return Err("website 'height' must be a number".to_string());
-        }
-    }
-
-    if let Some(selector) = config.get("element_selector") {
-        if !selector.is_string() {
-            return Err("website 'element_selector' must be a string".to_string());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_yt_config(config: &Map<String, Value>) -> Result<(), String> {
-    // Require url for yt-dlp
-    if !config.contains_key("url") {
-        return Err("yt config must have 'url' field".to_string());
-    }
-
-    // Validate url is a string
-    if let Some(url) = config.get("url") {
-        if !url.is_string() {
-            return Err("yt 'url' must be a string".to_string());
-        }
-        let url_str = url.as_str().unwrap();
-        if url_str.is_empty() {
-            return Err("yt 'url' cannot be empty".to_string());
-        }
-        // Basic URL validation - should start with http/https
-        if !url_str.starts_with("http://") && !url_str.starts_with("https://") {
-            return Err("yt 'url' must start with http:// or https://".to_string());
-        }
-    }
-
-    // Validate optional fields
-    if let Some(format) = config.get("format") {
-        if !format.is_string() {
-            return Err("yt 'format' must be a string".to_string());
-        }
-    }
-
-    if let Some(is_live) = config.get("is_live") {
-        if !is_live.is_boolean() {
-            return Err("yt 'is_live' must be a boolean".to_string());
-        }
-    }
-
-    if let Some(timeout) = config.get("timeout") {
-        if !timeout.is_number() {
-            return Err("yt 'timeout' must be a number".to_string());
-        }
-    }
-
-    if let Some(options) = config.get("options") {
-        if !options.is_object() {
-            return Err("yt 'options' must be an object".to_string());
-        }
-    }
-
-    Ok(())
+    .map_err(|e| e.to_string())
 }
 
 /// GET /api/streams - List streams with pagination
@@ -670,38 +511,39 @@ mod tests {
     use super::*;
     use gl_db::Stream;
     use serde_json::json;
+    use crate::models::TemplateKind;
 
     #[test]
     fn test_ffmpeg_config_validation() {
-        let valid_config = json!({
+        let valid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "ffmpeg",
             "source_url": "rtsp://camera/stream"
-        });
+        })).unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "ffmpeg"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
     }
 
     #[test]
     fn test_file_config_validation() {
-        let valid_config = json!({
+        let valid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "file",
             "file_path": "/path/to/video.mp4"
-        });
+        })).unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "file"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
     }
 
     #[test]
     fn test_website_config_validation() {
-        let valid_config = json!({
+        let valid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "website",
             "url": "https://example.com",
             "headless": true,
@@ -709,34 +551,35 @@ mod tests {
             "width": 1280,
             "height": 720,
             "element_selector": "#main"
-        });
+        })).unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "website"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
 
         // Invalid url
-        let invalid_config = json!({
+        let invalid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "website",
             "url": "not-a-url"
-        });
+        }))
+        .unwrap();
         assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid field types
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "website",
             "url": "https://example.com",
             "headless": "not-a-boolean"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
     }
 
     #[test]
     fn test_yt_config_validation() {
-        let valid_config = json!({
+        let valid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "yt",
             "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "format": "best",
@@ -745,51 +588,52 @@ mod tests {
             "options": {
                 "cookies": "/path/to/cookies.txt"
             }
-        });
+        })).unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "yt"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
 
         // Invalid url
-        let invalid_config = json!({
+        let invalid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "yt",
             "url": "not-a-url"
-        });
+        }))
+        .unwrap();
         assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid field types
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "is_live": "not-a-boolean"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
 
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "timeout": "not-a-number"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
 
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "options": "not-an-object"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
     }
 
     #[test]
     fn test_unknown_kind_validation() {
-        let invalid_config = json!({
+        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
             "kind": "unknown"
-        });
-        assert!(validate_stream_config(&invalid_config).is_err());
+        }));
+        assert!(invalid_config.is_err());
     }
 
     #[test]
