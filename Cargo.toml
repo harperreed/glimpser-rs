@@ -47,6 +47,9 @@ uuid = { version = "1.10", features = ["v4"] }
 # Database
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
 
+# Ordered hash map for LRU cache access tracking
+linked-hash-map = "0.5"
+
 # Configuration
 config = "0.14"
 validator = { version = "0.18", features = ["derive"] }
