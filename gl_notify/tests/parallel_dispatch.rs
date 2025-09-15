@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use gl_notify::{
     Notification, NotificationChannel, NotificationKind, NotificationManager, Notifier, Result,
 };
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, Instant};
 
@@ -28,8 +29,8 @@ impl Notifier for SlowAdapter {
 async fn dispatches_notifications_in_parallel() {
     let mut manager = NotificationManager::new();
     let delay = Duration::from_millis(1000);
-    manager.register_adapter("webhook".to_string(), Box::new(SlowAdapter { delay }));
-    manager.register_adapter("pushover".to_string(), Box::new(SlowAdapter { delay }));
+    manager.register_adapter("webhook".to_string(), Arc::new(SlowAdapter { delay }));
+    manager.register_adapter("pushover".to_string(), Arc::new(SlowAdapter { delay }));
 
     let channels = vec![
         NotificationChannel::Webhook {

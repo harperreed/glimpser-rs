@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tracing::{debug, warn};
 
-use crate::AppState;
+use crate::{routes::ai_axum, AppState};
 
 /// Frontend-specific state wrapper for Axum
 #[derive(Clone)]
@@ -335,6 +335,8 @@ pub fn create_frontend_router() -> Router<FrontendState> {
         .route("/api/stream/:id/mjpeg", get(stream_mjpeg))
         .route("/api/stream/:id/start", axum::routing::post(stream_start))
         .route("/api/stream/:id/stop", axum::routing::post(stream_stop))
+        // Merge AI routes
+        .merge(ai_axum::ai_routes())
 }
 
 /// Root handler - redirect to dashboard

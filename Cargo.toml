@@ -10,6 +10,7 @@ members = [
     "gl_proc",
     "gl_capture",
     "gl_sched",
+    "gl_scheduler",
     "gl_stream",
     "gl_notify",
     "gl_cap",
@@ -62,6 +63,7 @@ async-trait = "0.1"
 bytes = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.10"
+base64 = "0.22"
 
 # OpenAPI
 utoipa = { version = "4.2", features = ["actix_extras", "chrono", "uuid"] }
@@ -78,6 +80,12 @@ object_store = { version = "0.11", features = ["http", "aws", "azure"] }
 url = "2.5"
 backoff = { version = "0.4", features = ["tokio"] }
 md5 = "0.7"
+
+# Job scheduling
+cron = "0.12"
+tokio-cron-scheduler = "0.10"
+tokio-util = "0.7"
+hostname = "0.4"
 
 # Testing
 wiremock = "0.6"

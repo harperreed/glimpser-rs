@@ -1,0 +1,95 @@
+{
+  "streams": [
+    {
+      "name": "Weather Warnings and Advisories",
+      "description": null,
+      "config": {
+        "kind": "website",
+        "url": "https://forecast.weather.gov/showsigwx.php?warnzone=ILZ104&warncounty=ILC031&firewxzone=ILZ014&local_place1=Chicago+O'Hare+International+Airport+IL&product1=Hazardous+Weather+Outlook",
+        "width": 1920,
+        "height": 1080,
+        "headless": true,
+        "stealth": false,
+        "timeout": 30,
+        "snapshot_interval": 5,
+        "duration": 300,
+        "selector_type": "xpath",
+        "element_selector": "/html/body/main/div"
+      },
+      "is_default": false,
+      "user_id": "01K4DHEJRRXENZM6CKXAADB9G8"
+    },
+    {
+      "name": "NWS Radar",
+      "description": null,
+      "config": {
+        "kind": "website",
+        "url": "https://radar.weather.gov/?settings=v1_eyJhZ2VuZGEiOnsiaWQiOiJsb2NhbCIsImNlbnRlciI6Wy04Ny4xMjUsNDEuMDldLCJsb2NhdGlvbiI6bnVsbCwiem9vbSI6Ny41MDAzODY3NDU3OTg0MjMsImZpbHRlciI6IldTUi04OEQiLCJsYXllciI6InNyX2JyZWYiLCJzdGF0aW9uIjoiS0xPVCJ9LCJhbmltYXRpbmciOmZhbHNlLCJiYXNlIjoic3RhbmRhcmQiLCJhcnRjYyI6ZmFsc2UsImNvdW50eSI6dHJ1ZSwiY3dhIjpmYWxzZSwicmZjIjpmYWxzZSwic3RhdGUiOmZhbHNlLCJtZW51Ijp0cnVlLCJzaG9ydEZ1c2VkT25seSI6dHJ1ZSwib3BhY2l0eSI6eyJhbGVydHMiOjAuOCwibG9jYWwiOjAuNiwibG9jYWxTdGF0aW9ucyI6MC44LCJuYXRpb25hbCI6MC42fX0%3D",
+        "width": 1920,
+        "height": 1080,
+        "headless": true,
+        "stealth": false,
+        "timeout": 30,
+        "snapshot_interval": 5,
+        "duration": 300,
+        "selector_type": "css"
+      },
+      "is_default": false,
+      "user_id": "01K4DHEJRRXENZM6CKXAADB9G8"
+    },
+    {
+      "name": "Chicago Midway",
+      "description": null,
+      "config": {
+        "kind": "yt",
+        "url": "https://www.youtube.com/watch?v=67BCsiW-1Io",
+        "is_live": true,
+        "format": "720p",
+        "snapshot_interval": 5,
+        "duration": 0
+      },
+      "is_default": false,
+      "user_id": "01K4DHEJRRXENZM6CKXAADB9G8"
+    },
+    {
+      "name": "NPR News Site",
+      "description": "NPR main page for news monitoring",
+      "config": {
+        "kind": "website",
+        "url": "https://www.npr.org",
+        "width": 1920,
+        "height": 1080,
+        "headless": true,
+        "stealth": true,
+        "timeout": 30,
+        "snapshot_interval": 5,
+        "duration": 300,
+        "selector_type": "xpath",
+        "element_selector": "//*[@id=\"contentWrap\"]"
+      },
+      "is_default": false,
+      "user_id": "01K4DHEJRRXENZM6CKXAADB9G8"
+    },
+    {
+      "name": "Wrigleyville EarthCam",
+      "description": "Live webcam feed from Wrigleyville area in Chicago",
+      "config": {
+        "kind": "website",
+        "url": "https://www.earthcam.com/usa/illinois/chicago/wrigleyville/?cam=wrigleyville",
+        "width": 1920,
+        "height": 1080,
+        "headless": true,
+        "stealth": true,
+        "timeout": 30,
+        "snapshot_interval": 5,
+        "duration": 300,
+        "selector_type": "xpath",
+        "element_selector": "//*[@id=\"ecnPlayer\"]/div/div[1]"
+      },
+      "is_default": false,
+      "user_id": "01K4DHEJRRXENZM6CKXAADB9G8"
+    }
+  ],
+  "export_date": "2025-09-05T19:34:19.731939+00:00",
+  "exported_by": "01K4DHEJRRXENZM6CKXAADB9G8"
+}

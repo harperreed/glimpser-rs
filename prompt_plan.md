@@ -1,8 +1,14 @@
-# Glimpser Frontend Migration Plan
+# ⚠️ OUTDATED: Glimpser Frontend Migration Plan
 
-## Executive Summary
+**STATUS: PLAN ABANDONED** - This migration plan is no longer relevant.
 
-Migrate from vanilla HTML/CSS/JS frontend to Next.js while keeping the robust Rust backend as an API service. This hybrid architecture leverages each technology's strengths: Rust for high-performance capture/streaming, Next.js for modern UI development.
+**CURRENT ARCHITECTURE**: Glimpser uses HTMX + server-rendered templates. See `frontend_architecture.md` for current architecture documentation.
+
+---
+
+## Executive Summary (OUTDATED)
+
+~~Migrate from vanilla HTML/CSS/JS frontend to Next.js while keeping the robust Rust backend as an API service. This hybrid architecture leverages each technology's strengths: Rust for high-performance capture/streaming, Next.js for modern UI development.~~
 
 ## Current State Analysis
 
