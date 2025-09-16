@@ -537,7 +537,79 @@ async fn streams_list_handler(State(frontend_state): State<FrontendState>) -> im
 
             // Full page HTML with navigation
             Html(format!(r#"<!DOCTYPE html>
-<html><head><title>Live Streams</title><script src="https://cdn.tailwindcss.com"></script></head>
+<html><head><title>Live Streams</title><script src="https://cdn.tailwindcss.com"></script>
+<script>
+async function exportStreams() {{
+    try {{
+        const response = await fetch('/api/admin/streams/export', {{
+            method: 'GET',
+            headers: {{
+                'Accept': 'application/json'
+            }}
+        }});
+
+        if (response.ok) {{
+            const data = await response.json();
+            const blob = new Blob([JSON.stringify(data, null, 2)], {{ type: 'application/json' }});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `streams-export-${{new Date().toISOString().split('T')[0]}}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            alert('Streams exported successfully!');
+        }} else {{
+            alert('Failed to export streams: ' + response.statusText);
+        }}
+    }} catch (error) {{
+        alert('Export error: ' + error.message);
+    }}
+}}
+
+async function importStreams(input) {{
+    const file = input.files[0];
+    if (!file) return;
+
+    try {{
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        // Validate data structure
+        if (!data.streams || !Array.isArray(data.streams)) {{
+            alert('Invalid file format: missing streams array');
+            return;
+        }}
+
+        const response = await fetch('/api/admin/streams/import', {{
+            method: 'POST',
+            headers: {{
+                'Content-Type': 'application/json'
+            }},
+            body: JSON.stringify({{
+                streams: data.streams,
+                overwrite_mode: 'skip'  // Default to skip existing
+            }})
+        }});
+
+        if (response.ok) {{
+            const result = await response.json();
+            alert(`Import completed! Imported: ${{result.imported}}, Skipped: ${{result.skipped}}`);
+            location.reload(); // Refresh the page to show new streams
+        }} else {{
+            const error = await response.json();
+            alert('Failed to import streams: ' + (error.error || response.statusText));
+        }}
+    }} catch (error) {{
+        alert('Import error: ' + error.message);
+    }} finally {{
+        input.value = ''; // Clear the file input
+    }}
+}}
+</script>
+</head>
 <body class="min-h-screen bg-slate-50">
     <nav class="bg-white border-b border-gray-300 px-8 py-4 flex justify-between items-center shadow-sm">
         <div class="flex items-center gap-8">
@@ -559,6 +631,9 @@ async fn streams_list_handler(State(frontend_state): State<FrontendState>) -> im
             <h2 class="text-2xl font-bold text-gray-800">Live Streams</h2>
             <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
                 <button class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600">Refresh</button>
+                <button onclick="exportStreams()" class="px-6 py-3 bg-blue-500 text-white rounded-md font-medium hover:bg-blue-600">Export</button>
+                <button onclick="document.getElementById('importFile').click()" class="px-6 py-3 bg-green-500 text-white rounded-md font-medium hover:bg-green-600">Import</button>
+                <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importStreams(this)">
                 <select class="px-3 py-3 border border-gray-300 rounded-md text-base">
                     <option value="">All Streams</option>
                     <option value="active">Active Only</option>
