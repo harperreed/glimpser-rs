@@ -2,7 +2,7 @@
 CREATE TABLE notification_deliveries (
     id TEXT PRIMARY KEY NOT NULL,
     analysis_event_id TEXT NOT NULL,
-    channel_type TEXT NOT NULL, -- pushover, webhook, webpush, email, etc.
+    channel_type TEXT NOT NULL, -- pushover, webhook, email, etc.
     channel_config TEXT NOT NULL, -- JSON channel configuration (user_key, webhook_url, etc.)
     status TEXT NOT NULL DEFAULT 'pending', -- pending, sent, delivered, failed, retry
     attempt_count INTEGER NOT NULL DEFAULT 0,

@@ -35,8 +35,6 @@ pub enum NotificationError {
     SmsError(String),
     #[error("Webhook error: {0}")]
     WebhookError(String),
-    #[error("WebPush error: {0}")]
-    WebPushError(String),
     #[error("Pushover error: {0}")]
     PushoverError(String),
     #[error("Serialization error: {0}")]
@@ -47,14 +45,6 @@ pub enum NotificationError {
     CircuitBreakerOpen(String),
     #[error("Retry exhausted for notification: {0}")]
     RetryExhausted(String),
-}
-
-// Add error conversions for web-push when feature is enabled
-#[cfg(feature = "webpush")]
-impl From<web_push::WebPushError> for NotificationError {
-    fn from(err: web_push::WebPushError) -> Self {
-        NotificationError::WebPushError(err.to_string())
-    }
 }
 
 /// Type of notification
@@ -73,11 +63,6 @@ pub enum NotificationChannel {
         url: Url,
         headers: Option<HashMap<String, String>>,
         method: Option<String>,
-    },
-    WebPush {
-        endpoint: Url,
-        p256dh: String,
-        auth: String,
     },
     Pushover {
         user_key: String,
@@ -176,7 +161,6 @@ impl NotificationManager {
         let futures = notification.channels.iter().map(|channel| {
             let adapter_name = match channel {
                 NotificationChannel::Webhook { .. } => "webhook",
-                NotificationChannel::WebPush { .. } => "webpush",
                 NotificationChannel::Pushover { .. } => "pushover",
             };
 

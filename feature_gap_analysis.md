@@ -25,7 +25,6 @@
 - [x] **Multi-channel notifications** - Complete
   - [x] Pushover adapter
   - [x] Webhook adapter
-  - [x] WebPush adapter
 - [x] **Circuit breaker pattern** - Complete
 - [x] **Retry mechanisms** - Complete
 

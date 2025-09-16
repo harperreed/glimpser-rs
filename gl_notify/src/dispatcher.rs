@@ -6,8 +6,6 @@ use crate::{
     NotificationManager,
 };
 
-#[cfg(feature = "webpush")]
-use crate::adapters::webpush::WebPushAdapter;
 use gl_core::Result;
 use gl_db::{
     AnalysisEvent, AnalysisEventRepository, CreateNotificationDelivery, Db, DeliveryStatus,
@@ -333,10 +331,6 @@ impl NotificationDispatcher {
             "webhook" => {
                 Self::send_webhook_notification(_notification_manager, delivery, event).await
             }
-            #[cfg(feature = "webpush")]
-            "webpush" => {
-                Self::send_webpush_notification(_notification_manager, delivery, event).await
-            }
             _ => {
                 warn!(
                     channel_type = %delivery.channel_type,
@@ -424,39 +418,6 @@ impl NotificationDispatcher {
         );
 
         Ok(Some("mock_webhook_id".to_string()))
-    }
-
-    /// Send web push notification
-    #[cfg(feature = "webpush")]
-    async fn send_webpush_notification(
-        _notification_manager: &NotificationManager,
-        delivery: &NotificationDelivery,
-        event: &AnalysisEvent,
-    ) -> Result<Option<String>> {
-        let endpoint = delivery
-            .channel_config
-            .get("endpoint")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                gl_core::Error::Validation("Missing endpoint in web push config".to_string())
-            })?;
-
-        let title = format!("{} Alert", event.event_type);
-        let body = format!("{} (Severity: {})", event.description, event.severity);
-
-        // Create a basic web push adapter
-        let adapter = WebPushAdapter::new();
-        // In real implementation, this would send the web push
-        // adapter.send_push(endpoint, &title, &body).await
-
-        debug!(
-            endpoint,
-            title = %title,
-            body = %body,
-            "Would send web push notification"
-        );
-
-        Ok(Some("mock_webpush_id".to_string()))
     }
 
     /// Check if event severity meets channel threshold

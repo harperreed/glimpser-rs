@@ -28,8 +28,6 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-nativ
 # HTTP client for webhooks and SMS
 reqwest = { version = "0.12", features = ["json"] }
 
-# WebPush support (optional)
-web-push = { version = "0.10", optional = true }
 
 # Simple retry logic (no external backoff crate needed)
 
@@ -42,4 +40,3 @@ tokio-test = "0.4"
 
 [features]
 default = []
-webpush = ["dep:web-push"]
