@@ -10,10 +10,12 @@ use metrics::{counter, histogram};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
 use tracing::{debug, info, instrument, warn};
 
 /// FFmpeg hardware acceleration types
@@ -97,13 +99,8 @@ impl Default for RtspTransport {
 #[derive(Debug, Clone)]
 pub struct FfmpegSource {
     config: FfmpegConfig,
-    process_state: Arc<Mutex<ProcessState>>,
-}
-
-#[derive(Debug, Clone)]
-struct ProcessState {
-    is_running: bool,
-    restart_count: u64,
+    is_running: Arc<AtomicBool>,
+    restart_count: Arc<AtomicU64>,
 }
 
 impl FfmpegSource {
@@ -111,10 +108,8 @@ impl FfmpegSource {
     pub fn new(config: FfmpegConfig) -> Self {
         Self {
             config,
-            process_state: Arc::new(Mutex::new(ProcessState {
-                is_running: false,
-                restart_count: 0,
-            })),
+            is_running: Arc::new(AtomicBool::new(false)),
+            restart_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -128,9 +123,14 @@ impl FfmpegSource {
         self.config = config;
     }
 
+    /// Check if capture is running
+    pub fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::SeqCst)
+    }
+
     /// Get restart count for metrics
-    pub async fn restart_count(&self) -> u64 {
-        self.process_state.lock().await.restart_count
+    pub fn restart_count(&self) -> u64 {
+        self.restart_count.load(Ordering::SeqCst)
     }
 
     /// Build FFmpeg command for snapshot extraction
@@ -327,10 +327,7 @@ impl CaptureSource for FfmpegSource {
         self.validate().await?;
 
         // Update process state
-        {
-            let mut state = self.process_state.lock().await;
-            state.is_running = true;
-        }
+        self.is_running.store(true, Ordering::SeqCst);
 
         debug!("FFmpeg capture source started successfully");
 
@@ -371,16 +368,12 @@ impl CaptureSource for FfmpegSource {
             }
 
             // Increment restart count and failure metrics on failure
-            {
-                let mut state = self.process_state.lock().await;
-                state.restart_count += 1;
-
-                counter!(
-                    "ffmpeg_process_restarts_total",
-                    "input_url" => self.config.input_url.clone()
-                )
-                .increment(1);
-            }
+            self.restart_count.fetch_add(1, Ordering::SeqCst);
+            counter!(
+                "ffmpeg_process_restarts_total",
+                "input_url" => self.config.input_url.clone()
+            )
+            .increment(1);
 
             counter!(
                 "ffmpeg_snapshot_failures_total",
@@ -442,10 +435,7 @@ impl CaptureSource for FfmpegSource {
         debug!(url = %self.config.input_url, "Stopping FFmpeg capture source");
 
         // Update process state
-        {
-            let mut state = self.process_state.lock().await;
-            state.is_running = false;
-        }
+        self.is_running.store(false, Ordering::SeqCst);
 
         // For FFmpeg snapshots, there's no persistent process to stop
         // This maintains the interface contract
@@ -508,12 +498,20 @@ mod tests {
         assert_eq!(source.config().timeout, config.timeout);
     }
 
-    #[tokio::test]
-    async fn test_restart_count_initialization() {
+    #[test]
+    fn test_restart_count_initialization() {
         let config = create_test_config();
         let source = FfmpegSource::new(config);
 
-        assert_eq!(source.restart_count().await, 0);
+        assert_eq!(source.restart_count(), 0);
+    }
+
+    #[test]
+    fn test_initial_is_running() {
+        let config = create_test_config();
+        let source = FfmpegSource::new(config);
+
+        assert!(!source.is_running());
     }
 
     #[test]
@@ -773,7 +771,7 @@ mod tests {
 
         // Test basic lifecycle without actual ffmpeg execution
         // This tests the state management logic
-        let initial_count = source.restart_count().await;
+        let initial_count = source.restart_count();
         assert_eq!(initial_count, 0);
 
         // Stop should work even without starting
