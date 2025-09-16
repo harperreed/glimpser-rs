@@ -405,10 +405,13 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
         update_service: {
             // Create a basic update configuration
             // In production, these values would come from the main config
-            let public_key = std::env::var("GLIMPSER_UPDATE_PUBLIC_KEY").unwrap_or_else(|_| {
-                // Development/test key - in production this should be from secure config
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string()
-            });
+            let public_key = std::env::var("GLIMPSER_UPDATE_PUBLIC_KEY")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    // Development/test key - in production this should be from secure config
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string()
+                });
 
             let install_dir = std::env::var("GLIMPSER_INSTALL_DIR")
                 .map(std::path::PathBuf::from)
@@ -447,9 +450,41 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize update service: {}", e);
-                    tracing::warn!("Update functionality will be disabled");
-                    // For now, we'll still panic to force proper config - in production this could be optional
-                    panic!("Update service initialization failed: {}", e);
+                    tracing::warn!(
+                        "Update functionality will be disabled - creating no-op service"
+                    );
+
+                    // Create a minimal config that will work for a disabled service
+                    let fallback_config = UpdateConfig {
+                        repository: "disabled/disabled".to_string(),
+                        current_version: "0.0.0".to_string(),
+                        public_key:
+                            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                                .to_string(),
+                        strategy: UpdateStrategyType::Sidecar,
+                        check_interval_seconds: 86400, // Check once a day but will be disabled
+                        health_check_timeout_seconds: 30,
+                        health_check_url: "http://127.0.0.1:1/disabled".to_string(),
+                        binary_name: "disabled".to_string(),
+                        install_dir: std::env::temp_dir(), // Use temp dir which should always exist
+                        auto_apply: false,
+                        github_token: None,
+                    };
+
+                    // Try with fallback config - this should work since we use temp_dir()
+                    match UpdateService::new(fallback_config) {
+                        Ok(service) => {
+                            tracing::info!("Fallback update service created (disabled)");
+                            std::sync::Arc::new(tokio::sync::Mutex::new(service))
+                        }
+                        Err(fallback_error) => {
+                            tracing::error!(
+                                "Even fallback update service failed: {}",
+                                fallback_error
+                            );
+                            panic!("Cannot create update service: {}", fallback_error);
+                        }
+                    }
                 }
             }
         },
