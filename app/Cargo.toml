@@ -19,6 +19,8 @@ gl_obs = { path = "../gl_obs" }
 gl_stream = { path = "../gl_stream" }
 gl_update = { path = "../gl_update" }
 gl_web = { path = "../gl_web" }
+gl_ai = { path = "../gl_ai", features = ["ai_online"] }
+gl_scheduler = { path = "../gl_scheduler" }
 tokio.workspace = true
 tracing.workspace = true
 clap = { version = "4.0", features = ["derive"] }

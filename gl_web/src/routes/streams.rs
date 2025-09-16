@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use validator::Validate;
 
-use crate::{middleware::auth::get_http_auth_user, models::{ApiResponse, TemplateKind}};
+use crate::{
+    middleware::auth::get_http_auth_user,
+    models::{ApiResponse, TemplateKind},
+};
 
 /// Query parameters for listing streams
 #[derive(Debug, Deserialize)]
@@ -509,16 +512,17 @@ pub async fn delete_stream_service(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::TemplateKind;
     use gl_db::Stream;
     use serde_json::json;
-    use crate::models::TemplateKind;
 
     #[test]
     fn test_ffmpeg_config_validation() {
         let valid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "ffmpeg",
             "source_url": "rtsp://camera/stream"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
         let invalid_config = serde_json::from_value::<TemplateKind>(json!({
@@ -532,7 +536,8 @@ mod tests {
         let valid_config: TemplateKind = serde_json::from_value(json!({
             "kind": "file",
             "file_path": "/path/to/video.mp4"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
         let invalid_config = serde_json::from_value::<TemplateKind>(json!({
@@ -551,7 +556,8 @@ mod tests {
             "width": 1280,
             "height": 720,
             "element_selector": "#main"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url
@@ -588,7 +594,8 @@ mod tests {
             "options": {
                 "cookies": "/path/to/cookies.txt"
             }
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url

@@ -37,3 +37,9 @@ rtsp = ["glib", "gstreamer", "gstreamer-app", "gstreamer-rtsp-server", "gstreame
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"
+
+criterion = { version = "0.5", features = ["async"] }
+
+[[bench]]
+name = "mjpeg"
+harness = false

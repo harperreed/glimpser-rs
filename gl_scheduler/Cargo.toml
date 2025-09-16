@@ -1,0 +1,33 @@
+# ABOUTME: Job scheduling system for automated tasks and background processing
+# ABOUTME: Handles cron-like scheduling, task queues, and asynchronous job execution
+
+[package]
+name = "gl_scheduler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gl_core = { path = "../gl_core" }
+gl_db = { path = "../gl_db" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+uuid.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+sqlx.workspace = true
+
+# Job scheduling specific
+cron.workspace = true
+tokio-cron-scheduler.workspace = true
+tokio-util.workspace = true
+hostname.workspace = true
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.12"
+test_support = { path = "../test_support" }

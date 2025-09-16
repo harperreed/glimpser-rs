@@ -19,6 +19,7 @@ gl_cap = { path = "../gl_cap" }
 gl_update = { path = "../gl_update" }
 gl_analysis = { path = "../gl_analysis" }
 gl_ai = { path = "../gl_ai", features = ["ai_online"] }
+gl_scheduler = { path = "../gl_scheduler" }
 
 actix-web.workspace = true
 serde.workspace = true
@@ -41,6 +42,7 @@ sqlx.workspace = true
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 async-stream = "0.3"
 bytes.workspace = true
+base64.workspace = true
 
 # New dependencies for Axum + HTMX + Askama stack
 axum = "0.7"

@@ -24,7 +24,7 @@ async fn create_test_app_state() -> AppState {
     test_security_config.jwt_secret = "test_secret_key_32_characters_minimum".to_string();
 
     AppState {
-        db,
+        db: db.clone(),
         cache: std::sync::Arc::new(gl_db::DatabaseCache::new()),
         security_config: test_security_config,
         static_config: crate::routes::static_files::StaticConfig::default(),
@@ -43,6 +43,20 @@ async fn create_test_app_state() -> AppState {
             let service = gl_update::UpdateService::new(update_config)
                 .expect("Failed to create test update service");
             std::sync::Arc::new(tokio::sync::Mutex::new(service))
+        },
+        ai_client: {
+            // Create a test AI client
+            let ai_config = gl_ai::AiConfig::default();
+            Arc::new(gl_ai::OpenAiClient::new(ai_config))
+        },
+        job_scheduler: {
+            // Create a test job scheduler
+            let scheduler_config = gl_scheduler::SchedulerConfig::default();
+            let job_storage = Arc::new(gl_scheduler::SqliteJobStorage::new(db.pool().clone()));
+            let scheduler = gl_scheduler::JobScheduler::new(scheduler_config, job_storage)
+                .await
+                .expect("Failed to create test job scheduler");
+            Arc::new(scheduler)
         },
     }
 }

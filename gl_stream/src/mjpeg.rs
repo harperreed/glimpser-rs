@@ -70,6 +70,8 @@ pub struct MjpegStream {
     started: bool,
     /// Metrics for tracking frame drops
     metrics: StreamMetrics,
+    /// Reusable buffer for building frame responses
+    buffer: BytesMut,
 }
 
 impl MjpegStream {
@@ -89,21 +91,20 @@ impl MjpegStream {
             connection_id,
             started: false,
             metrics,
+            buffer: BytesMut::with_capacity(1024),
         }
-    }
-
-    /// Generate multipart boundary header
-    fn create_frame_header(&self, frame_size: usize) -> Bytes {
-        let header = format!(
-            "--{}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
-            self.boundary, frame_size
-        );
-        Bytes::from(header)
     }
 
     /// Generate the initial HTTP headers for multipart response
     pub fn content_type(&self) -> String {
         format!("multipart/x-mixed-replace; boundary={}", self.boundary)
+    }
+}
+
+#[cfg(test)]
+impl MjpegStream {
+    fn buffer_capacity(&self) -> usize {
+        self.buffer.capacity()
     }
 }
 
@@ -136,13 +137,21 @@ impl Stream for MjpegStream {
                     "Received frame for streaming"
                 );
 
-                // Create the multipart frame with headers
-                let mut response = BytesMut::new();
-                response.extend_from_slice(&self.create_frame_header(frame.len()));
-                response.extend_from_slice(&frame);
-                response.extend_from_slice(b"\r\n");
-
-                Poll::Ready(Some(Ok(response.freeze())))
+                // Build response in reusable buffer
+                use std::fmt::Write as _;
+                let len = frame.len();
+                let boundary = self.boundary.clone();
+                self.buffer.clear();
+                write!(
+                    &mut self.buffer,
+                    "--{boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: {len}\r\n\r\n",
+                )
+                .unwrap();
+                self.buffer.extend_from_slice(&frame);
+                self.buffer.extend_from_slice(b"\r\n");
+                let bytes = self.buffer.clone().freeze();
+                self.buffer.truncate(0);
+                Poll::Ready(Some(Ok(bytes)))
             }
             Err(broadcast::error::TryRecvError::Closed) => {
                 info!(
@@ -263,9 +272,14 @@ pub fn configure_mjpeg_routes(cfg: &mut web::ServiceConfig) {
 mod tests {
     use super::*;
     use actix_web::{test, web, App};
+    use bytes::Bytes;
+    use futures_util::StreamExt;
     use gl_capture::{CaptureSource, FileSource};
     use gl_core::Id;
+    use std::sync::Arc;
     use test_support::create_test_id;
+    use tokio::fs;
+    use tokio::sync::broadcast;
 
     #[actix_web::test]
     async fn test_mjpeg_stream_handler_invalid_template_id() {
@@ -337,5 +351,33 @@ mod tests {
                 .content_type()
                 .contains("multipart/x-mixed-replace"));
         }
+    }
+
+    #[tokio::test]
+    async fn buffer_reused_across_frames() {
+        let tmp_file = std::env::temp_dir().join("mjpeg_test.mp4");
+        fs::File::create(&tmp_file).await.unwrap();
+        let source = FileSource::new(&tmp_file);
+        let capture = source.start().await.unwrap();
+        let session = Arc::new(StreamSession::new(
+            Id::new(),
+            capture,
+            crate::StreamConfig::default(),
+            StreamMetrics::default(),
+        ));
+        let (tx, rx) = broadcast::channel(4);
+        let stream = MjpegStream::new(session, rx, StreamMetrics::default());
+        let initial_cap = stream.buffer_capacity();
+        assert!(initial_cap > 0);
+        tokio::pin!(stream);
+        stream.next().await; // boundary
+        tx.send(Bytes::from_static(b"frame1")).unwrap();
+        stream.next().await.unwrap().unwrap();
+        let after_first = stream.buffer_capacity();
+        tx.send(Bytes::from_static(b"frame2")).unwrap();
+        stream.next().await.unwrap().unwrap();
+        let after_second = stream.buffer_capacity();
+        assert_eq!(initial_cap, after_first);
+        assert_eq!(initial_cap, after_second);
     }
 }

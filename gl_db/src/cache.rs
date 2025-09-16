@@ -2,6 +2,7 @@
 //! ABOUTME: Provides LRU cache with TTL support for users, streams, and API keys
 
 use crate::repositories::{api_keys::ApiKey, streams::Stream, users::User};
+use linked_hash_map::LinkedHashMap;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -31,7 +32,7 @@ impl<T> CacheEntry<T> {
 #[derive(Debug)]
 struct LruCache<T: Clone> {
     data: HashMap<String, CacheEntry<T>>,
-    access_order: Vec<String>,
+    access_order: LinkedHashMap<String, ()>,
     max_size: usize,
     ttl: Duration,
 }
@@ -40,7 +41,7 @@ impl<T: Clone> LruCache<T> {
     fn new(max_size: usize, ttl: Duration) -> Self {
         Self {
             data: HashMap::new(),
-            access_order: Vec::new(),
+            access_order: LinkedHashMap::new(),
             max_size,
             ttl,
         }
@@ -50,19 +51,15 @@ impl<T: Clone> LruCache<T> {
         // Check if entry exists and is not expired
         if let Some(entry) = self.data.get(key) {
             if !entry.is_expired() {
-                // Move to front (most recently used)
-                if let Some(pos) = self.access_order.iter().position(|k| k == key) {
-                    let key_owned = self.access_order.remove(pos);
-                    self.access_order.push(key_owned);
-                }
+                // Move to back (most recently used)
+                self.access_order.remove(key);
+                self.access_order.insert(key.to_string(), ());
                 debug!("Cache hit for key: {}", key);
                 return Some(entry.value.clone());
             } else {
                 // Remove expired entry
                 self.data.remove(key);
-                if let Some(pos) = self.access_order.iter().position(|k| k == key) {
-                    self.access_order.remove(pos);
-                }
+                self.access_order.remove(key);
                 debug!("Cache miss (expired) for key: {}", key);
             }
         } else {
@@ -73,17 +70,14 @@ impl<T: Clone> LruCache<T> {
 
     fn put(&mut self, key: String, value: T) {
         // Remove existing entry if present
-        if self.data.contains_key(&key) {
-            if let Some(pos) = self.access_order.iter().position(|k| k == &key) {
-                self.access_order.remove(pos);
-            }
+        if self.data.remove(&key).is_some() {
+            self.access_order.remove(&key);
         }
 
         // Evict least recently used if at capacity
         while self.data.len() >= self.max_size {
-            if let Some(lru_key) = self.access_order.first().cloned() {
+            if let Some((lru_key, _)) = self.access_order.pop_front() {
                 self.data.remove(&lru_key);
-                self.access_order.remove(0);
                 debug!("Evicted LRU key: {}", lru_key);
             } else {
                 break;
@@ -93,15 +87,13 @@ impl<T: Clone> LruCache<T> {
         // Insert new entry
         let entry = CacheEntry::new(value, self.ttl);
         self.data.insert(key.clone(), entry);
-        self.access_order.push(key.clone());
+        self.access_order.insert(key.clone(), ());
         debug!("Cached key: {}", key);
     }
 
     fn invalidate(&mut self, key: &str) {
         if self.data.remove(key).is_some() {
-            if let Some(pos) = self.access_order.iter().position(|k| k == key) {
-                self.access_order.remove(pos);
-            }
+            self.access_order.remove(key);
             debug!("Invalidated cache key: {}", key);
         }
     }
@@ -290,5 +282,48 @@ pub struct CacheStats {
 impl CacheStats {
     pub fn total_entries(&self) -> usize {
         self.users_count + self.streams_count + self.api_keys_count + self.users_by_email_count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lru_eviction_order() {
+        let mut cache = LruCache::new(3, Duration::from_secs(60));
+        cache.put("a".to_string(), 1);
+        cache.put("b".to_string(), 2);
+        cache.put("c".to_string(), 3);
+
+        // Access 'a' to refresh its position
+        assert_eq!(cache.get("a"), Some(1));
+
+        // Adding a fourth entry should evict 'b'
+        cache.put("d".to_string(), 4);
+
+        assert!(cache.get("b").is_none());
+        assert_eq!(cache.get("a"), Some(1));
+        assert_eq!(cache.get("c"), Some(3));
+        assert_eq!(cache.get("d"), Some(4));
+    }
+
+    #[test]
+    fn updating_existing_key_does_not_evict_others() {
+        let mut cache = LruCache::new(2, Duration::from_secs(60));
+        cache.put("a".to_string(), 1);
+        cache.put("b".to_string(), 2);
+
+        // Update existing 'a'
+        cache.put("a".to_string(), 3);
+
+        // Cache still has two entries
+        assert_eq!(cache.size(), 2);
+
+        // Adding new entry should evict 'b' because 'a' was refreshed
+        cache.put("c".to_string(), 4);
+        assert!(cache.get("b").is_none());
+        assert_eq!(cache.get("a"), Some(3));
+        assert_eq!(cache.get("c"), Some(4));
     }
 }

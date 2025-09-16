@@ -1,12 +1,14 @@
 use clap::{Parser, Subcommand};
+use gl_ai::{create_client, AiConfig};
 use gl_config::Config;
 use gl_core::telemetry;
 use gl_db::{CreateStreamRequest, Db, StreamRepository, UserRepository};
 use gl_obs::ObsState;
+use gl_scheduler::{create_standard_handlers, JobScheduler, SchedulerConfig, SqliteJobStorage};
 use gl_stream::{StreamManager, StreamMetrics};
 use gl_update::{UpdateConfig, UpdateService, UpdateStrategyType};
 use gl_web::AppState;
-use std::process;
+use std::{process, sync::Arc};
 
 #[derive(Parser)]
 #[command(name = "glimpser")]
@@ -329,6 +331,59 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
     let stream_metrics = StreamMetrics::new();
     let stream_manager = std::sync::Arc::new(StreamManager::new(stream_metrics));
 
+    // Initialize AI client
+    let ai_config = AiConfig {
+        api_key: std::env::var("OPENAI_API_KEY").ok(),
+        base_url: None,
+        timeout_seconds: 30,
+        max_retries: 3,
+        model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4".to_string()),
+        use_online: std::env::var("OPENAI_API_KEY").is_ok(),
+    };
+
+    tracing::info!(
+        use_online = ai_config.use_online,
+        model = %ai_config.model,
+        "Initializing AI client"
+    );
+
+    let ai_client = {
+        let client = create_client(ai_config);
+        Arc::from(client)
+    };
+
+    // Initialize job scheduler
+    let scheduler_config = SchedulerConfig {
+        max_concurrent_jobs: 10,
+        job_timeout_seconds: 300, // 5 minutes
+        enable_persistence: true,
+        history_retention_days: 30,
+        enable_metrics: true,
+    };
+
+    let job_storage = Arc::new(SqliteJobStorage::new(db.pool().clone()));
+    let job_scheduler = Arc::new(
+        JobScheduler::new(scheduler_config, job_storage)
+            .await
+            .map_err(|e| {
+                gl_core::Error::Config(format!("Failed to create job scheduler: {}", e))
+            })?,
+    );
+
+    // Register standard job handlers
+    let handlers = create_standard_handlers();
+    for (job_type, handler) in handlers {
+        job_scheduler.register_handler(job_type, handler).await;
+    }
+
+    // Start the job scheduler
+    job_scheduler
+        .start()
+        .await
+        .map_err(|e| gl_core::Error::Config(format!("Failed to start job scheduler: {}", e)))?;
+
+    tracing::info!("Job scheduler initialized and started");
+
     let web_app_state = AppState {
         db: db.clone(),
         cache: std::sync::Arc::new(gl_db::DatabaseCache::new()),
@@ -346,35 +401,59 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
         .with_override("/api/upload", config.server.body_limits.upload_limit),
         capture_manager,
         stream_manager,
+        job_scheduler: job_scheduler.clone(),
         update_service: {
             // Create a basic update configuration
             // In production, these values would come from the main config
+            let public_key = std::env::var("GLIMPSER_UPDATE_PUBLIC_KEY").unwrap_or_else(|_| {
+                // Development/test key - in production this should be from secure config
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string()
+            });
+
+            let install_dir = std::env::var("GLIMPSER_INSTALL_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    // Use a writable directory for development
+                    std::env::temp_dir().join("glimpser-updates")
+                });
+
+            // Ensure install directory exists
+            if let Err(e) = std::fs::create_dir_all(&install_dir) {
+                tracing::warn!(
+                    "Failed to create install directory {}: {}",
+                    install_dir.display(),
+                    e
+                );
+            }
+
             let update_config = UpdateConfig {
                 repository: "owner/glimpser".to_string(), // This should be from config
                 current_version: env!("CARGO_PKG_VERSION").to_string(),
-                public_key: String::new(), // Should be from config
+                public_key,
                 strategy: UpdateStrategyType::Sidecar,
                 check_interval_seconds: 3600,
                 health_check_timeout_seconds: 30,
                 health_check_url: format!("http://127.0.0.1:{}/healthz", config.server.port),
                 binary_name: "glimpser".to_string(),
-                install_dir: std::path::PathBuf::from("/usr/local/bin"),
+                install_dir,
                 auto_apply: false,
                 github_token: None,
             };
 
             match UpdateService::new(update_config) {
-                Ok(service) => std::sync::Arc::new(tokio::sync::Mutex::new(service)),
+                Ok(service) => {
+                    tracing::info!("Update service initialized successfully");
+                    std::sync::Arc::new(tokio::sync::Mutex::new(service))
+                }
                 Err(e) => {
-                    tracing::warn!("Failed to initialize update service: {}", e);
-                    // Create a stub service - in production you might want to handle this differently
-                    let stub_config = UpdateConfig::default();
-                    std::sync::Arc::new(tokio::sync::Mutex::new(
-                        UpdateService::new(stub_config).expect("Default config should work"),
-                    ))
+                    tracing::error!("Failed to initialize update service: {}", e);
+                    tracing::warn!("Update functionality will be disabled");
+                    // For now, we'll still panic to force proper config - in production this could be optional
+                    panic!("Update service initialization failed: {}", e);
                 }
             }
         },
+        ai_client,
     };
 
     // Start observability server

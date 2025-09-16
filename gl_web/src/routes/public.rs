@@ -242,7 +242,7 @@ pub async fn alerts() -> Result<HttpResponse> {
 mod tests {
     use super::*;
     use crate::models::{
-        FileTemplate, FfmpegTemplate, RtspTemplate, TemplateKind, WebsiteTemplate, YtTemplate,
+        FfmpegTemplate, FileTemplate, RtspTemplate, TemplateKind, WebsiteTemplate, YtTemplate,
     };
 
     #[test]
@@ -292,7 +292,10 @@ mod tests {
             extract_source_from_stream_config(&config).as_deref(),
             Some("https://example.com")
         );
-        assert_eq!(extract_resolution_from_config(&config).as_deref(), Some("800x600"));
+        assert_eq!(
+            extract_resolution_from_config(&config).as_deref(),
+            Some("800x600")
+        );
         assert_eq!(get_fps_for_stream_type(&config), 1);
     }
 

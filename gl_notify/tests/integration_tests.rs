@@ -5,8 +5,8 @@ use gl_notify::{
     adapters::pushover::PushoverAdapter, circuit_breaker::CircuitBreakerWrapper,
     retry::RetryWrapper, Notification, NotificationChannel, NotificationKind, NotificationManager,
 };
-use wiremock::MockServer;
 use std::sync::Arc;
+use wiremock::MockServer;
 
 #[tokio::test]
 async fn test_multi_channel_notification() {

@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use gl_notify::{
     Notification, NotificationChannel, NotificationKind, NotificationManager, Notifier, Result,
 };
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::{sleep, Instant};
 
 struct SlowAdapter {

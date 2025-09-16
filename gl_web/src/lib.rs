@@ -2,9 +2,11 @@
 //! ABOUTME: Provides REST endpoints and OpenAPI documentation
 
 use actix_web::HttpServer;
+use gl_ai::AiClient;
 use gl_config::SecurityConfig;
 use gl_core::Result;
 use gl_db::{DatabaseCache, Db};
+use gl_scheduler::JobScheduler;
 use gl_stream::StreamManager;
 use gl_update::UpdateService;
 
@@ -36,6 +38,8 @@ pub struct AppState {
     pub capture_manager: Arc<capture_manager::CaptureManager>,
     pub stream_manager: Arc<StreamManager>,
     pub update_service: Arc<tokio::sync::Mutex<UpdateService>>,
+    pub ai_client: Arc<dyn AiClient>,
+    pub job_scheduler: Arc<JobScheduler>,
 }
 
 // Re-export the create_app function from routing module for backward compatibility

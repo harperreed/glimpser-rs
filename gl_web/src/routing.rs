@@ -3,7 +3,7 @@
 
 use crate::{
     middleware, models,
-    routes::{admin, alerts, auth as auth_routes, public, static_files, stream, streams},
+    routes::{admin, ai, alerts, auth as auth_routes, public, static_files, stream, streams},
     AppState,
 };
 use actix_web::{web, App, HttpRequest, HttpResponse};
@@ -312,6 +312,7 @@ pub fn create_app(
                     }))
                 }))
                 .configure(alerts::configure_alert_routes)
+                .configure(ai::configure_ai_routes)
                 .service(
                     web::scope("/debug").route(
                         "/test",

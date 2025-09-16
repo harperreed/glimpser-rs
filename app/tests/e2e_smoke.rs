@@ -191,6 +191,22 @@ impl E2ETestSetup {
                     .expect("Failed to create test update service");
                 std::sync::Arc::new(tokio::sync::Mutex::new(service))
             },
+            ai_client: {
+                // Create a test AI client
+                let ai_config = gl_ai::AiConfig::default();
+                std::sync::Arc::new(gl_ai::OpenAiClient::new(ai_config))
+            },
+            job_scheduler: {
+                // Create a test job scheduler
+                let scheduler_config = gl_scheduler::SchedulerConfig::default();
+                let job_storage = std::sync::Arc::new(gl_scheduler::SqliteJobStorage::new(
+                    self.db.pool().clone(),
+                ));
+                let scheduler = gl_scheduler::JobScheduler::new(scheduler_config, job_storage)
+                    .await
+                    .expect("Failed to create test job scheduler");
+                std::sync::Arc::new(scheduler)
+            },
         };
 
         // Start servers on random ports for testing
