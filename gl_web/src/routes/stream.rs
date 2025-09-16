@@ -623,7 +623,7 @@ pub async fn mjpeg_stream(
     };
 
     // Get the session from the manager
-    match state.stream_manager.get_session(&stream_id).await {
+    match state.stream_manager.get_session(&stream_id) {
         Some(session) => {
             info!(stream_id = %stream_id, "New client connected to MJPEG stream via StreamManager");
 
@@ -706,7 +706,7 @@ pub async fn start_stream(
     };
 
     // Get or create a stream session from the manager
-    let _session = match state.stream_manager.get_session(&stream_core_id).await {
+    let _session = match state.stream_manager.get_session(&stream_core_id) {
         Some(session) => session,
         None => {
             // Create a new capture source and handle
@@ -744,10 +744,7 @@ pub async fn start_stream(
             tokio::spawn(Arc::clone(&new_session).start());
 
             // Add it to the manager
-            state
-                .stream_manager
-                .add_session(Arc::clone(&new_session))
-                .await;
+            state.stream_manager.add_session(Arc::clone(&new_session));
             new_session
         }
     };
@@ -756,7 +753,7 @@ pub async fn start_stream(
     if !state.capture_manager.is_stream_running(&stream_id).await {
         if let Err(e) = state.capture_manager.start_stream(&stream_id).await {
             // If start fails, remove the session we might have just created
-            state.stream_manager.remove_session(&stream_core_id).await;
+            state.stream_manager.remove_session(&stream_core_id);
             error!(error = %e, stream_id = stream_id, "Failed to start stream in capture manager");
             return Ok(HttpResponse::InternalServerError()
                 .json(ErrorResponse::new("start_error", "Failed to start stream")));
@@ -805,7 +802,7 @@ pub async fn stop_stream(
     match state.capture_manager.stop_stream(&stream_id).await {
         Ok(_) => {
             // Also remove the session from the stream manager
-            state.stream_manager.remove_session(&stream_core_id).await;
+            state.stream_manager.remove_session(&stream_core_id);
 
             info!(stream_id = %stream_id, "Stream stopped successfully");
             Ok(HttpResponse::Ok().json(serde_json::json!({
