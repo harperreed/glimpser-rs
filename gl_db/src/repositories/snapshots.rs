@@ -7,7 +7,7 @@ use sqlx::{FromRow, SqlitePool};
 use tracing::{debug, instrument};
 
 /// Snapshot entity
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Snapshot {
     pub id: String,
     pub stream_id: String,
@@ -23,6 +23,7 @@ pub struct Snapshot {
     pub captured_at: String,
     pub created_at: String,
     pub updated_at: String,
+    pub perceptual_hash: Option<String>,
 }
 
 /// Snapshot metadata (for listings)
@@ -42,6 +43,7 @@ pub struct SnapshotMetadata {
     pub captured_at: String,
     pub created_at: String,
     pub updated_at: String,
+    pub perceptual_hash: Option<String>,
 }
 
 /// Request to create a new snapshot
@@ -58,6 +60,7 @@ pub struct CreateSnapshotRequest {
     pub checksum: Option<String>,
     pub etag: Option<String>,
     pub captured_at: String,
+    pub perceptual_hash: Option<String>,
 }
 
 /// Snapshot repository
@@ -89,9 +92,9 @@ impl<'a> SnapshotRepository<'a> {
             INSERT INTO snapshots (
                 id, stream_id, user_id, file_path, storage_uri, content_type,
                 width, height, file_size, checksum, etag, captured_at,
-                created_at, updated_at
+                created_at, updated_at, perceptual_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             id,
             request.stream_id,
@@ -106,7 +109,8 @@ impl<'a> SnapshotRepository<'a> {
             request.etag,
             request.captured_at,
             now,
-            now
+            now,
+            request.perceptual_hash
         )
         .execute(self.pool)
         .await
@@ -127,6 +131,7 @@ impl<'a> SnapshotRepository<'a> {
             captured_at: request.captured_at,
             created_at: now.clone(),
             updated_at: now,
+            perceptual_hash: request.perceptual_hash,
         })
     }
 
@@ -139,7 +144,7 @@ impl<'a> SnapshotRepository<'a> {
             r#"
             SELECT id, stream_id, user_id, file_path, storage_uri, content_type,
                    width, height, file_size, checksum, etag, captured_at,
-                   created_at, updated_at
+                   created_at, updated_at, perceptual_hash
             FROM snapshots
             WHERE id = ?
             "#,
@@ -164,6 +169,7 @@ impl<'a> SnapshotRepository<'a> {
             captured_at: r.captured_at,
             created_at: r.created_at,
             updated_at: r.updated_at,
+            perceptual_hash: r.perceptual_hash,
         }))
     }
 
@@ -187,7 +193,7 @@ impl<'a> SnapshotRepository<'a> {
             r#"
             SELECT id, stream_id, user_id, file_path, storage_uri, content_type,
                    width, height, file_size, checksum, etag, captured_at,
-                   created_at, updated_at
+                   created_at, updated_at, perceptual_hash
             FROM snapshots
             WHERE stream_id = ?
             ORDER BY captured_at DESC
@@ -217,7 +223,7 @@ impl<'a> SnapshotRepository<'a> {
             r#"
             SELECT id, stream_id, user_id, file_path, storage_uri, content_type,
                    width, height, file_size, checksum, etag, captured_at,
-                   created_at, updated_at
+                   created_at, updated_at, perceptual_hash
             FROM snapshots
             WHERE stream_id = ?
             ORDER BY captured_at DESC

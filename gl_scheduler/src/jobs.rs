@@ -3,11 +3,13 @@
 
 use crate::JobContext;
 use async_trait::async_trait;
+use bytes::Bytes;
 use gl_core::Result;
+use img_hash::{HashAlg, HasherConfig, ImageHash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Job handler trait that all job types must implement
 #[async_trait]
@@ -55,32 +57,258 @@ impl JobHandler for SmartSnapshotJob {
 
         info!("Taking smart snapshot of stream: {}", params.stream_id);
 
-        // TODO: Implement actual snapshot logic:
-        // 1. Take screenshot using capture manager
-        // 2. Calculate perceptual hash (phash)
-        // 3. Compare with last known hash from database
-        // 4. If different:
-        //    - Store new image file
-        //    - Update database with new hash + timestamp + image_path
-        //    - Trigger motion analysis if configured
-        // 5. If same:
-        //    - Just update "last_seen" timestamp in database
-        //    - No file storage needed
+        // Get threshold for hash comparison from database settings
+        use gl_db::repositories::settings::SettingsRepository;
+        let settings_repo = SettingsRepository::new(context.db.pool());
+        let threshold = settings_repo.get_phash_threshold().await.unwrap_or(0.85); // Default to 0.85 if setting is not found
 
-        // For now, return mock success response
+        // 1. Take screenshot using capture service
+        let capture_result = match context.capture_service.capture(&params.stream_id).await {
+            Ok(result) => result,
+            Err(e) => {
+                return Ok(serde_json::json!({
+                    "stream_id": params.stream_id,
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "status": "capture_failed",
+                    "error": format!("Failed to capture snapshot: {}", e),
+                    "hash_changed": false,
+                    "image_stored": false
+                }));
+            }
+        };
+
+        // 2. Load image once and calculate both hash and dimensions efficiently
+        let image_bytes = &capture_result.data;
+        debug!(
+            "Loading image for hash calculation: {} bytes, content_type: {}",
+            image_bytes.len(),
+            capture_result.content_type
+        );
+
+        let loaded_image =
+            match img_hash::image::load_from_memory(image_bytes) {
+                Ok(image) => image,
+                Err(e) => {
+                    warn!(
+                    "Failed to load captured image for stream {}: {} (content_type: {}, {} bytes)",
+                    params.stream_id, e, capture_result.content_type, image_bytes.len()
+                );
+                    return Ok(serde_json::json!({
+                        "stream_id": params.stream_id,
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                        "status": "image_load_failed",
+                        "error": format!("Failed to load image: {}", e),
+                        "hash_changed": false,
+                        "image_stored": false
+                    }));
+                }
+            };
+
+        let current_hash = match calculate_perceptual_hash_from_image(&loaded_image) {
+            Ok(hash) => hash,
+            Err(e) => {
+                warn!(
+                    "Failed to calculate perceptual hash for stream {}: {}",
+                    params.stream_id, e
+                );
+                return Ok(serde_json::json!({
+                    "stream_id": params.stream_id,
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "status": "hash_calculation_failed",
+                    "error": format!("Failed to calculate hash: {}", e),
+                    "hash_changed": false,
+                    "image_stored": false
+                }));
+            }
+        };
+
+        // 3. Query database for the most recent snapshot hash for this stream
+        let previous_hash_query = sqlx::query_scalar::<_, String>(
+            "SELECT perceptual_hash FROM snapshots
+             WHERE stream_id = ? AND perceptual_hash IS NOT NULL
+             ORDER BY captured_at DESC
+             LIMIT 1",
+        )
+        .bind(&params.stream_id)
+        .fetch_optional(context.db.pool())
+        .await
+        .map_err(|e| gl_core::Error::Database(format!("Failed to query previous hash: {}", e)))?;
+
+        let mut hash_changed = true;
+        let mut image_stored = false;
+        let previous_hash_str = previous_hash_query.clone().unwrap_or_default();
+
+        // 4. Compare hashes if we have a previous one
+        if let Some(prev_hash) = &previous_hash_query {
+            match compare_perceptual_hashes(prev_hash, &current_hash, threshold) {
+                Ok(is_similar) => {
+                    hash_changed = !is_similar;
+                    let similarity =
+                        calculate_similarity_score(prev_hash, &current_hash).unwrap_or(0.0);
+                    debug!(
+                        "Hash comparison: previous={}, current={}, similarity={:.3}, threshold={}, changed={}",
+                        prev_hash, current_hash, similarity, threshold, hash_changed
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Hash comparison failed: {}, treating as changed for safety",
+                        e
+                    );
+                    hash_changed = true; // Default to changed on comparison error
+                }
+            }
+        }
+
+        let mut snapshot_id = None;
+
+        // 5. Only store if hash changed significantly or no previous hash exists
+        if hash_changed {
+            // Get user_id from stream
+            let user_id =
+                sqlx::query_scalar::<_, String>("SELECT user_id FROM streams WHERE id = ?")
+                    .bind(&params.stream_id)
+                    .fetch_one(context.db.pool())
+                    .await
+                    .map_err(|e| {
+                        gl_core::Error::Database(format!("Failed to get user_id: {}", e))
+                    })?;
+
+            // Store the file to disk since hash changed
+            // Create directory per stream: ./data/artifacts/{stream_id}/
+            let stream_artifacts_dir =
+                std::path::PathBuf::from("./data/artifacts").join(&params.stream_id);
+            std::fs::create_dir_all(&stream_artifacts_dir).map_err(|e| {
+                gl_core::Error::Storage(format!("Failed to create stream directory: {}", e))
+            })?;
+
+            let gl_storage_config = gl_storage::StorageConfig {
+                base_dir: Some(stream_artifacts_dir.clone()),
+                ..Default::default()
+            };
+            let storage_manager =
+                gl_storage::StorageManager::new(gl_storage_config).map_err(|e| {
+                    gl_core::Error::Config(format!("Failed to create storage manager: {}", e))
+                })?;
+
+            let artifact_config = gl_capture::artifact_storage::ArtifactStorageConfig {
+                base_uri: "file:///".to_string(),
+                snapshot_extension: "jpg".to_string(),
+                include_timestamp: true,
+            };
+            let storage_service = gl_capture::artifact_storage::ArtifactStorageService::new(
+                storage_manager,
+                artifact_config,
+            );
+
+            // Store the snapshot and get real storage paths
+            let snapshot_bytes_for_storage = Bytes::from(capture_result.data.clone());
+            let stored_artifact = storage_service
+                .store_snapshot(&params.stream_id, snapshot_bytes_for_storage)
+                .await
+                .map_err(|e| gl_core::Error::Storage(format!("Failed to store snapshot: {}", e)))?;
+
+            // Extract file path from URI - convert file:// URI to filesystem path
+            let uri_path = stored_artifact.uri.path().unwrap_or_default().to_string();
+            let storage_uri = stored_artifact.uri.to_string();
+
+            // Debug logging to understand what's happening
+            debug!(
+                "Storage artifact created - URI: {}, URI path: {}, Stream dir: {}",
+                storage_uri,
+                uri_path,
+                stream_artifacts_dir.display()
+            );
+
+            // The file should already be stored by the storage service,
+            // so we just need to record the correct path in the database
+            let full_file_path = if let Some(stripped) = uri_path.strip_prefix('/') {
+                stream_artifacts_dir
+                    .join(stripped)
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                stream_artifacts_dir
+                    .join(&uri_path)
+                    .to_string_lossy()
+                    .to_string()
+            };
+
+            // Create snapshot record with perceptual hash included atomically
+            let snapshot_request = gl_db::CreateSnapshotRequest {
+                stream_id: params.stream_id.clone(),
+                user_id,
+                file_path: full_file_path,
+                storage_uri,
+                content_type: capture_result.content_type.clone(),
+                width: Some(capture_result.width as i64),
+                height: Some(capture_result.height as i64),
+                file_size: capture_result.data.len() as i64,
+                checksum: Some(capture_result.checksum),
+                etag: None,
+                captured_at: chrono::Utc::now().to_rfc3339(),
+                perceptual_hash: Some(current_hash.clone()),
+            };
+
+            // Save snapshot to database with hash included - no race condition
+            let snapshot_repo = gl_db::SnapshotRepository::new(context.db.pool());
+            let created_snapshot = snapshot_repo.create(snapshot_request).await?;
+
+            snapshot_id = Some(created_snapshot.id.clone());
+            image_stored = true;
+
+            info!(
+                "Stored new snapshot for stream {} (hash changed): {}",
+                params.stream_id, created_snapshot.id
+            );
+        } else {
+            // Hash hasn't changed significantly, update the most recent snapshot with matching hash
+            let rows_affected = sqlx::query(
+                "UPDATE snapshots
+                 SET updated_at = ?
+                 WHERE id = (
+                     SELECT id FROM snapshots
+                     WHERE stream_id = ? AND perceptual_hash = ?
+                     ORDER BY captured_at DESC
+                     LIMIT 1
+                 )",
+            )
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(&params.stream_id)
+            .bind(&previous_hash_str)
+            .execute(context.db.pool())
+            .await
+            .map_err(|e| gl_core::Error::Database(format!("Failed to update timestamp: {}", e)))?
+            .rows_affected();
+
+            if rows_affected == 0 {
+                warn!(
+                    "No snapshot found to update for stream {} with hash {}. This might indicate a race condition.",
+                    params.stream_id, current_hash
+                );
+            }
+
+            debug!(
+                "Skipped storage for stream {} (hash unchanged): similarity above threshold {}",
+                params.stream_id, threshold
+            );
+        }
+
         let result = serde_json::json!({
             "stream_id": params.stream_id,
+            "snapshot_id": snapshot_id,
             "timestamp": chrono::Utc::now().to_rfc3339(),
-            "status": "captured",
-            "hash_changed": true,  // Would be calculated
-            "image_stored": true,  // Would depend on hash_changed
-            "previous_hash": "mock_hash_123",
-            "current_hash": "mock_hash_456"
+            "status": if hash_changed { "captured" } else { "skipped_duplicate" },
+            "hash_changed": hash_changed,
+            "image_stored": image_stored,
+            "previous_hash": previous_hash_str,
+            "current_hash": current_hash,
+            "similarity_threshold": threshold
         });
 
         debug!(
-            "Smart snapshot job completed for stream: {}",
-            params.stream_id
+            "Smart snapshot job completed for stream: {} (hash_changed={})",
+            params.stream_id, hash_changed
         );
         Ok(result)
     }
@@ -325,4 +553,45 @@ pub fn create_standard_handlers() -> HashMap<String, Arc<dyn JobHandler>> {
     handlers.insert("ai_analysis".to_string(), Arc::new(AiAnalysisJob::new()));
 
     handlers
+}
+
+/// Calculate perceptual hash from pre-loaded image (optimized version)
+/// Returns a hash string that can be compared to detect similar images
+fn calculate_perceptual_hash_from_image(img: &img_hash::image::DynamicImage) -> Result<String> {
+    // Configure hasher for perceptual hash (pHash algorithm)
+    let hasher = HasherConfig::new()
+        .hash_alg(HashAlg::Gradient) // Gradient-based perceptual hash
+        .hash_size(8, 8) // 8x8 hash for good balance of speed/accuracy
+        .to_hasher();
+
+    // Calculate hash directly
+    let hash = hasher.hash_image(img);
+
+    // Convert to base64 string for storage
+    Ok(hash.to_base64())
+}
+
+/// Calculate similarity score between two perceptual hashes (0.0 to 1.0)
+/// 1.0 means identical, 0.0 means completely different
+fn calculate_similarity_score(hash1: &str, hash2: &str) -> Result<f64> {
+    let hash1: ImageHash<[u8; 8]> = ImageHash::from_base64(hash1)
+        .map_err(|e| gl_core::Error::Validation(format!("Invalid hash1: {:?}", e)))?;
+    let hash2: ImageHash<[u8; 8]> = ImageHash::from_base64(hash2)
+        .map_err(|e| gl_core::Error::Validation(format!("Invalid hash2: {:?}", e)))?;
+
+    // Calculate Hamming distance between hashes
+    let distance = hash1.dist(&hash2);
+
+    // Convert distance to similarity (0 = identical, max_distance = completely different)
+    let max_distance = 64f64; // For 8x8 hash
+    let similarity = 1.0 - (distance as f64 / max_distance);
+
+    Ok(similarity)
+}
+
+/// Compare two perceptual hashes and return whether they are similar enough
+/// Returns true if images are similar enough (above threshold)
+fn compare_perceptual_hashes(hash1: &str, hash2: &str, threshold: f64) -> Result<bool> {
+    let similarity = calculate_similarity_score(hash1, hash2)?;
+    Ok(similarity >= threshold)
 }

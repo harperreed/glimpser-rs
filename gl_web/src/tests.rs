@@ -30,7 +30,7 @@ async fn create_test_app_state() -> AppState {
         static_config: crate::routes::static_files::StaticConfig::default(),
         rate_limit_config: middleware::ratelimit::RateLimitConfig::default(),
         body_limits_config: middleware::bodylimits::BodyLimitsConfig::default(),
-        capture_manager,
+        capture_manager: capture_manager.clone(),
         stream_manager,
         update_service: {
             // Create a test update service with dummy configuration
@@ -53,9 +53,14 @@ async fn create_test_app_state() -> AppState {
             // Create a test job scheduler
             let scheduler_config = gl_scheduler::SchedulerConfig::default();
             let job_storage = Arc::new(gl_scheduler::SqliteJobStorage::new(db.pool().clone()));
-            let scheduler = gl_scheduler::JobScheduler::new(scheduler_config, job_storage)
-                .await
-                .expect("Failed to create test job scheduler");
+            let scheduler = gl_scheduler::JobScheduler::new(
+                scheduler_config,
+                job_storage,
+                db.clone(),
+                capture_manager.clone(),
+            )
+            .await
+            .expect("Failed to create test job scheduler");
             Arc::new(scheduler)
         },
     }

@@ -10,6 +10,8 @@ rust-version.workspace = true
 [dependencies]
 gl_core = { path = "../gl_core" }
 gl_db = { path = "../gl_db" }
+gl_storage = { path = "../gl_storage" }
+gl_capture = { path = "../gl_capture" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -20,12 +22,23 @@ uuid.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 sqlx.workspace = true
+bytes.workspace = true
 
 # Job scheduling specific
 cron.workspace = true
 tokio-cron-scheduler.workspace = true
 tokio-util.workspace = true
 hostname.workspace = true
+
+# Image processing for perceptual hashing
+# Match the image crate version used by img_hash to avoid conflicts
+image = { version = "0.23", default-features = false, features = ["jpeg", "png"] }
+img_hash = "3.2"
+
+# Force secure versions to fix RUSTSEC-2023-0080
+# Update rustfft and rustdct to newer versions that use secure transpose
+rustfft = "6.4"
+rustdct = "0.7"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -33,6 +33,7 @@ rand_core.workspace = true
 utoipa.workspace = true
 utoipa-swagger-ui.workspace = true
 futures-util.workspace = true
+async-trait.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 actix-files.workspace = true
 mime_guess.workspace = true
@@ -43,6 +44,8 @@ tokio-stream = { version = "0.1.17", features = ["sync"] }
 async-stream = "0.3"
 bytes.workspace = true
 base64.workspace = true
+md5 = "0.7"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # New dependencies for Axum + HTMX + Askama stack
 axum = "0.7"

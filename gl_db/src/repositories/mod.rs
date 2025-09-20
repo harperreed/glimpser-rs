@@ -8,6 +8,7 @@ pub mod captures;
 pub mod events;
 pub mod jobs;
 pub mod notification_deliveries;
+pub mod settings;
 pub mod snapshots;
 pub mod streams;
 pub mod users;

@@ -170,7 +170,7 @@ impl E2ETestSetup {
             cache: std::sync::Arc::new(gl_db::DatabaseCache::new()),
             security_config: self.config.security.clone(),
             static_config,
-            capture_manager,
+            capture_manager: capture_manager.clone(),
             stream_manager,
             rate_limit_config: gl_web::middleware::ratelimit::RateLimitConfig {
                 requests_per_minute: 100,
@@ -202,9 +202,14 @@ impl E2ETestSetup {
                 let job_storage = std::sync::Arc::new(gl_scheduler::SqliteJobStorage::new(
                     self.db.pool().clone(),
                 ));
-                let scheduler = gl_scheduler::JobScheduler::new(scheduler_config, job_storage)
-                    .await
-                    .expect("Failed to create test job scheduler");
+                let scheduler = gl_scheduler::JobScheduler::new(
+                    scheduler_config,
+                    job_storage,
+                    self.db.clone(),
+                    capture_manager.clone(),
+                )
+                .await
+                .expect("Failed to create test job scheduler");
                 std::sync::Arc::new(scheduler)
             },
         };

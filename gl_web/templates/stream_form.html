@@ -39,7 +39,7 @@
                     <option value="ffmpeg" {% if stream_data.config_kind == "ffmpeg" %}selected{% endif %}>FFmpeg Stream</option>
                     <option value="file" {% if stream_data.config_kind == "file" %}selected{% endif %}>File Source</option>
                     <option value="website" {% if stream_data.config_kind == "website" %}selected{% endif %}>Website Capture</option>
-                    <option value="yt" {% if stream_data.config_kind == "yt" %}selected{% endif %}>YouTube/Video URL</option>
+                    <option value="youtube" {% if stream_data.config_kind == "youtube" %}selected{% endif %}>YouTube/Video URL</option>
                 </select>
             </div>
 
@@ -199,7 +199,7 @@
             </div>
 
             <!-- YouTube/Video URL Config -->
-            <div id="yt-config" class="config-section space-y-4">
+            <div id="youtube-config" class="config-section space-y-4">
                 <div>
                     <label for="youtube_url" class="block text-sm font-medium text-gray-700">YouTube/Video URL *</label>
                     <input type="url" id="youtube_url" name="youtube_url" value="{{ stream_data.youtube_url }}"

@@ -46,14 +46,14 @@ metrics = "0.23"
 uuid = { version = "1.10", features = ["v4"] }
 
 # Database
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
 
 # Ordered hash map for LRU cache access tracking
 linked-hash-map = "0.5"
 
 # Configuration
 config = "0.14"
-validator = { version = "0.18", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
 
 # Authentication & Authorization
 argon2 = { version = "0.5", features = ["std"] }

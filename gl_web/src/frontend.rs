@@ -12,7 +12,7 @@ use axum::{
         header::{LOCATION, SET_COOKIE},
         StatusCode,
     },
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Json, Redirect, Response},
     routing::{get, post},
     Router,
 };
@@ -329,6 +329,11 @@ pub fn create_frontend_router() -> Router<FrontendState> {
             "/api/settings/streams/:id/stop",
             axum::routing::post(admin_stop_stream),
         )
+        // System settings endpoints
+        .route(
+            "/api/settings/config",
+            get(api_get_settings).put(api_update_setting),
+        )
         // Stream API endpoints
         .route("/api/stream/:id/snapshot", get(stream_snapshot))
         .route("/api/stream/:id/thumbnail", get(stream_thumbnail))
@@ -537,79 +542,7 @@ async fn streams_list_handler(State(frontend_state): State<FrontendState>) -> im
 
             // Full page HTML with navigation
             Html(format!(r#"<!DOCTYPE html>
-<html><head><title>Live Streams</title><script src="https://cdn.tailwindcss.com"></script>
-<script>
-async function exportStreams() {{
-    try {{
-        const response = await fetch('/api/admin/streams/export', {{
-            method: 'GET',
-            headers: {{
-                'Accept': 'application/json'
-            }}
-        }});
-
-        if (response.ok) {{
-            const data = await response.json();
-            const blob = new Blob([JSON.stringify(data, null, 2)], {{ type: 'application/json' }});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `streams-export-${{new Date().toISOString().split('T')[0]}}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            alert('Streams exported successfully!');
-        }} else {{
-            alert('Failed to export streams: ' + response.statusText);
-        }}
-    }} catch (error) {{
-        alert('Export error: ' + error.message);
-    }}
-}}
-
-async function importStreams(input) {{
-    const file = input.files[0];
-    if (!file) return;
-
-    try {{
-        const text = await file.text();
-        const data = JSON.parse(text);
-
-        // Validate data structure
-        if (!data.streams || !Array.isArray(data.streams)) {{
-            alert('Invalid file format: missing streams array');
-            return;
-        }}
-
-        const response = await fetch('/api/admin/streams/import', {{
-            method: 'POST',
-            headers: {{
-                'Content-Type': 'application/json'
-            }},
-            body: JSON.stringify({{
-                streams: data.streams,
-                overwrite_mode: 'skip'  // Default to skip existing
-            }})
-        }});
-
-        if (response.ok) {{
-            const result = await response.json();
-            alert(`Import completed! Imported: ${{result.imported}}, Skipped: ${{result.skipped}}`);
-            location.reload(); // Refresh the page to show new streams
-        }} else {{
-            const error = await response.json();
-            alert('Failed to import streams: ' + (error.error || response.statusText));
-        }}
-    }} catch (error) {{
-        alert('Import error: ' + error.message);
-    }} finally {{
-        input.value = ''; // Clear the file input
-    }}
-}}
-</script>
-</head>
+<html><head><title>Live Streams</title><script src="https://cdn.tailwindcss.com"></script></head>
 <body class="min-h-screen bg-slate-50">
     <nav class="bg-white border-b border-gray-300 px-8 py-4 flex justify-between items-center shadow-sm">
         <div class="flex items-center gap-8">
@@ -631,9 +564,6 @@ async function importStreams(input) {{
             <h2 class="text-2xl font-bold text-gray-800">Live Streams</h2>
             <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
                 <button class="px-6 py-3 bg-gray-500 text-white rounded-md font-medium hover:bg-gray-600">Refresh</button>
-                <button onclick="exportStreams()" class="px-6 py-3 bg-blue-500 text-white rounded-md font-medium hover:bg-blue-600">Export</button>
-                <button onclick="document.getElementById('importFile').click()" class="px-6 py-3 bg-green-500 text-white rounded-md font-medium hover:bg-green-600">Import</button>
-                <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importStreams(this)">
                 <select class="px-3 py-3 border border-gray-300 rounded-md text-base">
                     <option value="">All Streams</option>
                     <option value="active">Active Only</option>
@@ -726,6 +656,11 @@ async fn admin_handler(State(frontend_state): State<FrontendState>) -> impl Into
         .await
         .unwrap_or_default();
 
+    // Fetch system settings
+    use gl_db::repositories::settings::SettingsRepository;
+    let settings_repo = SettingsRepository::new(frontend_state.app_state.db.pool());
+    let settings = settings_repo.get_all().await.unwrap_or_default();
+
     // Build streams table HTML
     let streams_html = streams.iter().map(|s| format!(
         r#"<tr>
@@ -756,9 +691,385 @@ async fn admin_handler(State(frontend_state): State<FrontendState>) -> impl Into
         s.id, s.id, s.name
     )).collect::<Vec<_>>().join("");
 
-    // Complete admin page HTML with 100% CRUD functionality
+    // Helper function to generate a clean settings input with HTML escaping
+    let html_escape = |s: &str| -> String {
+        s.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#x27;")
+    };
+
+    let generate_setting_html = |setting: &gl_db::repositories::settings::Setting| -> String {
+        let title = html_escape(setting.description.as_deref().unwrap_or(&setting.key));
+        let description = html_escape(
+            setting
+                .description
+                .as_deref()
+                .unwrap_or("No description available"),
+        );
+        let default_text = html_escape(setting.default_value.as_deref().unwrap_or("none"));
+        let escaped_key = html_escape(&setting.key);
+        let escaped_value = html_escape(&setting.value);
+
+        match setting.data_type.as_str() {
+            "boolean" => {
+                let is_checked = setting.value == "true";
+                format!(
+                    r#"
+                    <div class="flex items-center justify-between py-4 border-b border-gray-200 last:border-b-0">
+                        <div class="flex-1 pr-4">
+                            <label for="{}" class="text-sm font-medium text-gray-900">{}</label>
+                            <p class="text-xs text-gray-500 mt-1">{}</p>
+                            <span class="text-xs text-gray-400">Default: {}</span>
+                        </div>
+                        <div class="flex items-center">
+                            <input
+                                type="checkbox"
+                                id="{}"
+                                {}
+                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                aria-label="{}"
+                                onchange="updateSetting('{}', this.checked ? 'true' : 'false')"
+                            />
+                        </div>
+                    </div>
+                "#,
+                    escaped_key,
+                    title,
+                    description,
+                    default_text,
+                    escaped_key,
+                    if is_checked { "checked" } else { "" },
+                    title,
+                    escaped_key
+                )
+            }
+            "float" => {
+                let min_val = setting
+                    .min_value
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                let max_val = setting
+                    .max_value
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "100".to_string());
+                let max_display = setting
+                    .max_value
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "∞".to_string());
+                format!(
+                    r#"
+                    <div class="flex items-center justify-between py-4 border-b border-gray-200 last:border-b-0">
+                        <div class="flex-1 pr-4">
+                            <label for="{}" class="text-sm font-medium text-gray-900">{}</label>
+                            <p class="text-xs text-gray-500 mt-1">{}</p>
+                            <span class="text-xs text-gray-400">Range: {} - {} | Default: {}</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input
+                                type="number"
+                                id="{}"
+                                value="{}"
+                                min="{}"
+                                max="{}"
+                                step="0.01"
+                                class="w-20 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="{}"
+                                onchange="updateSetting('{}', this.value)"
+                            />
+                        </div>
+                    </div>
+                "#,
+                    escaped_key,
+                    title,
+                    description,
+                    min_val,
+                    max_display,
+                    default_text,
+                    escaped_key,
+                    escaped_value,
+                    min_val,
+                    max_val,
+                    title,
+                    escaped_key
+                )
+            }
+            "integer" => {
+                let min_val = setting
+                    .min_value
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                let max_val = setting
+                    .max_value
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "999999".to_string());
+                let max_display = setting
+                    .max_value
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "∞".to_string());
+                format!(
+                    r#"
+                    <div class="flex items-center justify-between py-4 border-b border-gray-200 last:border-b-0">
+                        <div class="flex-1 pr-4">
+                            <label for="{}" class="text-sm font-medium text-gray-900">{}</label>
+                            <p class="text-xs text-gray-500 mt-1">{}</p>
+                            <span class="text-xs text-gray-400">Range: {} - {} | Default: {}</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input
+                                type="number"
+                                id="{}"
+                                value="{}"
+                                min="{}"
+                                max="{}"
+                                class="w-20 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="{}"
+                                onchange="updateSetting('{}', this.value)"
+                            />
+                        </div>
+                    </div>
+                "#,
+                    escaped_key,
+                    title,
+                    description,
+                    min_val,
+                    max_display,
+                    default_text,
+                    escaped_key,
+                    escaped_value,
+                    min_val,
+                    max_val,
+                    title,
+                    escaped_key
+                )
+            }
+            _ => {
+                format!(
+                    r#"
+                    <div class="flex items-center justify-between py-4 border-b border-gray-200 last:border-b-0">
+                        <div class="flex-1 pr-4">
+                            <label for="{}" class="text-sm font-medium text-gray-900">{}</label>
+                            <p class="text-xs text-gray-500 mt-1">{}</p>
+                            <span class="text-xs text-gray-400">Default: {}</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input
+                                type="text"
+                                id="{}"
+                                value="{}"
+                                class="w-32 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="{}"
+                                onchange="updateSetting('{}', this.value)"
+                            />
+                        </div>
+                    </div>
+                "#,
+                    escaped_key,
+                    title,
+                    description,
+                    default_text,
+                    escaped_key,
+                    escaped_value,
+                    title,
+                    escaped_key
+                )
+            }
+        }
+    };
+
+    // Build properly categorized settings
+    let image_processing_settings = settings
+        .iter()
+        .filter(|s| s.category == "image_processing")
+        .map(generate_setting_html)
+        .collect::<Vec<_>>()
+        .join("");
+
+    let storage_settings = settings
+        .iter()
+        .filter(|s| s.category == "storage")
+        .map(generate_setting_html)
+        .collect::<Vec<_>>()
+        .join("");
+
+    let capture_settings = settings
+        .iter()
+        .filter(|s| s.category == "capture")
+        .map(generate_setting_html)
+        .collect::<Vec<_>>()
+        .join("");
+
+    // Complete admin page HTML with tabbed interface
     Html(format!(r#"<!DOCTYPE html>
-<html><head><title>Admin Panel</title><script src="https://cdn.tailwindcss.com"></script><script src="https://unpkg.com/htmx.org@1.9.10"></script></head>
+<html><head><title>Admin Panel</title><script src="https://cdn.tailwindcss.com"></script><script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<script>
+// Tab functionality with validation
+function showTab(tabName) {{
+    const validTabs = ['image-processing', 'storage', 'capture', 'streams'];
+
+    // Validate tab name
+    if (!validTabs.includes(tabName)) {{
+        console.error('Invalid tab name:', tabName);
+        return;
+    }}
+
+    // Hide all tab contents
+    validTabs.forEach(tab => {{
+        const tabElement = document.getElementById(tab + '-tab');
+        const btnElement = document.getElementById(tab + '-btn');
+        if (tabElement && btnElement) {{
+            tabElement.classList.add('hidden');
+            btnElement.classList.remove('border-blue-500', 'text-blue-600');
+            btnElement.classList.add('border-transparent', 'text-gray-500');
+        }}
+    }});
+
+    // Show selected tab
+    const targetTab = document.getElementById(tabName + '-tab');
+    const targetBtn = document.getElementById(tabName + '-btn');
+    if (targetTab && targetBtn) {{
+        targetTab.classList.remove('hidden');
+        targetBtn.classList.add('border-blue-500', 'text-blue-600');
+        targetBtn.classList.remove('border-transparent', 'text-gray-500');
+    }} else {{
+        console.error('Tab elements not found for:', tabName);
+    }}
+}}
+
+async function exportStreams() {{
+    try {{
+        const response = await fetch('/api/settings/streams/export', {{
+            method: 'GET',
+            headers: {{
+                'Accept': 'application/json'
+            }}
+        }});
+
+        if (response.ok) {{
+            const data = await response.json();
+            const blob = new Blob([JSON.stringify(data, null, 2)], {{ type: 'application/json' }});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `streams-export-${{new Date().toISOString().split('T')[0]}}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            // Show success message
+            showNotification('Streams exported successfully!', 'success');
+        }} else {{
+            showNotification('Failed to export streams: ' + response.statusText, 'error');
+        }}
+    }} catch (error) {{
+        showNotification('Export error: ' + error.message, 'error');
+    }}
+}}
+
+async function importStreams(input) {{
+    const file = input.files[0];
+    if (!file) return;
+
+    try {{
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        // Validate data structure
+        if (!data.streams || !Array.isArray(data.streams)) {{
+            showNotification('Invalid file format: missing streams array', 'error');
+            return;
+        }}
+
+        const response = await fetch('/api/settings/streams/import', {{
+            method: 'POST',
+            headers: {{
+                'Content-Type': 'application/json'
+            }},
+            body: JSON.stringify({{
+                streams: data.streams,
+                overwrite_mode: 'skip'  // Default to skip existing
+            }})
+        }});
+
+        if (response.ok) {{
+            const result = await response.json();
+            showNotification(`Import completed! Imported: ${{result.imported}}, Skipped: ${{result.skipped}}`, 'success');
+            location.reload(); // Refresh the page to show new streams
+        }} else {{
+            const error = await response.json();
+            showNotification('Failed to import streams: ' + (error.error || response.statusText), 'error');
+        }}
+    }} catch (error) {{
+        showNotification('Import error: ' + error.message, 'error');
+    }} finally {{
+        input.value = ''; // Clear the file input
+    }}
+}}
+
+async function updateSetting(key, value) {{
+    try {{
+        const response = await fetch('/api/settings/config', {{
+            method: 'PUT',
+            headers: {{
+                'Content-Type': 'application/json'
+            }},
+            body: JSON.stringify({{
+                key: key,
+                value: value
+            }})
+        }});
+
+        if (response.ok) {{
+            const result = await response.json();
+            showNotification('Setting updated successfully', 'success');
+            console.log('Setting updated:', result.message);
+        }} else {{
+            const error = await response.json();
+            showNotification('Failed to update setting: ' + (error.error || response.statusText), 'error');
+        }}
+    }} catch (error) {{
+        showNotification('Update error: ' + error.message, 'error');
+    }}
+}}
+
+// Notification system with cleanup
+let activeNotifications = [];
+
+function showNotification(message, type) {{
+    // Clean up old notifications if too many
+    if (activeNotifications.length >= 5) {{
+        const oldNotification = activeNotifications.shift();
+        if (oldNotification && oldNotification.parentNode) {{
+            oldNotification.remove();
+        }}
+    }}
+
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${{type === 'success' ? 'bg-green-500' : 'bg-red-500'}} text-white transition-opacity duration-300`;
+    notification.textContent = message;
+    notification.setAttribute('role', 'alert');
+    notification.setAttribute('aria-live', 'polite');
+    document.body.appendChild(notification);
+    activeNotifications.push(notification);
+
+    // Fade out and remove
+    setTimeout(() => {{
+        notification.style.opacity = '0';
+        setTimeout(() => {{
+            if (notification.parentNode) {{
+                notification.remove();
+                const index = activeNotifications.indexOf(notification);
+                if (index > -1) {{
+                    activeNotifications.splice(index, 1);
+                }}
+            }}
+        }}, 300);
+    }}, 3000);
+}}
+</script>
+</head>
 <body class="min-h-screen bg-slate-50">
     <nav class="bg-white border-b border-gray-300 px-8 py-4 flex justify-between items-center shadow-sm">
         <div class="flex items-center gap-8">
@@ -781,14 +1092,84 @@ async fn admin_handler(State(frontend_state): State<FrontendState>) -> impl Into
             <div class="bg-yellow-100 text-yellow-800 px-4 py-2 rounded-md text-sm font-medium">Administrator privileges required</div>
         </div>
 
-        <div class="bg-white shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-lg font-medium text-gray-900">Stream Configuration</h3>
-                    <div class="flex space-x-2">
-                        <button class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">Import</button>
-                        <button class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium">Export</button>
-                        <a href="/settings/streams/new" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Add Stream</a>
+        <!-- Tab Navigation -->
+        <div class="border-b border-gray-200 mb-6">
+            <nav class="-mb-px flex space-x-8" role="tablist" aria-label="Settings categories">
+                <button id="image-processing-btn" onclick="showTab('image-processing')" class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm border-blue-500 text-blue-600" role="tab" aria-selected="true" aria-controls="image-processing-tab">
+                    Image Processing
+                </button>
+                <button id="storage-btn" onclick="showTab('storage')" class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300" role="tab" aria-selected="false" aria-controls="storage-tab">
+                    Storage
+                </button>
+                <button id="capture-btn" onclick="showTab('capture')" class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300" role="tab" aria-selected="false" aria-controls="capture-tab">
+                    Capture
+                </button>
+                <button id="streams-btn" onclick="showTab('streams')" class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300" role="tab" aria-selected="false" aria-controls="streams-tab">
+                    Streams
+                </button>
+            </nav>
+        </div>
+
+        <!-- Tab Contents -->
+
+        <!-- Image Processing Tab -->
+        <div id="image-processing-tab" class="bg-white shadow rounded-lg" role="tabpanel" aria-labelledby="image-processing-btn">
+            <div class="px-6 py-8">
+                <div class="mb-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Image Processing Settings</h3>
+                    <p class="text-sm text-gray-600">Configure perceptual hash similarity detection and image analysis parameters.</p>
+                </div>
+                <div class="space-y-6">
+                    {}
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage Tab -->
+        <div id="storage-tab" class="bg-white shadow rounded-lg hidden" role="tabpanel" aria-labelledby="storage-btn">
+            <div class="px-6 py-8">
+                <div class="mb-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Storage Settings</h3>
+                    <p class="text-sm text-gray-600">Configure data retention policies and automatic cleanup processes.</p>
+                </div>
+                <div class="space-y-6">
+                    {}
+                </div>
+            </div>
+        </div>
+
+        <!-- Capture Tab -->
+        <div id="capture-tab" class="bg-white shadow rounded-lg hidden" role="tabpanel" aria-labelledby="capture-btn">
+            <div class="px-6 py-8">
+                <div class="mb-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Capture Settings</h3>
+                    <p class="text-sm text-gray-600">Configure stream capture intervals and processing options.</p>
+                </div>
+                <div class="space-y-6">
+                    {}
+                </div>
+            </div>
+        </div>
+
+        <!-- Streams Tab -->
+        <div id="streams-tab" class="bg-white shadow rounded-lg hidden" role="tabpanel" aria-labelledby="streams-btn">
+            <div class="px-6 py-8">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 class="text-lg font-medium text-gray-900 mb-2">Stream Configuration</h3>
+                        <p class="text-sm text-gray-600">Manage your surveillance streams and their capture settings.</p>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button onclick="document.getElementById('importFile').click()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+                            📥 Import
+                        </button>
+                        <input type="file" id="importFile" accept=".json" onchange="importStreams(this)" style="display: none;" />
+                        <button onclick="exportStreams()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+                            📤 Export
+                        </button>
+                        <a href="/settings/streams/new" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+                            ➕ Add Stream
+                        </a>
                     </div>
                 </div>
                 <div class="overflow-x-auto">
@@ -807,7 +1188,7 @@ async fn admin_handler(State(frontend_state): State<FrontendState>) -> impl Into
             </div>
         </div>
     </div>
-</body></html>"#, user.username, streams_html)).into_response()
+</body></html>"#, user.username, image_processing_settings, storage_settings, capture_settings, streams_html)).into_response()
 }
 
 /// HTMX fragment for streams list
@@ -1846,6 +2227,86 @@ async fn stream_stop(
 }
 
 /// Take a direct snapshot from a stream (based on Actix-web implementation)
+/// API: Get all settings
+async fn api_get_settings(State(frontend_state): State<FrontendState>) -> impl IntoResponse {
+    use gl_db::repositories::settings::SettingsRepository;
+
+    let settings_repo = SettingsRepository::new(frontend_state.app_state.db.pool());
+
+    match settings_repo.get_all().await {
+        Ok(settings) => Json(settings).into_response(),
+        Err(e) => {
+            warn!("Failed to fetch settings: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to fetch settings"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// API: Update a setting
+async fn api_update_setting(
+    State(frontend_state): State<FrontendState>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    use gl_db::repositories::settings::{SettingsRepository, UpdateSettingRequest};
+
+    // Extract key and value from payload
+    let key = match payload.get("key").and_then(|v| v.as_str()) {
+        Some(k) => k,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Missing 'key' field"
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    let value = match payload.get("value").and_then(|v| v.as_str()) {
+        Some(v) => v.to_string(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Missing 'value' field"
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    let settings_repo = SettingsRepository::new(frontend_state.app_state.db.pool());
+    let request = UpdateSettingRequest {
+        key: key.to_string(),
+        value,
+    };
+
+    match settings_repo.update(request).await {
+        Ok(_) => Json(serde_json::json!({
+            "success": true,
+            "message": "Setting updated successfully"
+        }))
+        .into_response(),
+        Err(e) => {
+            warn!("Failed to update setting {}: {}", key, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to update setting: {}", e)
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
 async fn take_snapshot_direct(
     frontend_state: &FrontendState,
     stream_id: &str,

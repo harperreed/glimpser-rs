@@ -154,6 +154,7 @@ pub use repositories::{
         CreateNotificationDelivery, DeliveryStatus, NotificationDelivery,
         NotificationDeliveryRepository, UpdateDeliveryStatus,
     },
+    settings::{Setting, SettingsRepository, UpdateSettingRequest},
     snapshots::{CreateSnapshotRequest, Snapshot, SnapshotMetadata, SnapshotRepository},
     streams::{CreateStreamRequest, Stream, StreamRepository, UpdateStreamRequest},
     users::{CreateUserRequest, UpdateUserRequest, User, UserRepository},

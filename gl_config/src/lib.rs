@@ -53,7 +53,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 8080,
+            port: 8185,
             obs_port: 9000,
             static_dir: "./static".to_string(),
             enable_csp: true,
@@ -337,7 +337,7 @@ impl Config {
         // Set defaults first
         builder = builder
             .set_default("server.host", "127.0.0.1")?
-            .set_default("server.port", 8080)?
+            .set_default("server.port", 8185)?
             .set_default("server.obs_port", 9000)?
             .set_default("server.static_dir", "./static")?
             .set_default("server.enable_csp", true)?
@@ -471,7 +471,7 @@ mod tests {
         let config = Config::load().expect("Should load with defaults");
 
         assert_eq!(config.server.host, "127.0.0.1");
-        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.port, 8185);
         assert_eq!(config.database.path, "glimpser.db");
         assert_eq!(config.database.pool_size, 10);
         assert!(config.database.sqlite_wal);

@@ -1,11 +1,26 @@
 #!/usr/bin/expect -f
-spawn ./target/release/glimpser bootstrap
+
+# Set timeout for longer operations
+set timeout 60
+
+# Use debug build and proper environment
+spawn env DATABASE_URL=sqlite://./data/test.db ./target/debug/glimpser bootstrap
+
+# Wait for email prompt
 expect "Enter admin email address:"
 send "admin@test.com\r"
+
+# Wait for username prompt
 expect "Enter username (default: admin):"
 send "admin\r"
+
+# Wait for password prompt
 expect "Enter admin password:"
 send "password123\r"
+
+# Wait for password confirmation
 expect "Confirm admin password:"
 send "password123\r"
+
+# Wait for completion
 expect eof

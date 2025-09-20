@@ -1,17 +1,26 @@
 #!/usr/bin/expect -f
 
-spawn env GLIMPSER_SECURITY_JWT_SECRET=valid32characterjwtsecretfortest cargo run --bin glimpser bootstrap
+# Set timeout for longer build times
+set timeout 120
 
-expect "Enter admin email address: "
+# Spawn with correct environment variables
+spawn env DATABASE_URL=sqlite://./data/test.db GLIMPSER_SECURITY_JWT_SECRET=valid32characterjwtsecretfortest cargo run --bin glimpser bootstrap
+
+# Wait for email prompt - match exact text from output
+expect "Enter admin email address:"
 send "admin@test.com\r"
 
-expect "Enter username (default: admin): "
+# Wait for username prompt
+expect "Enter username (default: admin):"
 send "admin\r"
 
-expect "Enter admin password: "
+# Wait for password prompt
+expect "Enter admin password:"
 send "testpass123\r"
 
-expect "Confirm admin password: "
+# Wait for password confirmation
+expect "Confirm admin password:"
 send "testpass123\r"
 
+# Wait for completion
 expect eof

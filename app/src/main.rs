@@ -62,6 +62,18 @@ async fn main() {
         process::exit(1);
     }
 
+    // Ensure required directories exist
+    let artifacts_dir = &config.storage.artifacts_dir;
+    if let Err(e) = std::fs::create_dir_all(artifacts_dir) {
+        tracing::error!(
+            "Failed to create artifacts directory '{}': {}",
+            artifacts_dir,
+            e
+        );
+        process::exit(1);
+    }
+    tracing::info!("Storage directory ready: {}", artifacts_dir);
+
     match cli.command.unwrap_or(Commands::Start) {
         Commands::Bootstrap => {
             interactive_bootstrap(&db).await;
@@ -289,7 +301,7 @@ async fn create_example_templates(db: &Db, user_id: &str) {
 
     println!();
     println!("🎉 Bootstrap complete! You can now:");
-    println!("   • Access the web interface at http://127.0.0.1:8080/static/");
+    println!("   • Access the web interface at http://127.0.0.1:8185/static/");
     println!("   • Use the example streams for testing");
     println!("   • Take snapshots via API: /api/stream/<stream_id>/snapshot");
 }
@@ -319,13 +331,11 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
     };
 
     // Initialize capture manager with analysis and storage configuration
-    let capture_manager = std::sync::Arc::new(
-        gl_web::capture_manager::CaptureManager::with_analysis_config(
-            db.pool().clone(),
-            config.storage.clone(),
-            &config,
-        )?,
-    );
+    let capture_manager = gl_web::capture_manager::CaptureManager::with_analysis_config(
+        db.pool().clone(),
+        config.storage.clone(),
+        &config,
+    )?;
 
     // Initialize stream manager for MJPEG streaming
     let stream_metrics = StreamMetrics::new();
@@ -361,13 +371,19 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
         enable_metrics: true,
     };
 
+    // Need to create Arc for capture_manager temporarily for JobScheduler::new
+    let capture_manager_arc = Arc::new(capture_manager);
+
     let job_storage = Arc::new(SqliteJobStorage::new(db.pool().clone()));
     let job_scheduler = Arc::new(
-        JobScheduler::new(scheduler_config, job_storage)
-            .await
-            .map_err(|e| {
-                gl_core::Error::Config(format!("Failed to create job scheduler: {}", e))
-            })?,
+        JobScheduler::new(
+            scheduler_config,
+            job_storage,
+            db.clone(),
+            capture_manager_arc.clone(),
+        )
+        .await
+        .map_err(|e| gl_core::Error::Config(format!("Failed to create job scheduler: {}", e)))?,
     );
 
     // Register standard job handlers
@@ -384,6 +400,11 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
 
     tracing::info!("Job scheduler initialized and started");
 
+    // Connect job scheduler to capture manager for smart snapshots
+    capture_manager_arc
+        .set_job_scheduler(job_scheduler.clone())
+        .await;
+
     let web_app_state = AppState {
         db: db.clone(),
         cache: std::sync::Arc::new(gl_db::DatabaseCache::new()),
@@ -399,7 +420,7 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
             config.server.body_limits.global_json_limit,
         )
         .with_override("/api/upload", config.server.body_limits.upload_limit),
-        capture_manager,
+        capture_manager: capture_manager_arc,
         stream_manager,
         job_scheduler: job_scheduler.clone(),
         update_service: {

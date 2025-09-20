@@ -1,14 +1,35 @@
 //! ABOUTME: Job scheduling system for automated tasks and background processing
 //! ABOUTME: Provides cron-like scheduling, task queues, and asynchronous job execution
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use gl_core::{Id, Result};
+use gl_db::Db;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_cron_scheduler::JobScheduler as TokioCronScheduler;
 use tracing::{debug, info, warn};
+
+/// Result of a capture operation
+#[derive(Debug, Clone)]
+pub struct CaptureResult {
+    pub data: Vec<u8>,
+    pub storage_path: String,
+    pub storage_uri: String,
+    pub content_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub checksum: String,
+}
+
+/// Trait for capture operations that jobs can use
+#[async_trait]
+pub trait CaptureService: Send + Sync {
+    /// Capture a frame from the specified stream
+    async fn capture(&self, stream_id: &str) -> Result<CaptureResult>;
+}
 
 pub mod jobs;
 pub mod storage;
@@ -136,7 +157,7 @@ impl JobResult {
 }
 
 /// Job execution context passed to job handlers
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct JobContext {
     /// Unique job execution ID
     pub execution_id: String,
@@ -148,16 +169,27 @@ pub struct JobContext {
     pub metadata: HashMap<String, String>,
     /// Cancellation channel receiver
     pub cancellation_token: tokio_util::sync::CancellationToken,
+    /// Database connection
+    pub db: Db,
+    /// Capture service for taking snapshots
+    pub capture_service: Arc<dyn CaptureService>,
 }
 
 impl JobContext {
-    pub fn new(job_id: String, parameters: serde_json::Value) -> Self {
+    pub fn new(
+        job_id: String,
+        parameters: serde_json::Value,
+        db: Db,
+        capture_service: Arc<dyn CaptureService>,
+    ) -> Self {
         Self {
             execution_id: Id::new().to_string(),
             job_id,
             parameters,
             metadata: HashMap::new(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
+            db,
+            capture_service,
         }
     }
 
@@ -175,11 +207,18 @@ pub struct JobScheduler {
     running_jobs: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
     job_handlers: Arc<RwLock<HashMap<String, Arc<dyn JobHandler>>>>,
     metrics: JobMetrics,
+    db: Db,
+    capture_service: Arc<dyn CaptureService>,
 }
 
 impl JobScheduler {
     /// Create a new job scheduler
-    pub async fn new(config: SchedulerConfig, storage: Arc<dyn JobStorage>) -> Result<Self> {
+    pub async fn new(
+        config: SchedulerConfig,
+        storage: Arc<dyn JobStorage>,
+        db: Db,
+        capture_service: Arc<dyn CaptureService>,
+    ) -> Result<Self> {
         let cron_scheduler = TokioCronScheduler::new().await.map_err(|e| {
             gl_core::Error::Config(format!("Failed to create cron scheduler: {}", e))
         })?;
@@ -193,6 +232,8 @@ impl JobScheduler {
             running_jobs: Arc::new(RwLock::new(HashMap::new())),
             job_handlers: Arc::new(RwLock::new(HashMap::new())),
             metrics: JobMetrics::new(),
+            db,
+            capture_service,
         })
     }
 
@@ -297,7 +338,12 @@ impl JobScheduler {
         })?;
 
         // Create job context
-        let context = JobContext::new(job_id.clone(), job_def.parameters.clone());
+        let context = JobContext::new(
+            job_id.clone(),
+            job_def.parameters.clone(),
+            self.db.clone(),
+            self.capture_service.clone(),
+        );
 
         // Execute in background task
         let job_storage = self.job_storage.clone();

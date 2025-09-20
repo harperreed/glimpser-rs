@@ -1,6 +1,7 @@
 //! ABOUTME: Central service for managing capture processes and their lifecycle
 //! ABOUTME: Coordinates stream execution, status tracking, and resource management
 
+use async_trait::async_trait;
 use bytes::Bytes;
 use gl_analysis::{AnalysisConfig, AnalysisService, ProcessorContext, ProcessorInput};
 use gl_capture::{
@@ -14,6 +15,7 @@ use gl_config::Config as AppConfig;
 use gl_core::{time::now_iso8601, Error, Result};
 use gl_db::{CreateSnapshotRequest, SnapshotRepository, Stream, StreamRepository};
 use gl_notify::NotificationManager;
+use gl_scheduler::{CaptureResult, CaptureService};
 use gl_storage::StorageManager;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -88,6 +90,7 @@ pub struct CaptureManager {
     running_captures: Arc<RwLock<HashMap<String, CaptureTask>>>,
     analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
     storage_config: gl_config::StorageConfig,
+    job_scheduler: Arc<RwLock<Option<Arc<gl_scheduler::JobScheduler>>>>,
 }
 
 impl CaptureManager {
@@ -98,6 +101,7 @@ impl CaptureManager {
             running_captures: Arc::new(RwLock::new(HashMap::new())),
             analysis_service: None,
             storage_config: gl_config::StorageConfig::default(),
+            job_scheduler: Arc::new(RwLock::new(None)),
         };
 
         // Reset any stale "active" statuses from previous server runs
@@ -123,6 +127,7 @@ impl CaptureManager {
             running_captures: Arc::new(RwLock::new(HashMap::new())),
             analysis_service: None,
             storage_config,
+            job_scheduler: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -137,6 +142,7 @@ impl CaptureManager {
             running_captures: Arc::new(RwLock::new(HashMap::new())),
             analysis_service: None,
             storage_config,
+            job_scheduler: Arc::new(RwLock::new(None)),
         };
 
         // Initialize analysis service if AI is enabled
@@ -186,6 +192,65 @@ impl CaptureManager {
         });
 
         Ok(manager)
+    }
+
+    /// Set the job scheduler for smart snapshot functionality
+    /// This must be called after both CaptureManager and JobScheduler are created
+    pub async fn set_job_scheduler(&self, job_scheduler: Arc<gl_scheduler::JobScheduler>) {
+        let mut scheduler_lock = self.job_scheduler.write().await;
+        *scheduler_lock = Some(job_scheduler);
+        info!("Job scheduler set for smart snapshot functionality");
+    }
+
+    /// Execute smart snapshot job for a stream
+    async fn execute_smart_snapshot_job(
+        job_scheduler: Arc<gl_scheduler::JobScheduler>,
+        stream_id: &str,
+    ) -> Result<()> {
+        use gl_scheduler::JobDefinition;
+
+        // Create job parameters for smart snapshot
+        let params = serde_json::json!({
+            "stream_id": stream_id,
+            "hash_threshold": 0.85  // Default similarity threshold (85% = more sensitive to changes)
+        });
+
+        // Create job definition
+        let job_def = JobDefinition {
+            id: format!(
+                "smart_snapshot_{}_{}",
+                stream_id,
+                chrono::Utc::now().timestamp_millis()
+            ),
+            name: format!("smart_snapshot_{}", stream_id),
+            description: Some(
+                "Smart snapshot job with perceptual hash duplicate detection".to_string(),
+            ),
+            job_type: "smart_snapshot".to_string(),
+            schedule: "@once".to_string(), // One-time execution
+            parameters: params,
+            enabled: true,
+            max_retries: 0,
+            timeout_seconds: Some(60),
+            priority: 50,
+            tags: vec!["snapshot".to_string(), stream_id.to_string()],
+            created_by: "system".to_string(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+
+        // Execute job immediately
+        match job_scheduler.execute_now(job_def).await {
+            Ok(execution_id) => {
+                debug!("Smart snapshot job executed: {}", execution_id);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Failed to execute smart snapshot job: {}", e);
+                Err(e)
+            }
+        }
     }
 
     /// Start a capture from a stream
@@ -244,9 +309,18 @@ impl CaptureManager {
         let (capture_handle_sender, capture_handle_receiver) = oneshot::channel();
 
         let storage_config_clone = self.storage_config.clone();
+        let job_scheduler_clone = self.job_scheduler.clone();
+        let db_pool_clone = self.db_pool.clone();
         let handle = tokio::spawn(async move {
             // Create fresh storage service instance for the async task
             let artifacts_dir = PathBuf::from(&storage_config_clone.artifacts_dir);
+
+            // Ensure the artifacts directory exists
+            if let Err(e) = std::fs::create_dir_all(&artifacts_dir) {
+                error!("Failed to create artifacts directory: {}", e);
+                return;
+            }
+
             let gl_storage_config = gl_storage::StorageConfig {
                 base_dir: Some(artifacts_dir),
                 ..Default::default()
@@ -254,14 +328,20 @@ impl CaptureManager {
             let storage_manager = StorageManager::new(gl_storage_config)
                 .expect("Failed to create storage manager for async task");
             let artifact_config = ArtifactStorageConfig {
-                base_uri: format!("file://{}", storage_config_clone.artifacts_dir),
+                base_uri: "file:///".to_string(),
                 snapshot_extension: "jpg".to_string(),
                 include_timestamp: true,
             };
             let storage_service = ArtifactStorageService::new(storage_manager, artifact_config);
 
+            // Extract job scheduler from the RwLock
+            let job_scheduler_option = {
+                let scheduler_lock = job_scheduler_clone.read().await;
+                scheduler_lock.clone()
+            };
+
             let result = Self::run_persistent_capture_task(
-                db_pool.clone(),
+                db_pool_clone,
                 storage_service,
                 stream_clone,
                 stream_id_clone.clone(),
@@ -269,6 +349,7 @@ impl CaptureManager {
                 latest_snapshot_clone,
                 analysis_service_clone,
                 Some(capture_handle_sender),
+                job_scheduler_option,
             )
             .await;
 
@@ -506,6 +587,7 @@ impl CaptureManager {
         latest_snapshot: Arc<RwLock<Option<Bytes>>>,
         analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
         capture_handle_sender: Option<oneshot::Sender<Arc<CaptureHandle>>>,
+        job_scheduler: Option<Arc<gl_scheduler::JobScheduler>>,
     ) -> Result<()> {
         info!(stream_id = %stream_id, "Running persistent capture task with broadcast");
 
@@ -584,19 +666,55 @@ impl CaptureManager {
                             // Broadcast to MJPEG streams (ignore errors if no subscribers)
                             let _ = frame_sender.send(snapshot_data.clone());
 
-                            // Store to database and filesystem (directly, not spawned for simplicity)
-                            if let Err(e) = Self::store_snapshot_async(
-                                &storage_service,
-                                &db_pool,
-                                &stream_id,
-                                &stream.user_id,
-                                &snapshot_data,
-                            ).await {
-                                warn!(
-                                    stream_id = %stream_id,
-                                    error = %e,
-                                    "Failed to store snapshot"
-                                );
+                            // Store to database and filesystem using smart snapshot job (if available)
+                            if let Some(ref scheduler) = job_scheduler {
+                                match Self::execute_smart_snapshot_job(
+                                    scheduler.clone(),
+                                    &stream_id,
+                                ).await {
+                                    Ok(_) => {
+                                        debug!(
+                                            stream_id = %stream_id,
+                                            "Smart snapshot job executed successfully"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            stream_id = %stream_id,
+                                            error = %e,
+                                            "Smart snapshot job failed, falling back to direct storage"
+                                        );
+                                        // Fallback to direct storage on job failure
+                                        if let Err(e) = Self::store_snapshot_async(
+                                            &storage_service,
+                                            &db_pool,
+                                            &stream_id,
+                                            &stream.user_id,
+                                            &snapshot_data,
+                                        ).await {
+                                            warn!(
+                                                stream_id = %stream_id,
+                                                error = %e,
+                                                "Failed to store snapshot (fallback)"
+                                            );
+                                        }
+                                    }
+                                }
+                            } else {
+                                // No job scheduler available, use direct storage
+                                if let Err(e) = Self::store_snapshot_async(
+                                    &storage_service,
+                                    &db_pool,
+                                    &stream_id,
+                                    &stream.user_id,
+                                    &snapshot_data,
+                                ).await {
+                                    warn!(
+                                        stream_id = %stream_id,
+                                        error = %e,
+                                        "Failed to store snapshot"
+                                    );
+                                }
                             }
 
                             // Process through analysis service if available
@@ -1649,6 +1767,7 @@ impl CaptureManager {
             checksum: stored_artifact.checksum,
             etag: stored_artifact.etag,
             captured_at: now_iso8601(),
+            perceptual_hash: None, // Regular snapshots don't calculate perceptual hash
         };
 
         match snapshot_repo.create(request).await {
@@ -1704,7 +1823,7 @@ impl CaptureManager {
         let storage_manager =
             StorageManager::new(gl_storage_config).expect("Failed to create storage manager");
         let artifact_config = ArtifactStorageConfig {
-            base_uri: format!("file://{}", self.storage_config.artifacts_dir),
+            base_uri: "file:///".to_string(),
             snapshot_extension: "jpg".to_string(),
             include_timestamp: true,
         };
@@ -1734,6 +1853,7 @@ impl CaptureManager {
             checksum: stored_artifact.checksum,
             etag: stored_artifact.etag,
             captured_at: now_iso8601(),
+            perceptual_hash: None, // Regular snapshots don't calculate perceptual hash
         };
 
         match snapshot_repo.create(request).await {
@@ -1782,5 +1902,35 @@ impl Drop for CaptureManager {
                 warn!("Failed to acquire write lock during CaptureManager drop - tasks will be cleaned up by runtime shutdown");
             }
         }
+    }
+}
+
+/// Implementation of CaptureService trait for job scheduler integration
+#[async_trait]
+impl CaptureService for CaptureManager {
+    async fn capture(&self, stream_id: &str) -> gl_core::Result<CaptureResult> {
+        // Use the existing get_latest_snapshot method which handles all the complexity
+        let snapshot_bytes = self.get_latest_snapshot(stream_id).await?;
+
+        // Return in-memory data without storing to disk yet
+        // The SmartSnapshotJob will handle storage decisions based on hash comparison
+        let content_type = "image/jpeg".to_string();
+        let checksum = format!("{:x}", md5::compute(&snapshot_bytes));
+
+        // Try to determine image dimensions using image metadata (load once)
+        let (width, height) = match image::load_from_memory(&snapshot_bytes) {
+            Ok(img) => (img.width(), img.height()),
+            Err(_) => (1920, 1080), // Default fallback dimensions
+        };
+
+        Ok(CaptureResult {
+            data: snapshot_bytes.to_vec(),
+            storage_path: String::new(), // Will be filled by SmartSnapshotJob if needed
+            storage_uri: String::new(),  // Will be filled by SmartSnapshotJob if needed
+            content_type,
+            width,
+            height,
+            checksum,
+        })
     }
 }
