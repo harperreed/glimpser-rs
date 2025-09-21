@@ -145,22 +145,27 @@ impl InfoBuilder {
 
     /// Add a category
     pub fn add_category(mut self, category: Category) -> Self {
-        if !self.info.category.contains(&category) {
-            self.info.category.push(category);
+        let wrapper = crate::CategoryWrapper::from(category);
+        if !self.info.category.contains(&wrapper) {
+            self.info.category.push(wrapper);
         }
         self
     }
 
     /// Set categories (replaces existing)
     pub fn categories(mut self, categories: Vec<Category>) -> Self {
-        self.info.category = categories;
+        self.info.category = categories
+            .into_iter()
+            .map(crate::CategoryWrapper::from)
+            .collect();
         self
     }
 
     /// Add a response type
     pub fn add_response_type(mut self, response_type: ResponseType) -> Self {
-        if !self.info.response_type.contains(&response_type) {
-            self.info.response_type.push(response_type);
+        let wrapper = crate::ResponseTypeWrapper::from(response_type);
+        if !self.info.response_type.contains(&wrapper) {
+            self.info.response_type.push(wrapper);
         }
         self
     }
@@ -425,12 +430,9 @@ mod tests {
         assert!(xml.contains("Test Event"));
         assert!(xml.contains("Emergency Test"));
 
-        // TODO: Fix XML deserialization issue with Vec<Category>
-        // The serialization works, but deserialization has issues with how
-        // quick-xml handles repeated XML elements for Vec fields
-        // For now, we verify serialization works
-        // let parsed_alert = Alert::from_xml(&xml).expect("Should parse XML");
-        // assert_eq!(parsed_alert.sender, "test.example.org");
-        // assert_eq!(parsed_alert.info[0].event, "Test Event");
+        // Test deserialization roundtrip works
+        let parsed_alert = Alert::from_xml(&xml).expect("Should parse XML");
+        assert_eq!(parsed_alert.sender, "test.example.org");
+        assert_eq!(parsed_alert.info[0].event, "Test Event");
     }
 }

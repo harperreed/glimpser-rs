@@ -159,46 +159,96 @@ pub struct Alert {
     pub scope: Scope,
 
     /// Optional source of alert
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
 
     /// Optional restriction for restricted scope
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub restriction: Option<String>,
 
     /// Optional addresses for private scope
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub addresses: Option<String>,
 
     /// Optional alert handling codes
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<Vec<String>>,
 
     /// Optional note
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 
     /// Optional references to other alerts
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub references: Option<String>,
 
     /// Optional incidents this alert relates to
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub incidents: Option<String>,
 
     /// Alert information blocks
     pub info: Vec<Info>,
 }
 
+/// Wrapper for Category to handle XML serialization
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CategoryWrapper {
+    #[serde(rename = "$text")]
+    pub category: Category,
+}
+
+impl From<Category> for CategoryWrapper {
+    fn from(category: Category) -> Self {
+        Self { category }
+    }
+}
+
+impl From<CategoryWrapper> for Category {
+    fn from(wrapper: CategoryWrapper) -> Self {
+        wrapper.category
+    }
+}
+
+/// Wrapper for ResponseType to handle XML serialization
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResponseTypeWrapper {
+    #[serde(rename = "$text")]
+    pub response_type: ResponseType,
+}
+
+impl From<ResponseType> for ResponseTypeWrapper {
+    fn from(response_type: ResponseType) -> Self {
+        Self { response_type }
+    }
+}
+
+impl From<ResponseTypeWrapper> for ResponseType {
+    fn from(wrapper: ResponseTypeWrapper) -> Self {
+        wrapper.response_type
+    }
+}
+
 /// CAP Info block containing alert details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Info {
     /// Language code
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
     /// Alert categories
     #[serde(rename = "category")]
-    pub category: Vec<Category>,
+    pub category: Vec<CategoryWrapper>,
 
     /// Event type
     pub event: String,
 
     /// Response types
-    #[serde(rename = "responseType", skip_serializing_if = "Vec::is_empty")]
-    pub response_type: Vec<ResponseType>,
+    #[serde(
+        rename = "responseType",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
+    pub response_type: Vec<ResponseTypeWrapper>,
 
     /// Alert urgency
     pub urgency: Urgency,
@@ -210,50 +260,59 @@ pub struct Info {
     pub certainty: Certainty,
 
     /// Audience description
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<String>,
 
     /// Event codes
-    #[serde(rename = "eventCode", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "eventCode", skip_serializing_if = "Vec::is_empty", default)]
     pub event_code: Vec<EventCode>,
 
     /// Effective time
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub effective: Option<DateTime<Utc>>,
 
     /// Onset time
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub onset: Option<DateTime<Utc>>,
 
     /// Expires time
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires: Option<DateTime<Utc>>,
 
     /// Sender name
-    #[serde(rename = "senderName")]
+    #[serde(rename = "senderName", skip_serializing_if = "Option::is_none")]
     pub sender_name: Option<String>,
 
     /// Headline
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub headline: Option<String>,
 
     /// Description
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
     /// Instructions
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
 
     /// Web resource
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub web: Option<Url>,
 
     /// Contact information
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contact: Option<String>,
 
     /// Parameters
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub parameter: Vec<Parameter>,
 
     /// Resources
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub resource: Vec<Resource>,
 
     /// Areas
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub area: Vec<Area>,
 }
 
@@ -285,16 +344,19 @@ pub struct Resource {
     pub mime_type: String,
 
     /// File size in bytes
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
 
     /// Resource URI
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub uri: Option<Url>,
 
     /// Dereferenced URI
-    #[serde(rename = "derefUri")]
+    #[serde(rename = "derefUri", skip_serializing_if = "Option::is_none")]
     pub deref_uri: Option<String>,
 
     /// Digest (hash)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
 }
 
@@ -306,21 +368,23 @@ pub struct Area {
     pub area_desc: String,
 
     /// Polygon coordinates
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub polygon: Vec<String>,
 
     /// Circle coordinates
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub circle: Vec<String>,
 
     /// Geocodes
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub geocode: Vec<Geocode>,
 
     /// Altitude
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub altitude: Option<f64>,
 
     /// Ceiling
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ceiling: Option<f64>,
 }
 
@@ -378,7 +442,7 @@ impl Info {
     pub fn new(event: String, urgency: Urgency, severity: Severity, certainty: Certainty) -> Self {
         Self {
             language: Some("en-US".to_string()),
-            category: vec![Category::Other],
+            category: vec![CategoryWrapper::from(Category::Other)],
             event,
             response_type: Vec::new(),
             urgency,
@@ -403,8 +467,9 @@ impl Info {
 
     /// Add a category to the info
     pub fn add_category(mut self, category: Category) -> Self {
-        if !self.category.contains(&category) {
-            self.category.push(category);
+        let wrapper = CategoryWrapper::from(category);
+        if !self.category.iter().any(|c| c.category == wrapper.category) {
+            self.category.push(wrapper);
         }
         self
     }

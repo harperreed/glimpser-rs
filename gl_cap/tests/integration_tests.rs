@@ -9,7 +9,6 @@ use gl_cap::{
 
 /// Test parsing and validating the test alert golden file
 #[test]
-#[ignore = "XML deserialization issue with Vec<Category> - see TODO in builder.rs"]
 fn test_parse_test_alert_golden_file() {
     let xml = include_str!("fixtures/test_alert.xml");
 
@@ -40,7 +39,6 @@ fn test_parse_test_alert_golden_file() {
 
 /// Test parsing the severe weather alert golden file
 #[test]
-#[ignore = "XML deserialization issue with Vec<Category> - see TODO in builder.rs"]
 fn test_parse_severe_weather_golden_file() {
     let xml = include_str!("fixtures/severe_weather.xml");
 
@@ -56,9 +54,15 @@ fn test_parse_severe_weather_golden_file() {
     assert_eq!(info.urgency, Urgency::Expected);
     assert_eq!(info.severity, Severity::Severe);
     assert_eq!(info.certainty, Certainty::Likely);
-    assert!(info.category.contains(&Category::Met));
-    assert!(info.response_type.contains(&ResponseType::Prepare));
-    assert!(info.response_type.contains(&ResponseType::Monitor));
+    assert!(info.category.iter().any(|c| c.category == Category::Met));
+    assert!(info
+        .response_type
+        .iter()
+        .any(|r| r.response_type == ResponseType::Prepare));
+    assert!(info
+        .response_type
+        .iter()
+        .any(|r| r.response_type == ResponseType::Monitor));
 
     // Verify area information
     assert_eq!(info.area.len(), 1);
@@ -76,7 +80,6 @@ fn test_parse_severe_weather_golden_file() {
 
 /// Test XML serialization round-trip (parse -> serialize -> parse)
 #[test]
-#[ignore = "XML deserialization issue with Vec<Category> - see TODO in builder.rs"]
 fn test_xml_roundtrip_test_alert() {
     let original_xml = include_str!("fixtures/test_alert.xml");
 
@@ -112,7 +115,6 @@ fn test_xml_roundtrip_test_alert() {
 
 /// Test XML roundtrip with builder-created alert
 #[test]
-#[ignore = "XML deserialization issue with Vec<Category> - see TODO in builder.rs"]
 fn test_xml_roundtrip_builder_alert() {
     let original_alert = AlertBuilder::new("test.example.org")
         .identifier("roundtrip-test-789")
@@ -149,7 +151,6 @@ fn test_xml_roundtrip_builder_alert() {
 
 /// Test that profile-generated alerts serialize properly
 #[test]
-#[ignore = "XML deserialization issue with Vec<Category> - see TODO in builder.rs"]
 fn test_profiles_xml_serialization() {
     let profiles = vec![
         ("test", AlertProfiles::test_alert("test.example.org")),
@@ -192,7 +193,6 @@ fn test_profiles_xml_serialization() {
 
 /// Test timestamp handling in XML serialization
 #[test]
-#[ignore = "XML deserialization issue with Vec<Category> - see TODO in builder.rs"]
 fn test_timestamp_serialization() {
     let test_time: DateTime<Utc> = "2023-06-15T14:30:00Z"
         .parse()
@@ -242,7 +242,6 @@ fn test_xml_structure_requirements() {
 
 /// Benchmark-style test to ensure reasonable performance
 #[test]
-#[ignore = "XML deserialization issue with Vec<Category> - see TODO in builder.rs"]
 fn test_serialization_performance() {
     let alert = AlertProfiles::severe_weather("perf.example.org")
         .add_circular_area("Performance Test Area", 42.0, -71.0, 50.0)

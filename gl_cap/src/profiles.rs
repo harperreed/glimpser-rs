@@ -336,11 +336,14 @@ mod tests {
 
         let info = &alert.info[0];
         assert_eq!(info.event, "Severe Weather Alert");
-        assert!(info.category.contains(&Category::Met));
+        assert!(info.category.iter().any(|c| c.category == Category::Met));
         assert_eq!(info.urgency, Urgency::Expected);
         assert_eq!(info.severity, Severity::Severe);
         assert_eq!(info.certainty, Certainty::Likely);
-        assert!(info.response_type.contains(&ResponseType::Prepare));
+        assert!(info
+            .response_type
+            .iter()
+            .any(|r| r.response_type == ResponseType::Prepare));
 
         assert!(alert.validate().is_ok());
     }
@@ -351,7 +354,10 @@ mod tests {
 
         assert_eq!(alert.info[0].urgency, Urgency::Immediate);
         assert_eq!(alert.info[0].severity, Severity::Extreme);
-        assert!(alert.info[0].response_type.contains(&ResponseType::Shelter));
+        assert!(alert.info[0]
+            .response_type
+            .iter()
+            .any(|r| r.response_type == ResponseType::Shelter));
         assert!(alert.validate().is_ok());
     }
 
@@ -361,7 +367,10 @@ mod tests {
 
         assert_eq!(alert.status, Status::Test);
         assert_eq!(alert.info[0].event, "Test Alert");
-        assert!(alert.info[0].response_type.contains(&ResponseType::None));
+        assert!(alert.info[0]
+            .response_type
+            .iter()
+            .any(|r| r.response_type == ResponseType::None));
         assert!(alert.validate().is_ok());
     }
 
@@ -372,7 +381,8 @@ mod tests {
         assert_eq!(alert.info[0].event, "All Clear");
         assert!(alert.info[0]
             .response_type
-            .contains(&ResponseType::AllClear));
+            .iter()
+            .any(|r| r.response_type == ResponseType::AllClear));
         assert!(alert.validate().is_ok());
     }
 
