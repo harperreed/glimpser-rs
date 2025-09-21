@@ -472,7 +472,7 @@ async fn take_snapshot_impl(stream_id: String, state: &AppState) -> Result<Vec<u
                 ));
             }
         }
-        "yt" => {
+        "yt" | "youtube" => {
             // yt-dlp-based source
             let url = config
                 .get("url")
@@ -946,7 +946,7 @@ fn create_capture_source_from_stream(
                 ))
             }
         }
-        "yt" => {
+        "yt" | "youtube" => {
             let url = config
                 .get("url")
                 .and_then(|v| v.as_str())

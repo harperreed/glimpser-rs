@@ -15,6 +15,19 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+/// Request body for first admin user signup
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+pub struct SignupRequest {
+    #[validate(length(min = 1))]
+    pub username: String,
+
+    #[validate(email)]
+    pub email: String,
+
+    #[validate(length(min = 8, message = "Password must be at least 8 characters long"))]
+    pub password: String,
+}
+
 /// Response for successful login
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct LoginResponse {
@@ -31,6 +44,7 @@ pub struct UserInfo {
     pub username: String,
     pub email: String,
     pub is_active: bool,
+    pub is_admin: bool,
     pub created_at: String,
 }
 

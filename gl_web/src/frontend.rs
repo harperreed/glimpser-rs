@@ -7,7 +7,7 @@ use crate::auth::{JwtAuth, PasswordAuth};
 use askama::Template;
 use axum::{
     body::Body,
-    extract::{Form, Path, State},
+    extract::{Form, FromRef, Path, State},
     http::{
         header::{LOCATION, SET_COOKIE},
         StatusCode,
@@ -24,6 +24,87 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tracing::{debug, warn};
 
 use crate::{routes::ai_axum, AppState};
+
+/// Authenticated user for Axum extractors
+#[derive(Debug, Clone)]
+pub struct AuthenticatedUser {
+    pub id: String,
+    pub email: String,
+}
+
+/// Axum extractor for authenticated user
+#[axum::async_trait]
+impl<S> axum::extract::FromRequestParts<S> for AuthenticatedUser
+where
+    S: Send + Sync,
+    FrontendState: axum::extract::FromRef<S>,
+{
+    type Rejection = axum::response::Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        use axum::http::header::COOKIE;
+
+        let frontend_state = FrontendState::from_ref(state);
+
+        // Extract auth token from cookie with proper parsing
+        let auth_token = parts
+            .headers
+            .get(COOKIE)
+            .and_then(|header| header.to_str().ok())
+            .and_then(|cookies| {
+                for cookie in cookies.split(';') {
+                    let cookie = cookie.trim();
+                    if let Some(token_part) = cookie.strip_prefix("auth_token=") {
+                        // Handle URL-decoded and quoted values
+                        let token_value =
+                            if token_part.starts_with('"') && token_part.ends_with('"') {
+                                &token_part[1..token_part.len() - 1] // Remove quotes
+                            } else {
+                                token_part
+                            };
+                        // Basic validation - JWT tokens should be alphanumeric + dots and dashes
+                        if token_value
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+                            && token_value.len() > 10
+                        {
+                            return Some(token_value);
+                        }
+                    }
+                }
+                None
+            });
+
+        let token = match auth_token {
+            Some(token) => token,
+            None => {
+                debug!("No auth token found in cookies");
+                return Err(Redirect::temporary("/login").into_response());
+            }
+        };
+
+        // Verify the JWT token
+        match crate::auth::JwtAuth::verify_token(
+            token,
+            &frontend_state.app_state.security_config.jwt_secret,
+        ) {
+            Ok(claims) => {
+                debug!("JWT token verified for user: {}", claims.sub);
+                Ok(AuthenticatedUser {
+                    id: claims.sub,
+                    email: claims.email,
+                })
+            }
+            Err(e) => {
+                warn!("JWT token verification failed: {}", e);
+                return Err(Redirect::temporary("/login").into_response());
+            }
+        }
+    }
+}
 
 /// Frontend-specific state wrapper for Axum
 #[derive(Clone)]
@@ -46,6 +127,14 @@ pub struct LoginTemplate {
     pub error_message: String,
     pub user: UserInfo,  // Empty user for login page
     pub logged_in: bool, // false for login page
+}
+
+/// Setup page template for initial admin creation
+#[derive(Template)]
+#[template(path = "setup.html")]
+pub struct SetupTemplate {
+    pub user: UserInfo,  // Empty user for setup page
+    pub logged_in: bool, // false for setup page
 }
 
 /// Dashboard template
@@ -292,11 +381,29 @@ impl StreamConfigForEdit {
     }
 }
 
+/// Export stream configuration
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct StreamExport {
+    pub name: String,
+    pub description: Option<String>,
+    pub config: serde_json::Value,
+    pub is_default: bool,
+}
+
+/// Import stream configuration request
+#[derive(Debug, serde::Deserialize)]
+pub struct StreamImportRequest {
+    pub streams: Vec<StreamExport>,
+    pub overwrite_mode: Option<String>, // "skip", "overwrite", or "create_new"
+}
+
 /// Create the Axum router for frontend pages
 pub fn create_frontend_router() -> Router<FrontendState> {
     Router::new()
         .route("/", get(root_handler))
         .route("/login", get(login_page_handler).post(login_handler))
+        .route("/logout", get(logout_handler))
+        .route("/setup", get(setup_page_handler))
         .route("/dashboard", get(dashboard_handler))
         .route("/streams", get(streams_list_handler))
         .route("/streams/:id", get(stream_detail_handler))
@@ -329,6 +436,12 @@ pub fn create_frontend_router() -> Router<FrontendState> {
             "/api/settings/streams/:id/stop",
             axum::routing::post(admin_stop_stream),
         )
+        // Stream Export/Import endpoints
+        .route("/api/settings/streams/export", get(api_export_streams))
+        .route(
+            "/api/settings/streams/import",
+            axum::routing::post(api_import_streams),
+        )
         // System settings endpoints
         .route(
             "/api/settings/config",
@@ -340,25 +453,77 @@ pub fn create_frontend_router() -> Router<FrontendState> {
         .route("/api/stream/:id/mjpeg", get(stream_mjpeg))
         .route("/api/stream/:id/start", axum::routing::post(stream_start))
         .route("/api/stream/:id/stop", axum::routing::post(stream_stop))
+        // Auth API endpoints
+        .route("/api/auth/setup/needed", get(auth_setup_needed))
+        .route(
+            "/api/auth/setup/signup",
+            axum::routing::post(auth_setup_signup),
+        )
         // Merge AI routes
         .merge(ai_axum::ai_routes())
 }
 
-/// Root handler - redirect to dashboard
-async fn root_handler() -> impl IntoResponse {
-    Redirect::permanent("/dashboard")
+/// Root handler - redirect to setup if needed, otherwise dashboard
+async fn root_handler(State(frontend_state): State<FrontendState>) -> impl IntoResponse {
+    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
+
+    match user_repo.has_any_users().await {
+        Ok(false) => {
+            // No users exist, redirect to setup
+            Redirect::temporary("/setup")
+        }
+        Ok(true) => {
+            // Users exist, redirect to dashboard
+            Redirect::temporary("/dashboard")
+        }
+        Err(e) => {
+            warn!("Failed to check for users during root handler: {}", e);
+            // On error, assume setup is needed for safety
+            Redirect::temporary("/setup")
+        }
+    }
 }
 
 /// Dashboard page handler
-async fn dashboard_handler(State(_state): State<FrontendState>) -> impl IntoResponse {
+async fn dashboard_handler(
+    authenticated_user: AuthenticatedUser,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    // Get actual user info from the database
+    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
+    let user = match user_repo.find_by_id(&authenticated_user.id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            warn!(
+                "Authenticated user not found in database: {}",
+                authenticated_user.id
+            );
+            return Redirect::temporary("/login").into_response();
+        }
+        Err(e) => {
+            warn!("Failed to load user from database: {}", e);
+            return Redirect::temporary("/login").into_response();
+        }
+    };
+
+    // Get stream count
+    let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
+    let stream_count = match stream_repo.list(Some(&user.id), 0, 1000).await {
+        Ok(streams) => streams.len(),
+        Err(e) => {
+            warn!("Failed to load user streams: {}", e);
+            0
+        }
+    };
+
     let template = DashboardTemplate {
         user: UserInfo {
-            id: "temp".to_string(),
-            username: "Test User".to_string(),
-            is_admin: true,
+            id: user.id,
+            username: user.username,
+            is_admin: true, // All users are admin in this system
         },
         logged_in: true,
-        stream_count: 0,
+        stream_count,
     };
 
     match template.render() {
@@ -385,12 +550,33 @@ async fn login_page_handler() -> impl IntoResponse {
     }
 }
 
+/// Setup page handler for first admin user creation
+async fn setup_page_handler() -> impl IntoResponse {
+    let template = SetupTemplate {
+        user: UserInfo {
+            id: String::new(),
+            username: String::new(),
+            is_admin: false,
+        },
+        logged_in: false, // Not logged in
+    };
+
+    match template.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response(),
+    }
+}
+
 /// Login form handler
 async fn login_handler(
+    headers: axum::http::HeaderMap,
     State(frontend_state): State<FrontendState>,
     Form(form): Form<LoginForm>,
 ) -> impl IntoResponse {
     debug!("Login attempt for username: {}", form.username);
+
+    // Check if this is an HTMX request
+    let is_htmx_request = headers.get("HX-Request").is_some();
 
     let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
 
@@ -429,13 +615,24 @@ async fn login_handler(
                             );
 
                             // Return redirect to dashboard with cookie
-                            Response::builder()
-                                .status(StatusCode::SEE_OTHER)
-                                .header(SET_COOKIE, cookie_value)
-                                .header(LOCATION, "/dashboard")
-                                .header("HX-Redirect", "/dashboard")
-                                .body("".into())
-                                .unwrap()
+                            if is_htmx_request {
+                                // For HTMX requests, send redirect instruction
+                                Response::builder()
+                                    .status(StatusCode::OK)
+                                    .header(SET_COOKIE, cookie_value)
+                                    .header("HX-Redirect", "/dashboard")
+                                    .header("Content-Type", "text/html")
+                                    .body(r#"<div>Redirecting to dashboard...</div>"#.into())
+                                    .unwrap()
+                            } else {
+                                // For regular form submissions, do a standard redirect
+                                Response::builder()
+                                    .status(StatusCode::SEE_OTHER)
+                                    .header(SET_COOKIE, cookie_value)
+                                    .header(LOCATION, "/dashboard")
+                                    .body("".into())
+                                    .unwrap()
+                            }
                         }
                         Err(e) => {
                             warn!("Failed to create JWT token: {}", e);
@@ -555,7 +752,7 @@ async fn streams_list_handler(State(frontend_state): State<FrontendState>) -> im
         </div>
         <div class="flex items-center gap-6">
             <span class="text-sm text-gray-500">Welcome, {}</span>
-            <a href="/login" class="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700">Logout</a>
+            <a href="/logout" class="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700">Logout</a>
         </div>
     </nav>
 
@@ -643,11 +840,30 @@ async fn stream_detail_handler(
 }
 
 /// Admin page
-async fn admin_handler(State(frontend_state): State<FrontendState>) -> impl IntoResponse {
-    // TODO: Extract user from cookie/session - for now use test user
+async fn admin_handler(
+    authenticated_user: AuthenticatedUser,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    // Get actual user info from the database
+    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
+    let db_user = match user_repo.find_by_id(&authenticated_user.id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            warn!(
+                "Authenticated user not found in database: {}",
+                authenticated_user.id
+            );
+            return Redirect::temporary("/login").into_response();
+        }
+        Err(e) => {
+            warn!("Failed to load user from database: {}", e);
+            return Redirect::temporary("/login").into_response();
+        }
+    };
+
     let user = UserInfo {
-        id: "test".to_string(),
-        username: "Admin User".to_string(),
+        id: db_user.id,
+        username: db_user.username,
         is_admin: true,
     };
 
@@ -1082,7 +1298,7 @@ function showNotification(message, type) {{
         </div>
         <div class="flex items-center gap-6">
             <span class="text-sm text-gray-500">Welcome, {}</span>
-            <a href="/login" class="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700">Logout</a>
+            <a href="/logout" class="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700">Logout</a>
         </div>
     </nav>
 
@@ -1534,26 +1750,13 @@ async fn admin_stream_new_page() -> impl IntoResponse {
 
 /// Handle stream creation form submission
 async fn admin_stream_create(
+    authenticated_user: AuthenticatedUser,
     State(frontend_state): State<FrontendState>,
     Form(form): Form<StreamCreateForm>,
 ) -> impl IntoResponse {
     use gl_db::CreateStreamRequest;
 
     let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
-    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
-
-    // Get the actual admin user from database instead of hardcoding
-    let admin_user = match user_repo.find_by_email("admin@test.com").await {
-        Ok(Some(user)) => user,
-        Ok(None) => {
-            warn!("Admin user not found in database");
-            return Html("Admin user not found. Please ensure admin user exists.").into_response();
-        }
-        Err(e) => {
-            warn!("Failed to query admin user: {}", e);
-            return Html("Database error while finding admin user").into_response();
-        }
-    };
 
     // Build JSON config based on stream type
     let snapshot_interval = form
@@ -1651,7 +1854,7 @@ async fn admin_stream_create(
     };
 
     let create_request = CreateStreamRequest {
-        user_id: admin_user.id.clone(), // Use actual admin user ID from database
+        user_id: authenticated_user.id.clone(), // Use authenticated user ID
         name: form.name,
         description: form.description.filter(|s| !s.is_empty()),
         config: config_json,
@@ -2411,4 +2614,379 @@ async fn take_snapshot_direct(
     };
 
     Ok(jpeg_bytes.to_vec())
+}
+
+/// Auth API: Check if setup is needed (Axum version)
+async fn auth_setup_needed(State(frontend_state): State<FrontendState>) -> impl IntoResponse {
+    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
+
+    match user_repo.has_any_users().await {
+        Ok(has_users) => Json(serde_json::json!({
+            "needs_setup": !has_users
+        }))
+        .into_response(),
+        Err(e) => {
+            warn!("Failed to check user count: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "database_error",
+                    "message": "Failed to check setup status"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Auth API: First admin signup (Axum version)
+async fn auth_setup_signup(
+    State(frontend_state): State<FrontendState>,
+    Json(payload): Json<crate::models::SignupRequest>,
+) -> impl IntoResponse {
+    use crate::auth::PasswordAuth;
+    use gl_db::CreateUserRequest;
+
+    debug!("First admin signup attempt for email: {}", payload.email);
+
+    // Validate request payload
+    if let Err(_) = validator::Validate::validate(&payload) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "validation_failed",
+                "message": "Invalid request data"
+            })),
+        )
+            .into_response();
+    }
+
+    let user_repo = UserRepository::new(frontend_state.app_state.db.pool());
+
+    // Check if users already exist FIRST (race condition protection)
+    match user_repo.has_any_users().await {
+        Ok(true) => {
+            warn!("Admin signup attempted but users already exist");
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "setup_complete",
+                    "message": "Setup is already complete. Users exist in the system."
+                })),
+            )
+                .into_response();
+        }
+        Ok(false) => {
+            debug!("No users exist, proceeding with first admin creation");
+        }
+        Err(e) => {
+            warn!("Failed to check user count: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "database_error",
+                    "message": "Failed to check setup status"
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // Hash the password
+    let password_hash = match PasswordAuth::hash_password(&payload.password) {
+        Ok(hash) => hash,
+        Err(e) => {
+            warn!("Failed to hash password: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "password_hash_failed",
+                    "message": "Failed to secure password"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // Create the user
+    let create_request = CreateUserRequest {
+        username: payload.username.clone(),
+        email: payload.email.clone(),
+        password_hash,
+    };
+
+    let user = match user_repo.create(create_request).await {
+        Ok(user) => user,
+        Err(e) => {
+            // Check if this is a duplicate email error (race condition)
+            if e.to_string().contains("UNIQUE constraint failed") || e.to_string().contains("email")
+            {
+                warn!("Admin signup failed due to duplicate email (race condition)");
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "setup_complete",
+                        "message": "Setup is already complete. An admin user already exists."
+                    })),
+                )
+                    .into_response();
+            } else {
+                warn!("Failed to create first admin user: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "user_creation_failed",
+                        "message": "Failed to create admin user"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    debug!("First admin user created successfully: {}", user.id);
+
+    // Create JWT token for immediate login
+    match crate::auth::JwtAuth::create_token(
+        &user.id,
+        &user.email,
+        &frontend_state.app_state.security_config.jwt_secret,
+    ) {
+        Ok(token) => {
+            debug!("JWT token created for first admin: {}", user.id);
+
+            let response = crate::models::LoginResponse {
+                access_token: token.clone(),
+                token_type: "Bearer".to_string(),
+                expires_in: crate::auth::JwtAuth::token_expiration_secs(),
+                user: crate::models::UserInfo {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    is_active: user.is_active.unwrap_or(false),
+                    is_admin: true, // First user is admin
+                    created_at: user.created_at,
+                },
+            };
+
+            // Set JWT token as HTTP-only cookie
+            let cookie_value = format!(
+                "auth_token={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax",
+                token,
+                crate::auth::JwtAuth::token_expiration_secs()
+            );
+
+            axum::response::Response::builder()
+                .status(StatusCode::CREATED)
+                .header(SET_COOKIE, cookie_value)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_string(&response).unwrap()))
+                .unwrap()
+                .into_response()
+        }
+        Err(e) => {
+            warn!("Failed to create JWT token for first admin: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "token_creation_failed",
+                    "message": "Failed to create authentication token"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Export streams API handler
+async fn api_export_streams(
+    authenticated_user: AuthenticatedUser,
+    State(frontend_state): State<FrontendState>,
+) -> impl IntoResponse {
+    use tracing::{debug, error, info};
+
+    debug!("Exporting streams for user: {}", authenticated_user.id);
+
+    let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
+
+    // Get all streams for the user
+    match stream_repo
+        .list(Some(&authenticated_user.id), 0, 1000)
+        .await
+    {
+        Ok(streams) => {
+            let exports: Vec<StreamExport> = streams
+                .into_iter()
+                .map(|stream| {
+                    let config = serde_json::from_str(&stream.config)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    StreamExport {
+                        name: stream.name,
+                        description: stream.description,
+                        config,
+                        is_default: stream.is_default,
+                    }
+                })
+                .collect();
+
+            info!(
+                "Exported {} streams for user {}",
+                exports.len(),
+                authenticated_user.id
+            );
+            Json(serde_json::json!({
+                "streams": exports,
+                "export_date": chrono::Utc::now().to_rfc3339(),
+                "user_id": authenticated_user.id
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            error!("Failed to export streams: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to export streams",
+                    "details": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Import streams API handler
+async fn api_import_streams(
+    authenticated_user: AuthenticatedUser,
+    State(frontend_state): State<FrontendState>,
+    Json(body): Json<StreamImportRequest>,
+) -> impl IntoResponse {
+    use gl_db::CreateStreamRequest;
+    use tracing::{debug, error, warn};
+
+    debug!(
+        "Importing {} streams for user: {}",
+        body.streams.len(),
+        authenticated_user.id
+    );
+
+    let stream_repo = StreamRepository::new(frontend_state.app_state.db.pool());
+    let overwrite_mode = body.overwrite_mode.as_deref().unwrap_or("skip");
+
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut errors = Vec::new();
+
+    for stream_export in &body.streams {
+        // Check if stream with same name exists
+        let existing = stream_repo
+            .find_by_name_and_user(&stream_export.name, &authenticated_user.id)
+            .await
+            .ok()
+            .flatten();
+
+        let mut stream_name = stream_export.name.clone();
+
+        match overwrite_mode {
+            "skip" if existing.is_some() => {
+                skipped += 1;
+                continue;
+            }
+            "overwrite" if existing.is_some() => {
+                // Delete existing stream first
+                if let Some(existing_stream) = existing {
+                    if let Err(e) = stream_repo.delete(&existing_stream.id).await {
+                        errors.push(format!(
+                            "Failed to delete existing stream '{}': {}",
+                            stream_export.name, e
+                        ));
+                        continue;
+                    }
+                }
+            }
+            "create_new" if existing.is_some() => {
+                // Append number to make unique name
+                let mut counter = 1;
+                loop {
+                    let candidate = format!("{} ({})", stream_export.name, counter);
+                    if stream_repo
+                        .find_by_name_and_user(&candidate, &authenticated_user.id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_none()
+                    {
+                        stream_name = candidate;
+                        break;
+                    }
+                    counter += 1;
+                    if counter > 100 {
+                        errors.push(format!(
+                            "Could not create unique name for stream '{}'",
+                            stream_export.name
+                        ));
+                        break;
+                    }
+                }
+            }
+            _ => {} // No existing stream or mode allows creation
+        }
+
+        // Create the stream
+        let create_request = CreateStreamRequest {
+            name: stream_name,
+            description: stream_export.description.clone(),
+            config: stream_export.config.to_string(),
+            user_id: authenticated_user.id.clone(),
+            is_default: stream_export.is_default,
+        };
+
+        match stream_repo.create(create_request).await {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                errors.push(format!(
+                    "Failed to create stream '{}': {}",
+                    stream_export.name, e
+                ));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Json(serde_json::json!({
+            "success": true,
+            "imported": imported,
+            "skipped": skipped,
+            "errors": 0
+        }))
+        .into_response()
+    } else {
+        warn!("Import completed with {} errors", errors.len());
+        (
+            StatusCode::PARTIAL_CONTENT,
+            Json(serde_json::json!({
+                "success": false,
+                "imported": imported,
+                "skipped": skipped,
+                "errors": errors.len(),
+                "error_details": errors
+            })),
+        )
+            .into_response()
+    }
+}
+
+/// Logout handler - clears auth token and redirects to login
+async fn logout_handler() -> impl IntoResponse {
+    use axum::http::header::SET_COOKIE;
+
+    // Create an expired cookie to clear the auth token
+    let clear_cookie = "auth_token=; Path=/; Max-Age=0; HttpOnly";
+
+    axum::response::Response::builder()
+        .status(StatusCode::FOUND)
+        .header(LOCATION, "/login")
+        .header(SET_COOKIE, clear_cookie)
+        .body(Body::empty())
+        .unwrap()
 }

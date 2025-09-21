@@ -213,4 +213,20 @@ impl<'a> UserRepository<'a> {
         debug!("Successfully deleted user: {}", id);
         Ok(())
     }
+
+    /// Check if any active users exist in the database
+    #[instrument(skip(self))]
+    pub async fn has_any_users(&self) -> Result<bool> {
+        debug!("Checking if any users exist");
+
+        let count_result =
+            sqlx::query!("SELECT COUNT(*) as count FROM users WHERE is_active = true")
+                .fetch_one(self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("Failed to count users: {}", e)))?;
+
+        let has_users = count_result.count > 0;
+        debug!("User count check: {}", has_users);
+        Ok(has_users)
+    }
 }

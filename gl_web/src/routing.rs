@@ -166,6 +166,23 @@ pub fn create_app(
                     },
                 )),
         )
+        // Stream Import/Export endpoints (explicit absolute paths)
+        .service(
+            web::resource("/api/settings/streams/export")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::get().to(admin::export_streams)),
+        )
+        .service(
+            web::resource("/api/settings/streams/import")
+                .wrap(middleware::ratelimit::RateLimit::new(
+                    rate_limit_config.clone(),
+                ))
+                .wrap(middleware::auth::RequireAuth::new())
+                .route(web::post().to(admin::import_streams)),
+        )
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .service(
             web::scope("/api")
@@ -189,7 +206,9 @@ pub fn create_app(
                         .wrap(middleware::ratelimit::RateLimit::new(
                             rate_limit_config.clone(),
                         ))
-                        .service(auth_routes::login),
+                        .service(auth_routes::login)
+                        .service(auth_routes::setup_needed)
+                        .service(auth_routes::setup_signup),
                 )
                 .service(
                     web::scope("/stream")

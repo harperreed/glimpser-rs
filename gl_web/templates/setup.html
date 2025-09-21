@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Initial Setup{% endblock %}
+
+{% block body_class %}min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8{% endblock %}
+
+{% block content %}
+<div id="setup-container" class="max-w-md w-full space-y-8">
+    <div>
+        <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+            Welcome to Glimpser
+        </h2>
+        <p class="mt-2 text-center text-sm text-gray-600">
+            Create your first admin account to get started
+        </p>
+    </div>
+
+    <form id="signup-form" class="mt-8 space-y-6">
+        <div class="space-y-4">
+            <div>
+                <label for="username" class="block text-sm font-medium text-gray-700">Username</label>
+                <input
+                    id="username"
+                    name="username"
+                    type="text"
+                    autocomplete="username"
+                    required
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                    placeholder="Enter username">
+            </div>
+            <div>
+                <label for="email" class="block text-sm font-medium text-gray-700">Email address</label>
+                <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autocomplete="email"
+                    required
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                    placeholder="Enter email address">
+            </div>
+            <div>
+                <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autocomplete="new-password"
+                    required
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                    placeholder="Enter password (min 8 characters)">
+            </div>
+        </div>
+
+        <div id="error-message" class="text-red-600 text-sm text-center hidden"></div>
+        <div id="success-message" class="text-green-600 text-sm text-center hidden"></div>
+
+        <div>
+            <button
+                type="submit"
+                id="submit-button"
+                class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                Create Admin Account
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+document.getElementById('signup-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const form = e.target;
+    const formData = new FormData(form);
+    const submitButton = document.getElementById('submit-button');
+    const errorMessage = document.getElementById('error-message');
+    const successMessage = document.getElementById('success-message');
+
+    // Hide previous messages
+    errorMessage.classList.add('hidden');
+    successMessage.classList.add('hidden');
+
+    // Disable submit button
+    submitButton.disabled = true;
+    submitButton.textContent = 'Creating Account...';
+
+    try {
+        const response = await fetch('/api/auth/setup/signup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                username: formData.get('username'),
+                email: formData.get('email'),
+                password: formData.get('password')
+            })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            successMessage.textContent = 'Admin account created successfully! Redirecting to dashboard...';
+            successMessage.classList.remove('hidden');
+
+            // Redirect to dashboard after a short delay
+            setTimeout(() => {
+                window.location.href = '/dashboard';
+            }, 1500);
+        } else {
+            // Handle specific error cases
+            let errorText = 'Failed to create admin account';
+            if (result && result.message) {
+                errorText = result.message;
+            } else if (result && result.error) {
+                switch (result.error) {
+                    case 'setup_complete':
+                        errorText = 'Setup is already complete. Please refresh the page.';
+                        break;
+                    case 'validation_failed':
+                        errorText = 'Please check your input and try again.';
+                        break;
+                    case 'race_condition':
+                        errorText = 'Multiple signup attempts detected. Please refresh and try again.';
+                        break;
+                    default:
+                        errorText = result.message || 'Failed to create admin account';
+                }
+            } else if (response.status === 409) {
+                errorText = 'Setup is already complete. Please refresh the page.';
+            } else if (response.status === 400) {
+                errorText = 'Please check your input and try again.';
+            } else if (response.status >= 500) {
+                errorText = 'Server error. Please try again in a moment.';
+            }
+
+            errorMessage.textContent = errorText;
+            errorMessage.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Network error during signup:', error);
+        errorMessage.textContent = 'Network error. Please check your connection and try again.';
+        errorMessage.classList.remove('hidden');
+    } finally {
+        // Re-enable submit button
+        submitButton.disabled = false;
+        submitButton.textContent = 'Create Admin Account';
+    }
+});
+</script>
+{% endblock %}

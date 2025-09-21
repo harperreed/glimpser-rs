@@ -571,7 +571,7 @@ impl CaptureManager {
             "rtsp" => Self::take_rtsp_snapshot(&config).await,
             "ffmpeg" => Self::take_ffmpeg_snapshot(&config).await,
             "website" => Self::take_website_snapshot(&config).await,
-            "yt" => Self::take_yt_snapshot(&config).await,
+            "yt" | "youtube" => Self::take_yt_snapshot(&config).await,
             _ => Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
         }
     }
@@ -612,7 +612,7 @@ impl CaptureManager {
             "rtsp" => Self::create_rtsp_capture(&config).await?,
             "ffmpeg" => Self::create_ffmpeg_capture(&config).await?,
             "website" => Self::create_website_capture(&config).await?,
-            "yt" => Self::create_yt_capture(&config).await?,
+            "yt" | "youtube" => Self::create_yt_capture(&config).await?,
             _ => return Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
         };
 
@@ -837,7 +837,7 @@ impl CaptureManager {
                     .run_website_capture(&config, &stream_id, &stream.user_id)
                     .await
             }
-            "yt" => {
+            "yt" | "youtube" => {
                 capture_manager
                     .run_yt_capture(&config, &stream_id, &stream.user_id)
                     .await

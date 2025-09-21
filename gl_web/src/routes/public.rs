@@ -57,6 +57,7 @@ pub async fn me(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResp
                 username: user.username,
                 email: user.email,
                 is_active: user.is_active.unwrap_or(false),
+                is_admin: true, // All users are admin in this system
                 created_at: user.created_at,
             };
 
