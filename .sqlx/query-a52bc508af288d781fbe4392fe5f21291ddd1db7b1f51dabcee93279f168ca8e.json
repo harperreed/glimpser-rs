@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE api_keys\n            SET last_used_at = ?1, updated_at = ?1\n            WHERE id = ?2 AND is_active = true\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a52bc508af288d781fbe4392fe5f21291ddd1db7b1f51dabcee93279f168ca8e"
+}

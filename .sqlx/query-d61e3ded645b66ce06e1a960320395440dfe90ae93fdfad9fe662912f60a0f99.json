@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO snapshots (\n                id, stream_id, user_id, file_path, storage_uri, content_type,\n                width, height, file_size, checksum, etag, captured_at,\n                created_at, updated_at, perceptual_hash\n            )\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "d61e3ded645b66ce06e1a960320395440dfe90ae93fdfad9fe662912f60a0f99"
+}

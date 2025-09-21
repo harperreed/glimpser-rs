@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id as \"id!\", key as \"key!\", value as \"value!\", category as \"category!\",\n                   description, data_type as \"data_type!\",\n                   min_value, max_value, default_value,\n                   created_at as \"created_at!\", updated_at as \"updated_at!\"\n            FROM settings\n            WHERE category = ?\n            ORDER BY key\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "key!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "value!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "category!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "description",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "data_type!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "min_value",
+        "ordinal": 6,
+        "type_info": "Float"
+      },
+      {
+        "name": "max_value",
+        "ordinal": 7,
+        "type_info": "Float"
+      },
+      {
+        "name": "default_value",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at!",
+        "ordinal": 10,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "0a609869a9d4bcb856ceeee8f83c7677114a1b987675538473634b94787158ec"
+}

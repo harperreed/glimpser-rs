@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO jobs (id, user_id, capture_id, job_type, priority, status, payload, attempts, max_attempts, scheduled_at, created_at, updated_at)\n            VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, 0, ?7, ?8, ?9, ?10)\n            RETURNING *\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "user_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "capture_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "job_type",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "status",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "result",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "error_message",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "attempts",
+        "ordinal": 9,
+        "type_info": "Integer"
+      },
+      {
+        "name": "max_attempts",
+        "ordinal": 10,
+        "type_info": "Integer"
+      },
+      {
+        "name": "scheduled_at",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "started_at",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "completed_at",
+        "ordinal": 13,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 14,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 15,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "af40df367679df139a8c1f7a87a24e7a978ccff57627a9178ed2e7895d68e07a"
+}
