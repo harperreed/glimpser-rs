@@ -5,10 +5,7 @@ pub mod admin;
 
 use crate::{
     middleware, models,
-    routes::{
-        admin as admin_routes, ai, alerts, auth as auth_routes, public, static_files, stream,
-        streams,
-    },
+    routes::{ai, alerts, auth as auth_routes, public, static_files, stream, streams},
     AppState,
 };
 use actix_web::{web, App, HttpRequest, HttpResponse};
