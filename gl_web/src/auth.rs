@@ -4,8 +4,9 @@
 use crate::models::Claims;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
+    Algorithm, Argon2, Params, Version,
 };
+use gl_config::Argon2Config;
 use gl_core::{Error, Result};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rand_core::OsRng;
@@ -16,13 +17,26 @@ use tracing::{debug, instrument};
 pub struct PasswordAuth;
 
 impl PasswordAuth {
-    /// Hash a password using Argon2
-    #[instrument(skip(password))]
-    pub fn hash_password(password: &str) -> Result<String> {
-        debug!("Hashing password");
+    /// Create a configured Argon2 instance with proper security parameters
+    fn create_argon2(config: &Argon2Config) -> Result<Argon2<'_>> {
+        // Enforce minimum security parameters as specified in the audit
+        let memory_cost = config.memory_cost.max(19456); // At least 19 MiB
+        let time_cost = config.time_cost.max(2); // At least 2 iterations
+        let parallelism = config.parallelism.max(1); // At least 1 thread
+
+        let params = Params::new(memory_cost, time_cost, parallelism, None)
+            .map_err(|e| Error::Config(format!("Invalid Argon2 parameters: {}", e)))?;
+
+        Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
+    }
+
+    /// Hash a password using Argon2 with configured parameters
+    #[instrument(skip(password, config))]
+    pub fn hash_password(password: &str, config: &Argon2Config) -> Result<String> {
+        debug!("Hashing password with configured Argon2 parameters");
 
         let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
+        let argon2 = Self::create_argon2(config)?;
 
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
@@ -33,15 +47,15 @@ impl PasswordAuth {
         Ok(password_hash)
     }
 
-    /// Verify a password against a hash
-    #[instrument(skip(password, hash))]
-    pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
-        debug!("Verifying password");
+    /// Verify a password against a hash using configured parameters
+    #[instrument(skip(password, hash, config))]
+    pub fn verify_password(password: &str, hash: &str, config: &Argon2Config) -> Result<bool> {
+        debug!("Verifying password with configured Argon2 parameters");
 
         let parsed_hash = PasswordHash::new(hash)
             .map_err(|e| Error::Config(format!("Invalid password hash format: {}", e)))?;
 
-        let argon2 = Argon2::default();
+        let argon2 = Self::create_argon2(config)?;
 
         match argon2.verify_password(password.as_bytes(), &parsed_hash) {
             Ok(()) => {
@@ -65,7 +79,7 @@ impl JwtAuth {
 
     /// Create a new JWT token for a user
     #[instrument(skip(secret))]
-    pub fn create_token(user_id: &str, email: &str, secret: &str) -> Result<String> {
+    pub fn create_token(user_id: &str, email: &str, secret: &str, issuer: &str) -> Result<String> {
         debug!("Creating JWT token for user: {}", user_id);
 
         let now = SystemTime::now()
@@ -78,6 +92,7 @@ impl JwtAuth {
             email: email.to_string(),
             exp: now + Self::TOKEN_EXPIRATION_SECS as usize,
             iat: now,
+            iss: issuer.to_string(),
         };
 
         let token = encode(
@@ -93,13 +108,17 @@ impl JwtAuth {
 
     /// Verify and decode a JWT token
     #[instrument(skip(token, secret))]
-    pub fn verify_token(token: &str, secret: &str) -> Result<Claims> {
+    pub fn verify_token(token: &str, secret: &str, expected_issuer: &str) -> Result<Claims> {
         debug!("Verifying JWT token");
+
+        let mut validation = Validation::default();
+        validation.set_issuer(&[expected_issuer]);
+        validation.validate_exp = true;
 
         let token_data = decode::<Claims>(
             token,
             &DecodingKey::from_secret(secret.as_ref()),
-            &Validation::default(),
+            &validation,
         )
         .map_err(|e| Error::Validation(format!("Invalid JWT: {}", e)))?;
 
@@ -120,19 +139,21 @@ mod tests {
     #[test]
     fn test_password_hash_and_verify() {
         let password = "test_password_123";
+        let config = Argon2Config::default();
 
         // Hash password
-        let hash = PasswordAuth::hash_password(password).expect("Should hash password");
+        let hash = PasswordAuth::hash_password(password, &config).expect("Should hash password");
         assert!(!hash.is_empty());
         assert!(hash.starts_with("$argon2"));
 
         // Verify correct password
-        let is_valid = PasswordAuth::verify_password(password, &hash).expect("Should verify");
+        let is_valid =
+            PasswordAuth::verify_password(password, &hash, &config).expect("Should verify");
         assert!(is_valid);
 
         // Verify wrong password
         let is_valid =
-            PasswordAuth::verify_password("wrong_password", &hash).expect("Should verify");
+            PasswordAuth::verify_password("wrong_password", &hash, &config).expect("Should verify");
         assert!(!is_valid);
     }
 
@@ -141,16 +162,18 @@ mod tests {
         let user_id = "user_123";
         let email = "test@example.com";
         let secret = "test_secret_key";
+        let issuer = "glimpser";
 
         // Create token
-        let token = JwtAuth::create_token(user_id, email, secret).expect("Should create token");
+        let token =
+            JwtAuth::create_token(user_id, email, secret, issuer).expect("Should create token");
         assert!(!token.is_empty());
 
         // Verify token
-        let claims = JwtAuth::verify_token(&token, secret).expect("Should verify token");
+        let claims = JwtAuth::verify_token(&token, secret, issuer).expect("Should verify token");
         assert_eq!(claims.sub, user_id);
         assert_eq!(claims.email, email);
-        // No role field anymore - simplified auth
+        assert_eq!(claims.iss, issuer);
         assert!(claims.exp > claims.iat);
     }
 
@@ -160,12 +183,14 @@ mod tests {
         let email = "test@example.com";
         let secret = "test_secret_key";
         let wrong_secret = "wrong_secret";
+        let issuer = "glimpser";
 
         // Create token with one secret
-        let token = JwtAuth::create_token(user_id, email, secret).expect("Should create token");
+        let token =
+            JwtAuth::create_token(user_id, email, secret, issuer).expect("Should create token");
 
         // Try to verify with different secret
-        let result = JwtAuth::verify_token(&token, wrong_secret);
+        let result = JwtAuth::verify_token(&token, wrong_secret, issuer);
         assert!(result.is_err());
     }
 }

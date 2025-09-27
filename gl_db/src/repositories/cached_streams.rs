@@ -149,5 +149,148 @@ impl<'a> CachedStreamRepository<'a> {
         Ok(stream)
     }
 
-    // Note: Removed list_active and list_by_execution_status as they don't exist in the base repository
+    /// List streams with total count - optimized compound query (not cached due to pagination)
+    pub async fn list_with_total(
+        &self,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<Stream>, i64)> {
+        debug!(
+            "Listing streams with total count: user_id={:?}, offset={}, limit={}",
+            user_id, offset, limit
+        );
+
+        // Use the optimized compound query to eliminate N+1 pattern
+        let (streams, total) = self.repo.list_with_total(user_id, offset, limit).await?;
+
+        // Cache individual streams for future lookups, but limit to avoid cache pollution
+        // Only cache if result set is reasonably small to prevent memory issues
+        if streams.len() <= 50 {
+            for stream in &streams {
+                self.cache.cache_stream(stream.clone());
+            }
+            debug!("Listed and cached {} streams from database", streams.len());
+        } else {
+            debug!(
+                "Listed {} streams (skipped caching due to large result set)",
+                streams.len()
+            );
+        }
+        Ok((streams, total))
+    }
+
+    /// Search streams with total count - optimized compound query (not cached due to search nature)
+    pub async fn search_with_total(
+        &self,
+        user_id: Option<&str>,
+        name_pattern: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<Stream>, i64)> {
+        debug!(
+            "Searching streams with total count: user_id={:?}, pattern={}, offset={}, limit={}",
+            user_id, name_pattern, offset, limit
+        );
+
+        // Use the optimized compound query to eliminate N+1 pattern
+        let (streams, total) = self
+            .repo
+            .search_with_total(user_id, name_pattern, offset, limit)
+            .await?;
+
+        // Cache individual streams for future lookups, but limit to avoid cache pollution
+        // Only cache if result set is reasonably small to prevent memory issues
+        if streams.len() <= 50 {
+            for stream in &streams {
+                self.cache.cache_stream(stream.clone());
+            }
+            debug!(
+                "Searched and cached {} streams from database",
+                streams.len()
+            );
+        } else {
+            debug!(
+                "Searched {} streams (skipped caching due to large result set)",
+                streams.len()
+            );
+        }
+        Ok((streams, total))
+    }
+
+    /// Count streams - delegates to database (used less frequently)
+    pub async fn count(&self, user_id: Option<&str>) -> Result<i64> {
+        self.repo.count(user_id).await
+    }
+
+    /// Search by name pattern - delegates to database (used less frequently)
+    pub async fn search_by_name(
+        &self,
+        name_pattern: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Stream>> {
+        let streams = self
+            .repo
+            .search_by_name(name_pattern, offset, limit)
+            .await?;
+
+        // Cache individual streams for future lookups, but limit to avoid cache pollution
+        // Only cache if result set is reasonably small to prevent memory issues
+        if streams.len() <= 50 {
+            for stream in &streams {
+                self.cache.cache_stream(stream.clone());
+            }
+            debug!("Searched by name and cached {} streams", streams.len());
+        } else {
+            debug!(
+                "Searched by name {} streams (skipped caching due to large result set)",
+                streams.len()
+            );
+        }
+        Ok(streams)
+    }
+
+    /// Update execution status with error and invalidate cache
+    pub async fn update_execution_status_with_error(
+        &self,
+        id: &str,
+        status: &str,
+        error_message: &str,
+    ) -> Result<bool> {
+        debug!(
+            "Updating stream execution status with error and cache invalidation: {}",
+            id
+        );
+
+        let updated = self
+            .repo
+            .update_execution_status_with_error(id, status, error_message)
+            .await?;
+
+        // Invalidate cache since execution status changed
+        if updated {
+            self.cache.invalidate_stream(id);
+            debug!(
+                "Updated execution status with error and invalidated cache for stream: {}",
+                id
+            );
+        }
+
+        Ok(updated)
+    }
+
+    /// Reset stale active statuses - delegates to database (infrequent operation)
+    pub async fn reset_stale_active_statuses(&self) -> Result<()> {
+        debug!("Resetting stale active statuses with cache invalidation");
+
+        self.repo.reset_stale_active_statuses().await?;
+
+        // Clear all cached streams since we don't know which ones were affected
+        // This is safe since it's called on startup and affects multiple streams
+        debug!("Clearing all stream cache after stale status reset");
+        self.cache.clear_streams();
+
+        Ok(())
+    }
 }

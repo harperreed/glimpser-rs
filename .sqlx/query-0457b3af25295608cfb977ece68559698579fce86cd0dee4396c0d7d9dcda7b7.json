@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO background_snapshot_jobs (\n                id, input_path, stream_id, status, config,\n                created_at, created_by, metadata\n            )\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "0457b3af25295608cfb977ece68559698579fce86cd0dee4396c0d7d9dcda7b7"
+}

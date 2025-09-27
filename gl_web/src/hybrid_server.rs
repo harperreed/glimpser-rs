@@ -2,14 +2,9 @@
 //! ABOUTME: Routes frontend requests to Axum and API requests to Actix-web
 
 use crate::{frontend, AppState};
-use axum::{
-    body::Body,
-    http::{StatusCode, Uri},
-    response::IntoResponse,
-    routing::any,
-    Router,
-};
+use axum::Router;
 use gl_core::Result;
+use tower_http::services::ServeDir;
 
 /// Start the hybrid server (Axum only for now)
 pub async fn start_hybrid_server(bind_addr: &str, state: AppState) -> Result<()> {
@@ -19,10 +14,16 @@ pub async fn start_hybrid_server(bind_addr: &str, state: AppState) -> Result<()>
     let frontend_state = frontend::FrontendState::from(state.clone());
     let frontend_router = frontend::create_frontend_router().with_state(frontend_state);
 
+    // Configure static file serving with proper caching headers and compression
+    let static_service = ServeDir::new(&state.static_config.static_dir)
+        .append_index_html_on_directories(false)
+        .precompressed_gzip()
+        .precompressed_br();
+
     // Create the main router that handles both frontend and API routes
     let app = Router::new()
-        // Static files
-        .route("/static/*path", any(static_handler))
+        // Static files with proper async serving and caching
+        .nest_service("/static", static_service)
         // All other routes go to frontend (including API routes)
         .merge(frontend_router)
         .with_state(state);
@@ -43,47 +44,3 @@ pub async fn start_hybrid_server(bind_addr: &str, state: AppState) -> Result<()>
 }
 
 // All API routes now handled by the frontend router
-
-/// Handler for static files
-async fn static_handler(uri: Uri) -> impl IntoResponse {
-    let path = uri.path();
-    tracing::info!("Static file request: {}", path);
-
-    // Serve actual static files
-    match path {
-        "/static/stream-form.js" => {
-            // Read the actual JavaScript file - try both possible paths
-            let paths = [
-                "gl_web/static/stream-form.js",
-                "../../gl_web/static/stream-form.js",
-            ];
-            let mut content = None;
-            for path in &paths {
-                if let Ok(file_content) = std::fs::read_to_string(path) {
-                    content = Some(file_content);
-                    break;
-                }
-            }
-            match content {
-                Some(content) => axum::response::Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/javascript")
-                    .body(Body::from(content))
-                    .unwrap(),
-                None => axum::response::Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::from("JavaScript file not found"))
-                    .unwrap(),
-            }
-        }
-        "/static/app.css" => axum::response::Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "text/css")
-            .body(Body::from("/* Custom CSS would be served here */"))
-            .unwrap(),
-        _ => axum::response::Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from(format!("Static file not found: {}", path)))
-            .unwrap(),
-    }
-}

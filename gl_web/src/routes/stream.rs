@@ -1,30 +1,82 @@
 //! ABOUTME: Stream-related API endpoints for snapshot capture
 //! ABOUTME: Handles video stream snapshot generation from streams
 
-use actix_web::{web, HttpResponse, Result as ActixResult};
+use actix_web::{web, HttpRequest, HttpResponse, Result as ActixResult};
 use gl_capture::{
-    CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel, OutputFormat,
-    RtspTransport, YtDlpConfig, YtDlpSource,
+    CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel, JobStatus, OutputFormat,
+    RtspTransport, SnapshotConfig, YtDlpConfig, YtDlpSource,
 };
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
 use gl_core::{Error, Id, Result};
 use gl_db::StreamRepository;
 use gl_stream::{MjpegStream, StreamConfig, StreamSession};
+use hex;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_stream::{Stream as TokioStream, StreamExt};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use utoipa::OpenApi;
 
 use crate::{models::ErrorResponse, AppState};
 
+/// Generate ETag from image bytes for caching
+fn generate_etag(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let hash = hasher.finalize();
+    format!("\"{}\"", hex::encode(&hash[..8])) // Use first 8 bytes of SHA-256 for ETag
+}
+
+/// Log sampling utility to reduce noise from repetitive errors
+static MJPEG_ERROR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Sample MJPEG errors - only log every Nth occurrence to reduce noise
+fn should_log_mjpeg_error() -> bool {
+    let count = MJPEG_ERROR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    count % 50 == 0 // Log every 50th error
+}
+
+/// Response for async snapshot job submission
+#[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct SnapshotJobResponse {
+    /// Unique job ID for tracking the snapshot processing
+    pub job_id: String,
+    /// Status of the job (Pending, Processing, Completed, Failed, Cancelled)
+    pub status: String,
+    /// Timestamp when the job was created
+    pub created_at: String,
+    /// Optional message (e.g., error details)
+    pub message: Option<String>,
+}
+
+/// Response for job status queries
+#[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct JobStatusResponse {
+    /// Unique job ID
+    pub job_id: String,
+    /// Current status of the job
+    pub status: String,
+    /// Progress percentage (0-100), if available
+    pub progress: Option<u8>,
+    /// Error message if job failed
+    pub error: Option<String>,
+    /// Timestamp when job was created
+    pub created_at: String,
+    /// Timestamp when job was completed (if finished)
+    pub completed_at: Option<String>,
+    /// Duration in milliseconds (if completed)
+    pub duration_ms: Option<u64>,
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(snapshot, recent_snapshots, mjpeg_stream, start_stream, stop_stream),
-    components(schemas()),
+    paths(snapshot, snapshot_async, job_status, job_result, recent_snapshots, mjpeg_stream, start_stream, stop_stream),
+    components(schemas(SnapshotJobResponse, JobStatusResponse)),
     tags((name = "stream", description = "Stream snapshot, MJPEG streaming, and lifecycle operations"))
 )]
 pub struct StreamApiDoc;
@@ -46,16 +98,36 @@ pub struct StreamApiDoc;
 #[actix_web::get("/{stream_id}/snapshot")]
 pub async fn snapshot(
     path: web::Path<String>,
+    req: HttpRequest,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
     let stream_id = path.into_inner();
 
-    info!(stream_id = %stream_id, "Taking snapshot");
+    debug!(stream_id = %stream_id, "Taking snapshot");
 
     match take_snapshot_impl(stream_id.clone(), &state).await {
-        Ok(jpeg_bytes) => Ok(HttpResponse::Ok()
-            .content_type("image/jpeg")
-            .body(jpeg_bytes)),
+        Ok(jpeg_bytes) => {
+            // Generate ETag for caching
+            let etag = generate_etag(&jpeg_bytes);
+
+            // Check if client has matching ETag (304 Not Modified)
+            if let Some(if_none_match) = req.headers().get("if-none-match") {
+                if let Ok(client_etag) = if_none_match.to_str() {
+                    if client_etag == etag {
+                        return Ok(HttpResponse::NotModified()
+                            .insert_header(("etag", etag))
+                            .insert_header(("cache-control", "private, max-age=60"))
+                            .finish());
+                    }
+                }
+            }
+
+            Ok(HttpResponse::Ok()
+                .content_type("image/jpeg")
+                .insert_header(("etag", etag))
+                .insert_header(("cache-control", "private, max-age=60"))
+                .body(jpeg_bytes))
+        }
         Err(Error::NotFound(msg)) => {
             Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
         }
@@ -84,15 +156,35 @@ pub async fn snapshot(
 #[actix_web::get("/{stream_id}/thumbnail")]
 pub async fn thumbnail(
     path: web::Path<String>,
+    req: HttpRequest,
     state: web::Data<AppState>,
 ) -> ActixResult<HttpResponse> {
     let stream_id = path.into_inner();
-    info!(stream_id = %stream_id, "Taking thumbnail");
+    debug!(stream_id = %stream_id, "Taking thumbnail");
 
     match take_snapshot_impl(stream_id.clone(), &state).await {
-        Ok(jpeg_bytes) => Ok(HttpResponse::Ok()
-            .content_type("image/jpeg")
-            .body(jpeg_bytes)),
+        Ok(jpeg_bytes) => {
+            // Generate ETag for caching
+            let etag = generate_etag(&jpeg_bytes);
+
+            // Check if client has matching ETag (304 Not Modified)
+            if let Some(if_none_match) = req.headers().get("if-none-match") {
+                if let Ok(client_etag) = if_none_match.to_str() {
+                    if client_etag == etag {
+                        return Ok(HttpResponse::NotModified()
+                            .insert_header(("etag", etag))
+                            .insert_header(("cache-control", "private, max-age=60"))
+                            .finish());
+                    }
+                }
+            }
+
+            Ok(HttpResponse::Ok()
+                .content_type("image/jpeg")
+                .insert_header(("etag", etag))
+                .insert_header(("cache-control", "private, max-age=60"))
+                .body(jpeg_bytes))
+        }
         Err(Error::NotFound(msg)) => {
             Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
         }
@@ -598,7 +690,7 @@ pub async fn mjpeg_stream(
         .subscribe_to_stream(&stream_id_str)
         .await
     {
-        info!(stream_id = %stream_id_str, "New client connected to MJPEG stream via CaptureManager");
+        debug!(stream_id = %stream_id_str, "New client connected to MJPEG stream via CaptureManager");
 
         // Create a simple MJPEG stream directly from the broadcast receiver
         let mjpeg_stream = create_simple_mjpeg_stream(frame_receiver);
@@ -625,7 +717,7 @@ pub async fn mjpeg_stream(
     // Get the session from the manager
     match state.stream_manager.get_session(&stream_id) {
         Some(session) => {
-            info!(stream_id = %stream_id, "New client connected to MJPEG stream via StreamManager");
+            debug!(stream_id = %stream_id, "New client connected to MJPEG stream via StreamManager");
 
             // Subscribe to the frame broadcaster
             let frame_receiver = session.subscribe();
@@ -1022,8 +1114,215 @@ fn create_simple_mjpeg_stream(
             Ok(combined.freeze())
         }
         Err(e) => {
-            warn!("MJPEG stream error: {}", e);
+            if should_log_mjpeg_error() {
+                warn!("MJPEG stream error (sampling 1/50): {}", e);
+            }
             Err(actix_web::error::ErrorInternalServerError("Stream error"))
         }
+    })
+}
+
+/// Submit a background snapshot job (async)
+#[utoipa::path(
+    post,
+    path = "/api/stream/{stream_id}/snapshot-async",
+    params(
+        ("stream_id" = String, Path, description = "Stream ID")
+    ),
+    responses(
+        (status = 202, description = "Snapshot job submitted successfully", body = SnapshotJobResponse),
+        (status = 404, description = "Stream not found"),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    security(("jwt_auth" = []), ("api_key" = []))
+)]
+#[actix_web::post("/{stream_id}/snapshot-async")]
+pub async fn snapshot_async(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> ActixResult<HttpResponse> {
+    let stream_id = path.into_inner();
+    info!(stream_id = %stream_id, "Submitting async snapshot job");
+
+    match submit_snapshot_job_impl(stream_id.clone(), &state).await {
+        Ok(response) => Ok(HttpResponse::Accepted().json(response)),
+        Err(Error::NotFound(msg)) => {
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new("stream_not_found", &msg)))
+        }
+        Err(e) => {
+            error!(error = %e, stream_id = stream_id, "Failed to submit snapshot job");
+            Ok(HttpResponse::InternalServerError()
+                .json(ErrorResponse::new("job_submission_error", e.to_string())))
+        }
+    }
+}
+
+/// Get job status for a background snapshot job
+#[utoipa::path(
+    get,
+    path = "/api/jobs/{job_id}/status",
+    params(
+        ("job_id" = String, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 200, description = "Job status retrieved successfully", body = JobStatusResponse),
+        (status = 404, description = "Job not found"),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    security(("jwt_auth" = []), ("api_key" = []))
+)]
+#[actix_web::get("/jobs/{job_id}/status")]
+pub async fn job_status(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> ActixResult<HttpResponse> {
+    let job_id = path.into_inner();
+    info!(job_id = %job_id, "Getting job status");
+
+    match state
+        .background_snapshot_service
+        .get_job_status(&job_id)
+        .await
+    {
+        Ok(status) => {
+            let response = JobStatusResponse {
+                job_id: job_id.clone(),
+                status: format!("{:?}", status),
+                progress: None,             // TODO: Add progress tracking
+                error: None,                // TODO: Extract error from status
+                created_at: "".to_string(), // TODO: Add timestamp tracking
+                completed_at: None,
+                duration_ms: None,
+            };
+            Ok(HttpResponse::Ok().json(response))
+        }
+        Err(Error::NotFound(msg)) => {
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new("job_not_found", &msg)))
+        }
+        Err(e) => {
+            error!(error = %e, job_id = job_id, "Failed to get job status");
+            Ok(HttpResponse::InternalServerError()
+                .json(ErrorResponse::new("status_retrieval_error", e.to_string())))
+        }
+    }
+}
+
+/// Get result of a completed background snapshot job
+#[utoipa::path(
+    get,
+    path = "/api/jobs/{job_id}/result",
+    params(
+        ("job_id" = String, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 200, description = "Job result retrieved successfully", content_type = "image/jpeg"),
+        (status = 202, description = "Job still processing"),
+        (status = 404, description = "Job not found or failed"),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    security(("jwt_auth" = []), ("api_key" = []))
+)]
+#[actix_web::get("/jobs/{job_id}/result")]
+pub async fn job_result(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> ActixResult<HttpResponse> {
+    let job_id = path.into_inner();
+    info!(job_id = %job_id, "Getting job result");
+
+    // First check status
+    match state
+        .background_snapshot_service
+        .get_job_status(&job_id)
+        .await
+    {
+        Ok(job_option) => match job_option {
+            Some(job) => match job.status {
+                JobStatus::Completed => {
+                    // Job is complete, get result
+                    match state
+                        .background_snapshot_service
+                        .get_job_result(&job_id)
+                        .await
+                    {
+                        Ok(result_bytes) => match result_bytes {
+                            Some(bytes) => Ok(HttpResponse::Ok()
+                                .content_type("image/jpeg")
+                                .body(bytes.to_vec())),
+                            None => {
+                                error!(job_id = job_id, "Job completed but no result available");
+                                Ok(HttpResponse::NotFound().json(ErrorResponse::new(
+                                    "no_result",
+                                    "Job completed but result not found",
+                                )))
+                            }
+                        },
+                        Err(e) => {
+                            error!(error = %e, job_id = job_id, "Failed to get job result");
+                            Ok(HttpResponse::InternalServerError()
+                                .json(ErrorResponse::new("result_retrieval_error", e.to_string())))
+                        }
+                    }
+                }
+                JobStatus::Processing | JobStatus::Pending => {
+                    Ok(HttpResponse::Accepted().json(serde_json::json!({
+                        "message": "Job is still processing",
+                        "status": format!("{:?}", job.status)
+                    })))
+                }
+                JobStatus::Failed => Ok(HttpResponse::NotFound().json(ErrorResponse::new(
+                    "job_failed",
+                    "Job failed during processing",
+                ))),
+                JobStatus::Cancelled => Ok(HttpResponse::NotFound()
+                    .json(ErrorResponse::new("job_cancelled", "Job was cancelled"))),
+            },
+            None => {
+                warn!(job_id = job_id, "Job not found");
+                Ok(HttpResponse::NotFound()
+                    .json(ErrorResponse::new("job_not_found", "Job not found")))
+            }
+        },
+        Err(Error::NotFound(msg)) => {
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new("job_not_found", &msg)))
+        }
+        Err(e) => {
+            error!(error = %e, job_id = job_id, "Failed to get job status for result");
+            Ok(HttpResponse::InternalServerError()
+                .json(ErrorResponse::new("status_check_error", e.to_string())))
+        }
+    }
+}
+
+/// Implementation function for submitting async snapshot jobs
+async fn submit_snapshot_job_impl(
+    stream_id: String,
+    state: &AppState,
+) -> Result<SnapshotJobResponse> {
+    // Get the stream from the database
+    let stream = {
+        let repo = StreamRepository::new(state.db.pool());
+        repo.find_by_id(&stream_id)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("Stream {} not found", stream_id)))?
+    };
+
+    // Create capture source from stream configuration
+    let source = create_capture_source_from_stream(&stream)?;
+
+    // Create snapshot config with reasonable defaults
+    let snapshot_config = SnapshotConfig::default();
+
+    // Submit the stream snapshot job using the new method
+    let job_id = state
+        .background_snapshot_service
+        .submit_stream_snapshot_job(source, snapshot_config, stream_id.clone(), None)
+        .await?;
+
+    Ok(SnapshotJobResponse {
+        job_id: job_id.clone(),
+        status: "Pending".to_string(),
+        created_at: gl_core::time::now_iso8601(),
+        message: Some("Snapshot job submitted successfully".to_string()),
     })
 }

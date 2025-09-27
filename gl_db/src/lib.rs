@@ -33,7 +33,7 @@ impl Db {
                 .map_err(|e| Error::Database(format!("Failed to create database: {}", e)))?;
         }
 
-        // Configure SQLite connection options with WAL mode
+        // Configure SQLite connection options with WAL mode and performance tuning
         let connect_options = SqliteConnectOptions::new()
             .filename(db_path)
             .journal_mode(SqliteJournalMode::Wal)
@@ -41,7 +41,9 @@ impl Db {
             .pragma("foreign_keys", "ON")
             .pragma("synchronous", "NORMAL")
             .pragma("cache_size", "10000")
-            .pragma("temp_store", "memory");
+            .pragma("temp_store", "memory")
+            .pragma("busy_timeout", "30000") // 30 second timeout for lock contention
+            .pragma("mmap_size", "268435456"); // 256 MB memory-mapped I/O
 
         // Create connection pool
         let pool = SqlitePoolOptions::new()
@@ -145,6 +147,10 @@ pub use repositories::{
     alerts::{Alert, AlertRepository, CreateAlertRequest},
     analysis_events::{AnalysisEvent, AnalysisEventRepository, CreateAnalysisEvent},
     api_keys::{ApiKey, ApiKeyRepository, CreateApiKeyRequest},
+    background_snapshot_jobs::{
+        BackgroundSnapshotJob, BackgroundSnapshotJobsRepository, CreateBackgroundJobRequest,
+        UpdateBackgroundJobRequest,
+    },
     cached_streams::CachedStreamRepository,
     cached_users::CachedUserRepository,
     captures::{Capture, CaptureRepository, CreateCaptureRequest, UpdateCaptureRequest},

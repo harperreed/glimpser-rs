@@ -309,4 +309,149 @@ impl<'a> StreamRepository<'a> {
 
         Ok(())
     }
+
+    /// List streams with total count in a single query to eliminate N+1 pattern
+    pub async fn list_with_total(
+        &self,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<Stream>, i64)> {
+        let query = if let Some(uid) = user_id {
+            sqlx::query_as::<_, StreamWithCount>(
+                r#"
+                SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                       execution_status, last_executed_at, last_error_message,
+                       COUNT(*) OVER() as total_count
+                FROM streams
+                WHERE user_id = ?1
+                ORDER BY created_at DESC
+                LIMIT ?2 OFFSET ?3
+                "#,
+            )
+            .bind(uid)
+            .bind(limit)
+            .bind(offset)
+        } else {
+            sqlx::query_as::<_, StreamWithCount>(
+                r#"
+                SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                       execution_status, last_executed_at, last_error_message,
+                       COUNT(*) OVER() as total_count
+                FROM streams
+                ORDER BY created_at DESC
+                LIMIT ?1 OFFSET ?2
+                "#,
+            )
+            .bind(limit)
+            .bind(offset)
+        };
+
+        let results = query
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to list streams with total: {}", e)))?;
+
+        if results.is_empty() {
+            return Ok((vec![], 0));
+        }
+
+        let total = results[0].total_count;
+        let streams = results.into_iter().map(|r| r.into()).collect();
+
+        Ok((streams, total))
+    }
+
+    /// Search streams by name with total count and proper user filtering
+    pub async fn search_with_total(
+        &self,
+        user_id: Option<&str>,
+        name_pattern: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<Stream>, i64)> {
+        let pattern = format!("%{}%", name_pattern);
+
+        let query = if let Some(uid) = user_id {
+            sqlx::query_as::<_, StreamWithCount>(
+                r#"
+                SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                       execution_status, last_executed_at, last_error_message,
+                       COUNT(*) OVER() as total_count
+                FROM streams
+                WHERE user_id = ?1 AND name LIKE ?2
+                ORDER BY created_at DESC
+                LIMIT ?3 OFFSET ?4
+                "#,
+            )
+            .bind(uid)
+            .bind(&pattern)
+            .bind(limit)
+            .bind(offset)
+        } else {
+            sqlx::query_as::<_, StreamWithCount>(
+                r#"
+                SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                       execution_status, last_executed_at, last_error_message,
+                       COUNT(*) OVER() as total_count
+                FROM streams
+                WHERE name LIKE ?1
+                ORDER BY created_at DESC
+                LIMIT ?2 OFFSET ?3
+                "#,
+            )
+            .bind(&pattern)
+            .bind(limit)
+            .bind(offset)
+        };
+
+        let results = query
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to search streams with total: {}", e)))?;
+
+        if results.is_empty() {
+            return Ok((vec![], 0));
+        }
+
+        let total = results[0].total_count;
+        let streams = results.into_iter().map(|r| r.into()).collect();
+
+        Ok((streams, total))
+    }
+}
+
+/// Helper struct for queries that return stream data with total count
+#[derive(Debug, FromRow)]
+struct StreamWithCount {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub config: String,
+    pub is_default: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub execution_status: Option<String>,
+    pub last_executed_at: Option<String>,
+    pub last_error_message: Option<String>,
+    pub total_count: i64,
+}
+
+impl From<StreamWithCount> for Stream {
+    fn from(stream_with_count: StreamWithCount) -> Self {
+        Self {
+            id: stream_with_count.id,
+            user_id: stream_with_count.user_id,
+            name: stream_with_count.name,
+            description: stream_with_count.description,
+            config: stream_with_count.config,
+            is_default: stream_with_count.is_default,
+            created_at: stream_with_count.created_at,
+            updated_at: stream_with_count.updated_at,
+            execution_status: stream_with_count.execution_status,
+            last_executed_at: stream_with_count.last_executed_at,
+            last_error_message: stream_with_count.last_error_message,
+        }
+    }
 }

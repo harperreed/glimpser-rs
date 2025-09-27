@@ -19,7 +19,7 @@ use std::{
 use tracing::{debug, info, instrument, warn};
 
 /// FFmpeg hardware acceleration types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HardwareAccel {
     /// Software decoding (no acceleration)
     None,
@@ -355,7 +355,13 @@ impl CaptureSource for FfmpegSource {
         let command = self.build_snapshot_command();
         debug!(command = ?command, "Running FFmpeg snapshot command");
 
-        let result = run(command).await?;
+        // Run FFmpeg in a blocking thread to avoid blocking the async executor
+        let result = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(run(command))
+        })
+        .await
+        .map_err(|e| Error::Config(format!("Background FFmpeg task failed: {}", e)))??;
 
         if !result.success() {
             // Log stderr for debugging

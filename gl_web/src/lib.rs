@@ -10,7 +10,10 @@ use gl_scheduler::JobScheduler;
 use gl_stream::StreamManager;
 use gl_update::UpdateService;
 
+use background_snapshot_service::BackgroundSnapshotService;
+
 pub mod auth;
+pub mod background_snapshot_service;
 pub mod capture_manager;
 pub mod error;
 pub mod frontend;
@@ -40,6 +43,7 @@ pub struct AppState {
     pub update_service: Arc<tokio::sync::Mutex<UpdateService>>,
     pub ai_client: Arc<dyn AiClient>,
     pub job_scheduler: Arc<JobScheduler>,
+    pub background_snapshot_service: Arc<BackgroundSnapshotService>,
 }
 
 // Re-export the create_app function from routing module for backward compatibility

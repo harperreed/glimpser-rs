@@ -8,10 +8,10 @@ use actix_web::{
     http::header::{HeaderName, HeaderValue},
     Error, HttpResponse,
 };
+use dashmap::DashMap;
 use futures_util::future::{ready, LocalBoxFuture, Ready};
-use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
@@ -22,6 +22,8 @@ pub struct RateLimitConfig {
     pub requests_per_minute: u32,
     /// Time window duration
     pub window_duration: Duration,
+    /// Trusted proxy IP addresses that can set X-Forwarded-For headers
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for RateLimitConfig {
@@ -29,6 +31,7 @@ impl Default for RateLimitConfig {
         Self {
             requests_per_minute: 100,
             window_duration: Duration::from_secs(60),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()], // Localhost by default
         }
     }
 }
@@ -42,7 +45,7 @@ struct RateLimitEntry {
 
 #[derive(Debug, Clone)]
 struct SimpleRateLimiter {
-    entries: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
+    entries: Arc<DashMap<String, RateLimitEntry>>,
     max_requests: u32,
     window_duration: Duration,
 }
@@ -50,7 +53,7 @@ struct SimpleRateLimiter {
 impl SimpleRateLimiter {
     fn new(max_requests: u32, window_duration: Duration) -> Self {
         Self {
-            entries: Arc::new(Mutex::new(HashMap::new())),
+            entries: Arc::new(DashMap::new()),
             max_requests,
             window_duration,
         }
@@ -58,12 +61,15 @@ impl SimpleRateLimiter {
 
     fn check_rate_limit(&self, key: &str) -> (bool, u32, Duration) {
         let now = Instant::now();
-        let mut entries = self.entries.lock().unwrap();
 
-        let entry = entries.entry(key.to_string()).or_insert(RateLimitEntry {
-            count: 0,
-            window_start: now,
-        });
+        // Use DashMap's entry API for lock-free operations
+        let mut entry = self
+            .entries
+            .entry(key.to_string())
+            .or_insert(RateLimitEntry {
+                count: 0,
+                window_start: now,
+            });
 
         // If window has expired, reset
         if now.duration_since(entry.window_start) >= self.window_duration {
@@ -140,10 +146,11 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
         let limiter = self.limiter.clone();
+        let config = self.config.clone();
 
         Box::pin(async move {
-            // Extract client IP for rate limiting (simplified to IP-only)
-            let client_ip = get_client_ip(&req);
+            // Extract client IP for rate limiting with trusted proxy validation
+            let client_ip = get_client_ip(&req, &config.trusted_proxies);
 
             debug!("Rate limit check: ip={}", client_ip);
 
@@ -194,29 +201,57 @@ where
     }
 }
 
-/// Extract client IP from request headers and connection info
-fn get_client_ip(req: &ServiceRequest) -> String {
-    // Try X-Forwarded-For first (proxy/load balancer)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(forwarded_str) = forwarded.to_str() {
-            // Take the first IP from the comma-separated list
-            if let Some(first_ip) = forwarded_str.split(',').next() {
-                return first_ip.trim().to_string();
+/// Extract client IP from request headers and connection info with trusted proxy validation
+fn get_client_ip(req: &ServiceRequest, trusted_proxies: &[String]) -> String {
+    // Get the actual connection peer address first
+    let peer_ip = req
+        .peer_addr()
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Only trust proxy headers if the request comes from a trusted proxy
+    let is_trusted_proxy = trusted_proxies.iter().any(|trusted| trusted == &peer_ip);
+
+    if is_trusted_proxy {
+        // Try X-Forwarded-For first (proxy/load balancer)
+        if let Some(forwarded) = req.headers().get("x-forwarded-for") {
+            if let Ok(forwarded_str) = forwarded.to_str() {
+                // Take the first IP from the comma-separated list
+                if let Some(first_ip) = forwarded_str.split(',').next() {
+                    let trimmed_ip = first_ip.trim();
+                    if !trimmed_ip.is_empty() {
+                        debug!(
+                            "Using X-Forwarded-For IP: {} from trusted proxy: {}",
+                            trimmed_ip, peer_ip
+                        );
+                        return trimmed_ip.to_string();
+                    }
+                }
             }
         }
-    }
 
-    // Try X-Real-IP (nginx proxy)
-    if let Some(real_ip) = req.headers().get("x-real-ip") {
-        if let Ok(real_ip_str) = real_ip.to_str() {
-            return real_ip_str.to_string();
+        // Try X-Real-IP (nginx proxy)
+        if let Some(real_ip) = req.headers().get("x-real-ip") {
+            if let Ok(real_ip_str) = real_ip.to_str() {
+                if !real_ip_str.is_empty() {
+                    debug!(
+                        "Using X-Real-IP: {} from trusted proxy: {}",
+                        real_ip_str, peer_ip
+                    );
+                    return real_ip_str.to_string();
+                }
+            }
+        }
+    } else if !trusted_proxies.is_empty() {
+        // Log when proxy headers are ignored from untrusted sources
+        if req.headers().get("x-forwarded-for").is_some()
+            || req.headers().get("x-real-ip").is_some()
+        {
+            warn!("Ignoring proxy headers from untrusted IP: {}", peer_ip);
         }
     }
 
     // Fall back to connection peer address
-    if let Some(peer_addr) = req.peer_addr() {
-        peer_addr.ip().to_string()
-    } else {
-        "unknown".to_string()
-    }
+    debug!("Using peer IP: {}", peer_ip);
+    peer_ip
 }

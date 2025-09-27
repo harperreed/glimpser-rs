@@ -1,23 +1,30 @@
 //! ABOUTME: File-based capture source for reading video files
 //! ABOUTME: Implements CaptureSource trait for MP4 and other video file formats
 
-use crate::{generate_snapshot_with_ffmpeg, CaptureHandle, CaptureSource, SnapshotConfig};
+use crate::{
+    CaptureHandle, CaptureSource, FfmpegConfig, HardwareAccel, RtspTransport, SnapshotConfig,
+    StreamingFfmpegSource, StreamingSourceConfig,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 use tracing::{debug, info, instrument};
 
-/// File-based capture source that reads from video files
-#[derive(Debug, Clone)]
+/// File-based capture source that reads from video files using optimized streaming
+#[derive(Debug)]
 pub struct FileSource {
     /// Path to the video file
     file_path: PathBuf,
     /// Configuration for snapshot generation
     config: SnapshotConfig,
+    /// Internal streaming source for optimized performance
+    streaming_source: Arc<Mutex<Option<StreamingFfmpegSource>>>,
 }
 
 impl FileSource {
@@ -26,6 +33,7 @@ impl FileSource {
         Self {
             file_path: file_path.as_ref().to_path_buf(),
             config: SnapshotConfig::default(),
+            streaming_source: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -34,6 +42,7 @@ impl FileSource {
         Self {
             file_path: file_path.as_ref().to_path_buf(),
             config,
+            streaming_source: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -84,6 +93,64 @@ impl FileSource {
             ))),
         }
     }
+
+    /// Initialize the streaming source for optimized performance
+    #[instrument(skip(self))]
+    async fn ensure_streaming_source(&self) -> Result<()> {
+        // Check if already initialized without holding the lock long
+        let needs_init = {
+            let source_guard = self.streaming_source.lock().unwrap();
+            source_guard.is_none()
+        };
+
+        if needs_init {
+            debug!(path = %self.file_path.display(), "Initializing streaming source for file");
+
+            // Create FFmpeg config for file input
+            let ffmpeg_config = FfmpegConfig {
+                input_url: format!("file:{}", self.file_path.display()),
+                hardware_accel: HardwareAccel::VideoToolbox, // Use hardware acceleration on macOS
+                input_options: HashMap::new(),
+                rtsp_transport: RtspTransport::Tcp,
+                video_codec: None,
+                frame_rate: Some(10.0), // Default frame rate for file sources
+                buffer_size: Some("1M".to_string()),
+                timeout: Some(30),
+                snapshot_config: self.config.clone(),
+            };
+
+            // Create streaming config optimized for file sources
+            let streaming_config = StreamingSourceConfig {
+                ffmpeg_config,
+                frame_rate: 10.0,
+                pool_size: 1, // Files only need 1 process since they're not real-time
+                health_monitoring: true,
+                frame_timeout: Duration::from_secs(5),
+            };
+
+            let streaming_source = StreamingFfmpegSource::new(streaming_config).await?;
+
+            // Now store the created source
+            {
+                let mut source_guard = self.streaming_source.lock().unwrap();
+                *source_guard = Some(streaming_source);
+            }
+
+            info!(path = %self.file_path.display(), "Streaming source initialized successfully");
+        }
+
+        Ok(())
+    }
+}
+
+impl Clone for FileSource {
+    fn clone(&self) -> Self {
+        Self {
+            file_path: self.file_path.clone(),
+            config: self.config.clone(),
+            streaming_source: Arc::new(Mutex::new(None)), // Create fresh streaming source for clone
+        }
+    }
 }
 
 #[async_trait]
@@ -107,19 +174,48 @@ impl CaptureSource for FileSource {
         debug!(
             path = %self.file_path.display(),
             quality = self.config.quality,
-            "Taking snapshot from file source"
+            "Taking optimized snapshot from file source"
         );
 
-        // Use ffmpeg to extract a frame from the video file
-        generate_snapshot_with_ffmpeg(&self.file_path, &self.config).await
+        // Ensure streaming source is initialized
+        self.ensure_streaming_source().await?;
+
+        // Clone the streaming source to use outside the lock
+        let streaming_source = {
+            let source_guard = self.streaming_source.lock().unwrap();
+            if let Some(ref streaming_source) = *source_guard {
+                streaming_source.clone()
+            } else {
+                return Err(Error::Config(
+                    "Streaming source not initialized".to_string(),
+                ));
+            }
+        };
+
+        // Now we can use the streaming source without holding the lock
+        let handle = streaming_source.start().await?;
+        let snapshot = handle.snapshot().await?;
+        let _ = handle.stop().await; // Clean up after snapshot
+        Ok(snapshot)
     }
 
     #[instrument(skip(self))]
     async fn stop(&self) -> Result<()> {
         debug!(path = %self.file_path.display(), "Stopping file capture source");
 
-        // For file sources, there's no background process to stop
-        // This is a no-op but maintains the interface contract
+        // Clean up the streaming source if it exists
+        let streaming_source = {
+            let mut source_guard = self.streaming_source.lock().unwrap();
+            source_guard.take()
+        };
+
+        if let Some(streaming_source) = streaming_source {
+            if let Ok(handle) = streaming_source.start().await {
+                let _ = handle.stop().await; // Best effort cleanup
+            }
+            debug!("Streaming source cleaned up");
+        }
+
         Ok(())
     }
 }

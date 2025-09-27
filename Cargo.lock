@@ -2062,6 +2062,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
+ "dashmap",
  "futures-util",
  "gl_ai",
  "gl_analysis",

@@ -132,6 +132,9 @@ pub struct SecurityConfig {
     pub argon2_params: Argon2Config,
     /// Whether to use secure cookies (requires HTTPS)
     pub secure_cookies: bool,
+    /// JWT issuer identifier for token validation
+    #[validate(length(min = 1))]
+    pub jwt_issuer: String,
 }
 
 impl Default for SecurityConfig {
@@ -153,6 +156,7 @@ impl Default for SecurityConfig {
             jwt_secret: format!("INSECURE-RANDOM-{}-CHANGE-IN-PRODUCTION", timestamp),
             argon2_params: Argon2Config::default(),
             secure_cookies: is_production, // Auto-enable in production environments
+            jwt_issuer: "glimpser".to_string(), // Default issuer name
         }
     }
 }
@@ -353,6 +357,7 @@ impl Config {
             .set_default("security.argon2_params.time_cost", 2)?
             .set_default("security.argon2_params.parallelism", 1)?
             .set_default("security.secure_cookies", true)?
+            .set_default("security.jwt_issuer", "glimpser")?
             .set_default("features.enable_rtsp", false)?
             .set_default("features.enable_ai", false)?
             .set_default("storage.artifacts_dir", "data/artifacts")?

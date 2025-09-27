@@ -4,13 +4,40 @@
 #![allow(unused_imports)] // post is used in router but clippy doesn't detect it
 
 use crate::auth::{JwtAuth, PasswordAuth};
+
+/// HTML escape utility to prevent XSS attacks
+pub fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+/// Generate ETag from image bytes for caching
+fn generate_etag(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let hash = hasher.finalize();
+    format!("\"{}\"", hex::encode(&hash[..8])) // Use first 8 bytes of SHA-256 for ETag
+}
+
+/// Log sampling utility to reduce noise from repetitive MJPEG lag warnings
+static MJPEG_LAG_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Sample MJPEG lag warnings - only log every Nth occurrence to reduce noise
+fn should_log_mjpeg_lag() -> bool {
+    let count = MJPEG_LAG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    count % 10 == 0 // Log every 10th lag warning
+}
 use askama::Template;
 use axum::{
     body::Body,
     extract::{Form, FromRef, Path, State},
     http::{
-        header::{LOCATION, SET_COOKIE},
-        StatusCode,
+        header::{CACHE_CONTROL, ETAG, IF_NONE_MATCH, LOCATION, SET_COOKIE},
+        HeaderMap, StatusCode,
     },
     response::{Html, IntoResponse, Json, Redirect, Response},
     routing::{get, post},
@@ -20,6 +47,8 @@ use gl_capture::{CaptureSource, FileSource};
 use gl_core::Error;
 use gl_db::{StreamRepository, UserRepository};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tracing::{debug, warn};
 
@@ -90,6 +119,7 @@ where
         match crate::auth::JwtAuth::verify_token(
             token,
             &frontend_state.app_state.security_config.jwt_secret,
+            &frontend_state.app_state.security_config.jwt_issuer,
         ) {
             Ok(claims) => {
                 debug!("JWT token verified for user: {}", claims.sub);
@@ -589,7 +619,11 @@ async fn login_handler(
             }
 
             // Verify password
-            match PasswordAuth::verify_password(&form.password, &user.password_hash) {
+            match PasswordAuth::verify_password(
+                &form.password,
+                &user.password_hash,
+                &frontend_state.app_state.security_config.argon2_params,
+            ) {
                 Ok(true) => {
                     debug!("Password verification successful for user: {}", user.id);
 
@@ -598,6 +632,7 @@ async fn login_handler(
                         &user.id,
                         &user.email,
                         &frontend_state.app_state.security_config.jwt_secret,
+                        &frontend_state.app_state.security_config.jwt_issuer,
                     ) {
                         Ok(token) => {
                             debug!("JWT token created for user: {}", user.id);
@@ -720,11 +755,11 @@ async fn streams_list_handler(State(frontend_state): State<FrontendState>) -> im
                     </div>"#,
                     s.id,
                     if s.status == "active" {
-                        format!(r#"<img src="/api/stream/{}/thumbnail" alt="{}" class="w-full h-full object-cover">"#, s.stream_id, s.name)
+                        format!(r#"<img src="/api/stream/{}/thumbnail" alt="{}" class="w-full h-full object-cover">"#, s.stream_id, html_escape(&s.name))
                     } else {
                         "<span class=\"text-gray-500\">Offline</span>".to_string()
                     },
-                    s.name,
+                    html_escape(&s.name),
                     if s.status == "active" { "bg-green-100 text-green-800" } else { "bg-gray-100 text-gray-600" },
                     if s.status == "active" { "Online" } else { "Offline" },
                     s.last_frame_at,
@@ -894,7 +929,7 @@ async fn admin_handler(
                 <button hx-delete="/api/settings/streams/{}" hx-confirm="Delete {}?" hx-target="closest tr" hx-swap="outerHTML" class="text-red-600 hover:text-red-900">Delete</button>
             </td>
         </tr>"#,
-        s.name, s.id,
+        html_escape(&s.name), s.id,
         if s.status == "active" { "bg-green-100 text-green-800" } else { "bg-gray-100 text-gray-800" },
         s.status,
         s.last_frame_at,
@@ -904,17 +939,10 @@ async fn admin_handler(
         } else {
             format!("<button hx-post=\"/api/settings/streams/{}/start\" hx-target=\"closest tr\" hx-swap=\"outerHTML\" class=\"text-green-600 hover:text-green-900\">Start</button>", s.id)
         },
-        s.id, s.id, s.name
+        s.id, s.id, html_escape(&s.name)
     )).collect::<Vec<_>>().join("");
 
     // Helper function to generate a clean settings input with HTML escaping
-    let html_escape = |s: &str| -> String {
-        s.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&#x27;")
-    };
 
     let generate_setting_html = |setting: &gl_db::repositories::settings::Setting| -> String {
         let title = html_escape(setting.description.as_deref().unwrap_or(&setting.key));
@@ -2262,14 +2290,42 @@ async fn admin_stop_stream(
     }
 }
 
-/// Stream snapshot API endpoint
+/// Stream snapshot API endpoint with ETag caching support
 async fn stream_snapshot(
     Path(stream_id): Path<String>,
+    headers: HeaderMap,
     State(frontend_state): State<FrontendState>,
 ) -> impl IntoResponse {
     use axum::response::Response;
 
-    tracing::info!("Stream snapshot requested for: {}", stream_id);
+    tracing::debug!("Stream snapshot requested for: {}", stream_id);
+
+    // Helper function to create response with ETag
+    let create_response = |bytes: Vec<u8>| -> Response {
+        let etag = generate_etag(&bytes);
+
+        // Check if client has matching ETag (304 Not Modified)
+        if let Some(if_none_match) = headers.get(IF_NONE_MATCH) {
+            if let Ok(client_etag) = if_none_match.to_str() {
+                if client_etag == etag {
+                    return Response::builder()
+                        .status(StatusCode::NOT_MODIFIED)
+                        .header(ETAG, etag)
+                        .header(CACHE_CONTROL, "private, max-age=60") // Cache for 1 minute
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            }
+        }
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "image/jpeg")
+            .header(ETAG, etag)
+            .header(CACHE_CONTROL, "private, max-age=60") // Cache for 1 minute
+            .body(Body::from(bytes))
+            .unwrap()
+    };
 
     // Try to get snapshot from capture manager first
     match frontend_state
@@ -2278,23 +2334,11 @@ async fn stream_snapshot(
         .get_latest_snapshot(&stream_id)
         .await
     {
-        Ok(snapshot_bytes) => Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "image/jpeg")
-            .header("cache-control", "no-cache")
-            .body(axum::body::Body::from(snapshot_bytes.to_vec()))
-            .unwrap()
-            .into_response(),
+        Ok(snapshot_bytes) => create_response(snapshot_bytes.to_vec()).into_response(),
         Err(_) => {
             // Fall back to direct capture if no cached snapshot
             match take_snapshot_direct(&frontend_state, &stream_id).await {
-                Ok(jpeg_bytes) => Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "image/jpeg")
-                    .header("cache-control", "no-cache")
-                    .body(axum::body::Body::from(jpeg_bytes))
-                    .unwrap()
-                    .into_response(),
+                Ok(jpeg_bytes) => create_response(jpeg_bytes).into_response(),
                 Err(e) => {
                     warn!("Failed to capture snapshot for stream {}: {}", stream_id, e);
                     (
@@ -2311,12 +2355,13 @@ async fn stream_snapshot(
 /// Stream thumbnail API endpoint
 async fn stream_thumbnail(
     Path(stream_id): Path<String>,
+    headers: HeaderMap,
     State(frontend_state): State<FrontendState>,
 ) -> impl IntoResponse {
-    tracing::info!("Stream thumbnail requested for: {}", stream_id);
+    tracing::debug!("Stream thumbnail requested for: {}", stream_id);
 
     // Thumbnail is just a cached snapshot - delegate to snapshot endpoint
-    stream_snapshot(Path(stream_id), State(frontend_state)).await
+    stream_snapshot(Path(stream_id), headers, State(frontend_state)).await
 }
 
 /// MJPEG streaming API endpoint - Real multipart streaming
@@ -2324,7 +2369,7 @@ async fn stream_mjpeg(
     Path(stream_id): Path<String>,
     State(frontend_state): State<FrontendState>,
 ) -> impl IntoResponse {
-    tracing::info!("MJPEG stream requested for: {}", stream_id);
+    tracing::debug!("MJPEG stream requested for: {}", stream_id);
 
     // Check if stream exists and is active
     match fetch_single_stream(&frontend_state, &stream_id).await {
@@ -2337,7 +2382,7 @@ async fn stream_mjpeg(
                 .await
             {
                 Some(mut frame_receiver) => {
-                    tracing::info!("🎥 Starting real MJPEG stream for: {}", stream_id);
+                    tracing::debug!("🎥 Starting real MJPEG stream for: {}", stream_id);
 
                     // Create the multipart MJPEG stream
                     let boundary = "frame";
@@ -2359,11 +2404,13 @@ async fn stream_mjpeg(
                                     yield Ok(bytes::Bytes::from(format!("\r\n--{}\r\n", boundary)));
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
-                                    tracing::warn!("MJPEG stream {} lagged, missed {} frames", stream_id, missed);
+                                    if should_log_mjpeg_lag() {
+                                        tracing::warn!("MJPEG stream {} lagged, missed {} frames (sampling 1/10)", stream_id, missed);
+                                    }
                                     continue;
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                    tracing::info!("MJPEG stream {} ended - capture stopped", stream_id);
+                                    tracing::debug!("MJPEG stream {} ended - capture stopped", stream_id);
                                     break;
                                 }
                             }
@@ -2650,7 +2697,7 @@ async fn auth_setup_signup(
     debug!("First admin signup attempt for email: {}", payload.email);
 
     // Validate request payload
-    if let Err(_) = validator::Validate::validate(&payload) {
+    if validator::Validate::validate(&payload).is_err() {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -2693,7 +2740,10 @@ async fn auth_setup_signup(
     }
 
     // Hash the password
-    let password_hash = match PasswordAuth::hash_password(&payload.password) {
+    let password_hash = match PasswordAuth::hash_password(
+        &payload.password,
+        &frontend_state.app_state.security_config.argon2_params,
+    ) {
         Ok(hash) => hash,
         Err(e) => {
             warn!("Failed to hash password: {}", e);
@@ -2751,6 +2801,7 @@ async fn auth_setup_signup(
         &user.id,
         &user.email,
         &frontend_state.app_state.security_config.jwt_secret,
+        &frontend_state.app_state.security_config.jwt_issuer,
     ) {
         Ok(token) => {
             debug!("JWT token created for first admin: {}", user.id);

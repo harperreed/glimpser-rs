@@ -10,8 +10,12 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, warn};
 
 pub mod artifact_storage;
+pub mod background_processor;
 pub mod ffmpeg_source;
 pub mod file_source;
+pub mod hardware_accel;
+pub mod process_pool;
+pub mod streaming_source;
 pub mod yt_dlp_source;
 
 #[cfg(feature = "website")]
@@ -20,8 +24,15 @@ pub mod website_source;
 pub use artifact_storage::{
     snapshot_and_store, ArtifactStorageConfig, ArtifactStorageService, StoredArtifact,
 };
+pub use background_processor::{
+    BackgroundSnapshotProcessor, JobStatus, ProcessorStats, SnapshotJob,
+};
 pub use ffmpeg_source::{FfmpegConfig, FfmpegSource, HardwareAccel, RtspTransport};
 pub use file_source::FileSource;
+pub use process_pool::{
+    FfmpegProcess, FfmpegProcessPool, ProcessHealth, ProcessPoolConfig, ProcessPoolMetrics,
+};
+pub use streaming_source::{StreamingFfmpegSource, StreamingSourceConfig};
 pub use yt_dlp_source::{OutputFormat, YtDlpConfig, YtDlpSource};
 
 #[cfg(feature = "website")]
@@ -173,7 +184,13 @@ pub async fn generate_snapshot_with_ffmpeg(
 
     debug!(command = ?spec, "Running ffmpeg command");
 
-    let result = run(spec).await?;
+    // Run FFmpeg in a blocking thread to avoid blocking the async executor
+    let result = tokio::task::spawn_blocking(move || {
+        let runtime = tokio::runtime::Handle::current();
+        runtime.block_on(run(spec))
+    })
+    .await
+    .map_err(|e| Error::Config(format!("Background FFmpeg task failed: {}", e)))??;
 
     if !result.success() {
         error!(

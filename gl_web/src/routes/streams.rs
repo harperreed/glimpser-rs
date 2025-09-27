@@ -2,7 +2,7 @@
 //! ABOUTME: Provides full stream management with pagination, filtering, and ETag support
 
 use actix_web::{web, HttpRequest, HttpResponse, Result as ActixResult};
-use gl_db::{CreateStreamRequest, Stream, StreamRepository, UpdateStreamRequest};
+use gl_db::{CachedStreamRepository, CreateStreamRequest, Stream, UpdateStreamRequest};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use validator::Validate;
@@ -105,37 +105,30 @@ pub async fn list_streams(
         )));
     }
 
-    let repo = StreamRepository::new(state.db.pool());
+    let repo = CachedStreamRepository::new(state.db.pool(), state.cache.clone());
     let offset = (query.page as i64) * (query.page_size as i64);
     let limit = query.page_size as i64;
 
     // All users see their own streams
     let filter_user_id = Some(user.id.as_str());
 
+    // Use optimized compound queries to eliminate N+1 pattern
     let (streams, total) = if let Some(search) = &query.search {
-        // Search by name - note: this doesn't respect user filtering in current impl
-        let streams = repo
-            .search_by_name(search, offset, limit)
+        // Search by name with proper user filtering and count
+        repo.search_with_total(filter_user_id, search, offset, limit)
             .await
             .map_err(|e| {
-                warn!(error = %e, "Failed to search streams");
+                warn!(error = %e, "Failed to search streams with total");
                 actix_web::error::ErrorInternalServerError("Database error")
-            })?;
-        let total = streams.len() as i64; // Approximate for search
-        (streams, total)
+            })?
     } else {
-        let streams = repo
-            .list(filter_user_id, offset, limit)
+        // List streams with total count in single query
+        repo.list_with_total(filter_user_id, offset, limit)
             .await
             .map_err(|e| {
-                warn!(error = %e, "Failed to list streams");
+                warn!(error = %e, "Failed to list streams with total");
                 actix_web::error::ErrorInternalServerError("Database error")
-            })?;
-        let total = repo.count(filter_user_id).await.map_err(|e| {
-            warn!(error = %e, "Failed to count streams");
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
-        (streams, total)
+            })?
     };
 
     let total_pages = ((total as f64) / (query.page_size as f64)).ceil() as u32;
@@ -168,7 +161,7 @@ pub async fn get_stream(
         "Getting stream"
     );
 
-    let repo = StreamRepository::new(state.db.pool());
+    let repo = CachedStreamRepository::new(state.db.pool(), state.cache.clone());
     let stream = repo.find_by_id(&stream_id).await.map_err(|e| {
         warn!(error = %e, "Failed to find stream");
         actix_web::error::ErrorInternalServerError("Database error")
@@ -272,7 +265,7 @@ pub async fn create_stream(
         is_default: payload.is_default,
     };
 
-    let repo = StreamRepository::new(state.db.pool());
+    let repo = CachedStreamRepository::new(state.db.pool(), state.cache.clone());
     let stream = repo.create(request).await.map_err(|e| {
         let error_msg = e.to_string();
         warn!(error = %e, user_id = %user.id, "Failed to create stream");
@@ -323,7 +316,7 @@ pub async fn update_stream(
         actix_web::error::ErrorBadRequest(format!("Validation error: {}", e))
     })?;
 
-    let repo = StreamRepository::new(state.db.pool());
+    let repo = CachedStreamRepository::new(state.db.pool(), state.cache.clone());
 
     // Check if stream exists and user has access
     let existing = repo.find_by_id(&stream_id).await.map_err(|e| {
@@ -416,7 +409,7 @@ pub async fn delete_stream(
         "Deleting stream"
     );
 
-    let repo = StreamRepository::new(state.db.pool());
+    let repo = CachedStreamRepository::new(state.db.pool(), state.cache.clone());
 
     // Check if stream exists and user has access
     let existing = repo.find_by_id(&stream_id).await.map_err(|e| {

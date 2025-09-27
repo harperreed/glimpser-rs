@@ -16,7 +16,13 @@ async fn create_test_app_state() -> AppState {
         .await
         .expect("Failed to create test database");
 
-    let capture_manager = Arc::new(capture_manager::CaptureManager::new(db.pool().clone()));
+    let background_snapshot_service = Arc::new(
+        crate::background_snapshot_service::BackgroundSnapshotService::new(db.pool().clone()),
+    );
+    let capture_manager = Arc::new(capture_manager::CaptureManager::new(
+        db.pool().clone(),
+        background_snapshot_service.clone(),
+    ));
     let stream_metrics = gl_stream::StreamMetrics::new();
     let stream_manager = Arc::new(StreamManager::new(stream_metrics));
 
@@ -32,6 +38,7 @@ async fn create_test_app_state() -> AppState {
         body_limits_config: middleware::bodylimits::BodyLimitsConfig::default(),
         capture_manager: capture_manager.clone(),
         stream_manager,
+        background_snapshot_service,
         update_service: {
             // Create a test update service with dummy configuration
             let mut update_config = gl_update::UpdateConfig::default();
@@ -68,7 +75,8 @@ async fn create_test_app_state() -> AppState {
 
 async fn create_test_user(state: &AppState, email: &str, password: &str) -> gl_db::User {
     let user_repo = UserRepository::new(state.db.pool());
-    let password_hash = PasswordAuth::hash_password(password).expect("Failed to hash password");
+    let password_hash = PasswordAuth::hash_password(password, &state.security_config.argon2_params)
+        .expect("Failed to hash password");
 
     let create_request = CreateUserRequest {
         username: email.split('@').next().unwrap().to_string(),
@@ -92,6 +100,7 @@ async fn test_settings_streams_crud_happy_path() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -189,6 +198,7 @@ async fn test_settings_scope_health() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
     let app = test::init_service(create_app(state)).await;
@@ -209,6 +219,7 @@ async fn test_settings_streams_routes_exist() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -249,6 +260,7 @@ async fn test_settings_users_crud_happy_path() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -302,6 +314,7 @@ async fn test_settings_api_keys_crud_happy_path() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -405,6 +418,7 @@ async fn test_me_endpoint_authenticated() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -445,6 +459,7 @@ async fn test_admin_endpoint_requires_admin() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -470,6 +485,7 @@ async fn test_admin_endpoint_allows_admin() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -646,6 +662,7 @@ async fn test_streams_crud_happy_path() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -723,6 +740,7 @@ async fn test_streaming_endpoints() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -785,6 +803,7 @@ async fn test_stream_lifecycle_endpoints() {
         &user.id,
         &user.email,
         &state.security_config.jwt_secret,
+        &state.security_config.jwt_issuer,
     )
     .expect("Failed to create token");
 
@@ -938,9 +957,12 @@ mod frontend_template_tests {
         };
 
         // Verify password verification works (this tests the auth integration)
-        let password_valid =
-            crate::auth::PasswordAuth::verify_password(&form_data.password, &user.password_hash)
-                .expect("Password verification should work");
+        let password_valid = crate::auth::PasswordAuth::verify_password(
+            &form_data.password,
+            &user.password_hash,
+            &state.security_config.argon2_params,
+        )
+        .expect("Password verification should work");
 
         assert!(password_valid, "Password should be valid for test user");
     }

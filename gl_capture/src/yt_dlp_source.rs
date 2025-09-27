@@ -189,7 +189,13 @@ impl YtDlpSource {
             .args(args)
             .timeout(Duration::from_secs(30));
 
-        let result = run(spec).await?;
+        // Run yt-dlp in a blocking thread to avoid blocking the async executor
+        let result = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(run(spec))
+        })
+        .await
+        .map_err(|e| Error::Config(format!("Background yt-dlp task failed: {}", e)))??;
         if !result.success() {
             return Err(Error::Config(format!(
                 "Failed to get stream URL: {}",
@@ -310,7 +316,14 @@ impl CaptureSource for YtDlpSource {
 
         // Then use ffmpeg directly on the stream URL
         let cmd_spec = self.build_direct_ffmpeg_command(&stream_url, &temp_path);
-        let cmd_result = run(cmd_spec).await?;
+
+        // Run FFmpeg in a blocking thread to avoid blocking the async executor
+        let cmd_result = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(run(cmd_spec))
+        })
+        .await
+        .map_err(|e| Error::Config(format!("Background FFmpeg task failed: {}", e)))??;
 
         if !cmd_result.success() {
             return Err(Error::Config(format!(

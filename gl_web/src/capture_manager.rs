@@ -7,7 +7,7 @@ use gl_analysis::{AnalysisConfig, AnalysisService, ProcessorContext, ProcessorIn
 use gl_capture::{
     artifact_storage::{ArtifactStorageConfig, ArtifactStorageService},
     CaptureHandle, CaptureSource, FfmpegConfig, FfmpegSource, FileSource, HardwareAccel,
-    OutputFormat, RtspTransport, YtDlpConfig, YtDlpSource,
+    OutputFormat, RtspTransport, SnapshotConfig, YtDlpConfig, YtDlpSource,
 };
 #[cfg(feature = "website")]
 use gl_capture::{WebsiteConfig, WebsiteSource};
@@ -26,6 +26,8 @@ use tokio::sync::{broadcast, oneshot, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
+
+use crate::background_snapshot_service::BackgroundSnapshotService;
 
 /// Status of a running capture
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,17 +93,22 @@ pub struct CaptureManager {
     analysis_service: Option<Arc<tokio::sync::Mutex<AnalysisService>>>,
     storage_config: gl_config::StorageConfig,
     job_scheduler: Arc<RwLock<Option<Arc<gl_scheduler::JobScheduler>>>>,
+    background_snapshot_service: Arc<BackgroundSnapshotService>,
 }
 
 impl CaptureManager {
     /// Create a new CaptureManager
-    pub fn new(db_pool: sqlx::SqlitePool) -> Self {
+    pub fn new(
+        db_pool: sqlx::SqlitePool,
+        background_snapshot_service: Arc<BackgroundSnapshotService>,
+    ) -> Self {
         let manager = Self {
             db_pool: db_pool.clone(),
             running_captures: Arc::new(RwLock::new(HashMap::new())),
             analysis_service: None,
             storage_config: gl_config::StorageConfig::default(),
             job_scheduler: Arc::new(RwLock::new(None)),
+            background_snapshot_service,
         };
 
         // Reset any stale "active" statuses from previous server runs
@@ -121,6 +128,7 @@ impl CaptureManager {
     pub fn with_storage_config(
         db_pool: sqlx::SqlitePool,
         storage_config: gl_config::StorageConfig,
+        background_snapshot_service: Arc<BackgroundSnapshotService>,
     ) -> Self {
         Self {
             db_pool: db_pool.clone(),
@@ -128,6 +136,7 @@ impl CaptureManager {
             analysis_service: None,
             storage_config,
             job_scheduler: Arc::new(RwLock::new(None)),
+            background_snapshot_service,
         }
     }
 
@@ -136,6 +145,7 @@ impl CaptureManager {
         db_pool: sqlx::SqlitePool,
         storage_config: gl_config::StorageConfig,
         app_config: &AppConfig,
+        background_snapshot_service: Arc<BackgroundSnapshotService>,
     ) -> Result<Self> {
         let mut manager = Self {
             db_pool: db_pool.clone(),
@@ -143,6 +153,7 @@ impl CaptureManager {
             analysis_service: None,
             storage_config,
             job_scheduler: Arc::new(RwLock::new(None)),
+            background_snapshot_service,
         };
 
         // Initialize analysis service if AI is enabled
@@ -567,11 +578,11 @@ impl CaptureManager {
 
         // Create a temporary capture source to get snapshot
         match kind {
-            "file" => Self::take_file_snapshot(&config).await,
-            "rtsp" => Self::take_rtsp_snapshot(&config).await,
-            "ffmpeg" => Self::take_ffmpeg_snapshot(&config).await,
-            "website" => Self::take_website_snapshot(&config).await,
-            "yt" | "youtube" => Self::take_yt_snapshot(&config).await,
+            "file" => self.take_file_snapshot(&config).await,
+            "rtsp" => self.take_rtsp_snapshot(&config).await,
+            "ffmpeg" => self.take_ffmpeg_snapshot(&config).await,
+            "website" => self.take_website_snapshot(&config).await,
+            "yt" | "youtube" => self.take_yt_snapshot(&config).await,
             _ => Err(Error::Config(format!("Unsupported stream kind: {}", kind))),
         }
     }
@@ -820,7 +831,8 @@ impl CaptureManager {
             .await?;
 
         // Create and start the capture source based on stream type
-        let capture_manager = CaptureManager::new(db_pool);
+        let temp_bg_service = Arc::new(BackgroundSnapshotService::new(db_pool.clone()));
+        let capture_manager = CaptureManager::new(db_pool, temp_bg_service);
         match kind {
             "file" => {
                 capture_manager
@@ -1328,8 +1340,8 @@ impl CaptureManager {
         Ok(())
     }
 
-    /// Take a snapshot from a file source
-    async fn take_file_snapshot(config: &Value) -> Result<bytes::Bytes> {
+    /// Take a snapshot from a file source using background processing
+    async fn take_file_snapshot(&self, config: &Value) -> Result<bytes::Bytes> {
         let file_path = config
             .get("file_path")
             .and_then(|v| v.as_str())
@@ -1345,15 +1357,15 @@ impl CaptureManager {
             return Err(Error::Config("Path traversal not allowed".to_string()));
         }
 
-        let file_source = FileSource::new(&source_path);
-        let handle = file_source.start().await?;
-        let snapshot = handle.snapshot().await?;
-        drop(handle);
-        Ok(snapshot)
+        // Use background snapshot service instead of blocking FFmpeg
+        let snapshot_config = SnapshotConfig::default();
+        self.background_snapshot_service
+            .snapshot_file(source_path, snapshot_config)
+            .await
     }
 
     /// Take a snapshot from an FFmpeg source
-    async fn take_ffmpeg_snapshot(config: &Value) -> Result<bytes::Bytes> {
+    async fn take_ffmpeg_snapshot(&self, config: &Value) -> Result<bytes::Bytes> {
         let source_url = config
             .get("source_url")
             .and_then(|v| v.as_str())
@@ -1389,8 +1401,8 @@ impl CaptureManager {
         Ok(snapshot)
     }
 
-    /// Take a snapshot from an RTSP source
-    async fn take_rtsp_snapshot(config: &Value) -> Result<bytes::Bytes> {
+    /// Take a snapshot from an RTSP source using background processing
+    async fn take_rtsp_snapshot(&self, config: &Value) -> Result<bytes::Bytes> {
         let rtsp_url = config
             .get("url")
             .and_then(|v| v.as_str())
@@ -1430,7 +1442,7 @@ impl CaptureManager {
 
     /// Take a snapshot from a website source
     #[cfg(feature = "website")]
-    async fn take_website_snapshot(config: &Value) -> Result<bytes::Bytes> {
+    async fn take_website_snapshot(&self, config: &Value) -> Result<bytes::Bytes> {
         let url = config.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
             Error::Config("Website stream config missing 'url' field".to_string())
         })?;
@@ -1496,14 +1508,14 @@ impl CaptureManager {
 
     /// Take a snapshot from a website source (stub when website feature disabled)
     #[cfg(not(feature = "website"))]
-    async fn take_website_snapshot(_config: &Value) -> Result<bytes::Bytes> {
+    async fn take_website_snapshot(&self, _config: &Value) -> Result<bytes::Bytes> {
         Err(Error::Config(
             "Website capture not enabled - compile with 'website' feature".to_string(),
         ))
     }
 
     /// Take a snapshot from a YouTube/yt-dlp source
-    async fn take_yt_snapshot(config: &Value) -> Result<bytes::Bytes> {
+    async fn take_yt_snapshot(&self, config: &Value) -> Result<bytes::Bytes> {
         let url = config
             .get("url")
             .and_then(|v| v.as_str())

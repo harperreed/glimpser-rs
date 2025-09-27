@@ -114,7 +114,10 @@ pub async fn create_user(
     let user_repo = UserRepository::new(state.db.pool());
 
     // Hash the password
-    let password_hash = match crate::auth::PasswordAuth::hash_password(&req.password) {
+    let password_hash = match crate::auth::PasswordAuth::hash_password(
+        &req.password,
+        &state.security_config.argon2_params,
+    ) {
         Ok(hash) => hash,
         Err(e) => {
             error!("Failed to hash password: {}", e);
@@ -647,7 +650,10 @@ pub async fn create_user_handler(
 
     let user_repo = UserRepository::new(state.db.pool());
 
-    let password_hash = match crate::auth::PasswordAuth::hash_password(&req.password) {
+    let password_hash = match crate::auth::PasswordAuth::hash_password(
+        &req.password,
+        &state.security_config.argon2_params,
+    ) {
         Ok(hash) => hash,
         Err(e) => {
             error!("Failed to hash password: {}", e);

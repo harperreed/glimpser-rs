@@ -127,8 +127,9 @@ impl ErrorResponse {
 pub struct Claims {
     pub sub: String, // user ID
     pub email: String,
-    pub exp: usize, // expiration timestamp
-    pub iat: usize, // issued at timestamp
+    pub exp: usize,  // expiration timestamp
+    pub iat: usize,  // issued at timestamp
+    pub iss: String, // issuer
 }
 
 // Role enum removed - using simple is_admin boolean instead

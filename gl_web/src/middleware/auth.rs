@@ -95,7 +95,11 @@ where
             // Verify JWT token if found
             if let Some(token) = jwt_token {
                 if let Some(app_state) = req.app_data::<actix_web::web::Data<AppState>>() {
-                    match JwtAuth::verify_token(token, &app_state.security_config.jwt_secret) {
+                    match JwtAuth::verify_token(
+                        token,
+                        &app_state.security_config.jwt_secret,
+                        &app_state.security_config.jwt_issuer,
+                    ) {
                         Ok(claims) => {
                             debug!(
                                 "JWT authentication successful for user: {} (via {})",

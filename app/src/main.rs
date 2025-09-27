@@ -7,7 +7,7 @@ use gl_obs::ObsState;
 use gl_scheduler::{create_standard_handlers, JobScheduler, SchedulerConfig, SqliteJobStorage};
 use gl_stream::{StreamManager, StreamMetrics};
 use gl_update::{UpdateConfig, UpdateService, UpdateStrategyType};
-use gl_web::AppState;
+use gl_web::{background_snapshot_service::BackgroundSnapshotService, AppState};
 use std::{process, sync::Arc};
 
 #[derive(Parser)]
@@ -76,7 +76,7 @@ async fn main() {
 
     match cli.command.unwrap_or(Commands::Start) {
         Commands::Bootstrap => {
-            interactive_bootstrap(&db).await;
+            interactive_bootstrap(&db, &config.security).await;
             return;
         }
         Commands::Start => {
@@ -89,7 +89,7 @@ async fn main() {
     }
 }
 
-async fn interactive_bootstrap(db: &Db) {
+async fn interactive_bootstrap(db: &Db, security_config: &gl_config::SecurityConfig) {
     use std::io::{self, Write};
 
     println!();
@@ -158,14 +158,27 @@ async fn interactive_bootstrap(db: &Db) {
     println!();
     println!("Creating admin user...");
 
-    let user_id = bootstrap_user(db, email, &password, username).await;
+    let user_id = bootstrap_user(
+        db,
+        email,
+        &password,
+        username,
+        &security_config.argon2_params,
+    )
+    .await;
 
     println!();
     println!("Creating example streams...");
     create_example_templates(db, &user_id).await;
 }
 
-async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) -> String {
+async fn bootstrap_user(
+    db: &Db,
+    email: &str,
+    password: &str,
+    username: &str,
+    argon2_config: &gl_config::Argon2Config,
+) -> String {
     use chrono::Utc;
     use gl_core::id::Id;
     use gl_web::auth::PasswordAuth;
@@ -193,7 +206,7 @@ async fn bootstrap_user(db: &Db, email: &str, password: &str, username: &str) ->
     }
 
     // Hash the password
-    let password_hash = match PasswordAuth::hash_password(password) {
+    let password_hash = match PasswordAuth::hash_password(password, argon2_config) {
         Ok(hash) => hash,
         Err(e) => {
             tracing::error!("Failed to hash password: {}", e);
@@ -330,11 +343,15 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
         },
     };
 
+    // Initialize background snapshot service first
+    let background_snapshot_service = Arc::new(BackgroundSnapshotService::new(db.pool().clone()));
+
     // Initialize capture manager with analysis and storage configuration
     let capture_manager = gl_web::capture_manager::CaptureManager::with_analysis_config(
         db.pool().clone(),
         config.storage.clone(),
         &config,
+        background_snapshot_service.clone(),
     )?;
 
     // Initialize stream manager for MJPEG streaming
@@ -415,6 +432,7 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
             window_duration: std::time::Duration::from_secs(
                 config.server.rate_limit.window_seconds,
             ),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()], // Default to localhost
         },
         body_limits_config: gl_web::middleware::bodylimits::BodyLimitsConfig::new(
             config.server.body_limits.global_json_limit,
@@ -509,6 +527,7 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
                 }
             }
         },
+        background_snapshot_service,
         ai_client,
     };
 

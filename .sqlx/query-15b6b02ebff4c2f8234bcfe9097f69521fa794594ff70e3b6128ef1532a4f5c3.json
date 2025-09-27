@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM background_snapshot_jobs\n            WHERE id IN (\n                SELECT id FROM background_snapshot_jobs\n                WHERE status IN ('completed', 'failed', 'cancelled')\n                AND completed_at < ?\n                ORDER BY completed_at ASC\n                LIMIT ?\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "15b6b02ebff4c2f8234bcfe9097f69521fa794594ff70e3b6128ef1532a4f5c3"
+}

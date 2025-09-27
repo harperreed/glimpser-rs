@@ -194,15 +194,28 @@ impl DatabaseCache {
     /// Cache stream by ID
     pub fn cache_stream(&self, stream: Stream) {
         let id = stream.id.clone();
-        if let Ok(mut cache) = self.streams.write() {
-            cache.put(id, stream);
+        match self.streams.write() {
+            Ok(mut cache) => cache.put(id, stream),
+            Err(e) => warn!("Failed to acquire stream cache lock for caching: {}", e),
         }
     }
 
     /// Invalidate stream cache entry
     pub fn invalidate_stream(&self, id: &str) {
-        if let Ok(mut cache) = self.streams.write() {
-            cache.invalidate(id);
+        match self.streams.write() {
+            Ok(mut cache) => cache.invalidate(id),
+            Err(e) => warn!(
+                "Failed to acquire stream cache lock for invalidation: {}",
+                e
+            ),
+        }
+    }
+
+    /// Clear all stream cache entries
+    pub fn clear_streams(&self) {
+        match self.streams.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => warn!("Failed to acquire stream cache lock for clearing: {}", e),
         }
     }
 

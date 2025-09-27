@@ -4,6 +4,7 @@
 pub mod alerts;
 pub mod analysis_events;
 pub mod api_keys;
+pub mod background_snapshot_jobs;
 pub mod captures;
 pub mod events;
 pub mod jobs;

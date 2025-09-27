@@ -69,7 +69,8 @@ impl E2ETestSetup {
         }
 
         // Hash password and create user
-        let password_hash = PasswordAuth::hash_password(password)?;
+        let password_hash =
+            PasswordAuth::hash_password(password, &self.config.security.argon2_params)?;
         let user_id = gl_core::id::Id::new().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -156,9 +157,17 @@ impl E2ETestSetup {
             csp_nonce: None,
         };
 
+        // Initialize background snapshot service for tests
+        let background_snapshot_service = std::sync::Arc::new(
+            gl_web::background_snapshot_service::BackgroundSnapshotService::new(
+                self.db.pool().clone(),
+            ),
+        );
+
         // Initialize capture manager for tests
         let capture_manager = std::sync::Arc::new(gl_web::capture_manager::CaptureManager::new(
             self.db.pool().clone(),
+            background_snapshot_service.clone(),
         ));
 
         // Initialize stream manager for tests
@@ -172,9 +181,11 @@ impl E2ETestSetup {
             static_config,
             capture_manager: capture_manager.clone(),
             stream_manager,
+            background_snapshot_service,
             rate_limit_config: gl_web::middleware::ratelimit::RateLimitConfig {
                 requests_per_minute: 100,
                 window_duration: Duration::from_secs(60),
+                trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
             },
             body_limits_config: gl_web::middleware::bodylimits::BodyLimitsConfig::new(1024 * 1024)
                 .with_override("/api/admin", 1024 * 1024)

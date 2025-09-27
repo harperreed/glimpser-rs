@@ -54,7 +54,11 @@ pub async fn login(
             }
 
             // Verify password
-            match PasswordAuth::verify_password(&payload.password, &user.password_hash) {
+            match PasswordAuth::verify_password(
+                &payload.password,
+                &user.password_hash,
+                &state.security_config.argon2_params,
+            ) {
                 Ok(true) => {
                     debug!("Password verification successful for user: {}", user.id);
 
@@ -63,6 +67,7 @@ pub async fn login(
                         &user.id,
                         &user.email,
                         &state.security_config.jwt_secret,
+                        &state.security_config.jwt_issuer,
                     ) {
                         Ok(token) => {
                             debug!("JWT token created for user: {}", user.id);
@@ -216,7 +221,10 @@ pub async fn setup_signup(
     }
 
     // Hash the password
-    let password_hash = match PasswordAuth::hash_password(&payload.password) {
+    let password_hash = match PasswordAuth::hash_password(
+        &payload.password,
+        &state.security_config.argon2_params,
+    ) {
         Ok(hash) => hash,
         Err(e) => {
             warn!("Failed to hash password: {}", e);
@@ -239,7 +247,12 @@ pub async fn setup_signup(
             debug!("First admin user created successfully: {}", user.id);
 
             // Create JWT token for immediate login
-            match JwtAuth::create_token(&user.id, &user.email, &state.security_config.jwt_secret) {
+            match JwtAuth::create_token(
+                &user.id,
+                &user.email,
+                &state.security_config.jwt_secret,
+                &state.security_config.jwt_issuer,
+            ) {
                 Ok(token) => {
                     debug!("JWT token created for first admin: {}", user.id);
 

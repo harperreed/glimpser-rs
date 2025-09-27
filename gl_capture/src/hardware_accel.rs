@@ -23,6 +23,7 @@ pub struct AccelerationCapabilities {
 /// Cache for acceleration capabilities (computed once per process)
 static ACCEL_CAPABILITIES: OnceLock<AccelerationCapabilities> = OnceLock::new();
 
+#[allow(dead_code)]
 impl AccelerationCapabilities {
     /// Get or detect hardware acceleration capabilities for the current platform
     #[instrument]
@@ -84,8 +85,7 @@ impl AccelerationCapabilities {
 
         // Determine preferred acceleration (first available after None)
         let preferred = available
-            .iter()
-            .nth(1) // Skip None
+            .get(1) // Skip None
             .copied()
             .unwrap_or(HardwareAccel::None);
 
