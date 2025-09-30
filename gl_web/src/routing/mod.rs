@@ -117,6 +117,25 @@ pub fn create_app(
                         .service(stream::stream_details)
                         .service(stream::live_stream),
                 )
+                // Modular admin routes (consolidated from duplicated endpoints)
+                .service(
+                    web::scope("/settings")
+                        .configure(admin::configure_admin_routes)
+                        .wrap(middleware::ratelimit::RateLimit::new(
+                            rate_limit_config.clone(),
+                        ))
+                        .wrap(middleware::auth::RequireAuth::new()),
+                )
+                .configure(alerts::configure_alert_routes)
+                .configure(ai::configure_ai_routes)
+                .service(
+                    web::scope("/debug").route(
+                        "/test",
+                        web::get()
+                            .to(|| async { HttpResponse::Ok().json(json!({"debug": "working"})) }),
+                    ),
+                )
+                // Public authenticated routes at root of /api (MUST be last to avoid middleware conflicts)
                 .service(
                     web::scope("")
                         .wrap(middleware::ratelimit::RateLimit::new(
@@ -127,16 +146,7 @@ pub fn create_app(
                         .service(public::alerts)
                         .service(public::health),
                 )
-                // Modular admin routes (consolidated from duplicated endpoints)
-                .service(
-                    web::scope("/settings")
-                        .wrap(middleware::ratelimit::RateLimit::new(
-                            rate_limit_config.clone(),
-                        ))
-                        .wrap(middleware::auth::RequireAuth::new())
-                        .configure(admin::configure_admin_routes),
-                )
-                // Helpful 404 for unmatched API paths
+                // Helpful 404 for unmatched API paths (MUST be last)
                 .default_service(web::to(|req: HttpRequest| async move {
                     let p = req.path().to_string();
                     info!(path = %p, "Unmatched API route");
@@ -144,16 +154,7 @@ pub fn create_app(
                         "error": "Not Found",
                         "path": p
                     }))
-                }))
-                .configure(alerts::configure_alert_routes)
-                .configure(ai::configure_ai_routes)
-                .service(
-                    web::scope("/debug").route(
-                        "/test",
-                        web::get()
-                            .to(|| async { HttpResponse::Ok().json(json!({"debug": "working"})) }),
-                    ),
-                ),
+                })),
         )
         // Static files service for assets directory
         .service(static_files::create_static_service(static_config))

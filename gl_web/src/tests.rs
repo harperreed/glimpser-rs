@@ -866,7 +866,7 @@ mod frontend_template_tests {
         assert!(rendered.contains("Email"));
         assert!(rendered.contains("Password"));
         assert!(rendered.contains("hx-post=\"/login\""));
-        assert!(rendered.contains("tailwindcss.com")); // Tailwind CSS included
+        assert!(rendered.contains("/static/tailwind.min.css")); // Local Tailwind CSS
         assert!(rendered.contains("htmx.org")); // HTMX included
     }
 
@@ -940,7 +940,7 @@ mod frontend_template_tests {
 
         let rendered = template.render().expect("Template should render");
         assert!(rendered.contains("htmx.org")); // HTMX script
-        assert!(rendered.contains("tailwindcss.com")); // Tailwind CSS
+        assert!(rendered.contains("/static/tailwind.min.css")); // Local Tailwind CSS
         assert!(rendered.contains("bg-gray-100")); // Tailwind classes being used
     }
 

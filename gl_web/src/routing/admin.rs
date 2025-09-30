@@ -15,15 +15,15 @@ pub fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
                 .route(web::get().to(admin::list_streams_handler))
                 .route(web::post().to(admin::create_stream_handler)),
         )
+        // Stream import/export (MUST be before /streams/{id} to avoid conflict)
+        .service(web::resource("/streams/export").route(web::get().to(admin::export_streams)))
+        .service(web::resource("/streams/import").route(web::post().to(admin::import_streams)))
         .service(
             web::resource("/streams/{id}")
                 .route(web::get().to(admin::get_stream_handler))
                 .route(web::put().to(admin::update_stream_handler))
                 .route(web::delete().to(admin::delete_stream_handler)),
         )
-        // Stream import/export
-        .service(web::resource("/streams/export").route(web::get().to(admin::export_streams)))
-        .service(web::resource("/streams/import").route(web::post().to(admin::import_streams)))
         // User management
         .service(
             web::resource("/users")
