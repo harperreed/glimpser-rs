@@ -45,8 +45,8 @@ async fn create_test_app_state() -> AppState {
             // Create a test update service with dummy configuration
             // Valid Ed25519 public key for testing (this is a test key, not for production)
             let update_config = gl_update::UpdateConfig {
-                public_key:
-                    "8f7e3a2d4b1c9e6f8a5b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f".to_string(),
+                public_key: "8f7e3a2d4b1c9e6f8a5b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f"
+                    .to_string(),
                 // Use a writable temp directory for testing instead of /usr/local/bin
                 install_dir: std::env::temp_dir(),
                 ..Default::default()
