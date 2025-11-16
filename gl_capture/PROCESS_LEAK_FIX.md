@@ -173,8 +173,8 @@ cargo test --package gl_capture --lib
 ### Platform Compatibility
 
 - **Linux:** Full support (uses /proc filesystem and pgrep)
-- **macOS:** Orphaned cleanup works (pgrep available)
-- **Windows:** Core cleanup works, orphaned cleanup gracefully degrades
+- **macOS:** Core Drop cleanup works, but orphaned process cleanup requires /proc filesystem which is Linux-specific. The cleanup function will gracefully skip processes it cannot inspect on macOS.
+- **Windows:** Core cleanup works, orphaned cleanup not supported (no /proc filesystem)
 
 ### Related Files Changed
 

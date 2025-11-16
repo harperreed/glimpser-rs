@@ -434,10 +434,26 @@ impl FfmpegProcess {
 
     /// Kill the process
     pub async fn kill(&mut self) -> Result<()> {
-        if let Err(e) = self.child.kill().await {
-            warn!(error = %e, "Failed to kill FFmpeg process");
+        use tracing::{debug, error};
+
+        match self.child.kill().await {
+            Ok(()) => {
+                debug!("FFmpeg process killed successfully");
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
+                // Process already exited - this is fine
+                debug!("Process already terminated");
+                Ok(())
+            }
+            Err(e) => {
+                error!(error = %e, error_kind = ?e.kind(), "Failed to kill FFmpeg process");
+                Err(Error::Config(format!(
+                    "Failed to kill FFmpeg process: {}",
+                    e
+                )))
+            }
         }
-        Ok(())
     }
 }
 
@@ -693,7 +709,7 @@ impl FfmpegProcessPool {
 
 impl Drop for FfmpegProcessPool {
     fn drop(&mut self) {
-        use tracing::warn;
+        use tracing::{debug, error, warn};
 
         // CRITICAL FIX: Actually kill child processes during drop
         // This prevents FFmpeg zombie processes from accumulating
@@ -710,8 +726,21 @@ impl Drop for FfmpegProcessPool {
 
                 let cleanup_future = async move {
                     let mut procs = processes.write().await;
+                    let mut failed_kills = 0;
                     for process in procs.iter_mut() {
-                        let _ = process.kill().await;
+                        if let Err(e) = process.kill().await {
+                            error!(error = %e, "Failed to kill process during pool cleanup");
+                            failed_kills += 1;
+                        }
+                    }
+                    if failed_kills > 0 {
+                        error!(
+                            failed_count = failed_kills,
+                            total_count = procs.len(),
+                            "CRITICAL: Failed to kill {} out of {} processes during cleanup",
+                            failed_kills,
+                            procs.len()
+                        );
                     }
                     procs.clear();
                 };
@@ -725,29 +754,63 @@ impl Drop for FfmpegProcessPool {
                     ));
 
                     if timeout_result.is_err() {
-                        warn!(
-                            "Process pool cleanup timed out during drop - some processes may leak"
+                        error!(
+                            timeout_secs = 10,
+                            "CRITICAL: Process pool cleanup timed out - processes LEAKED. \
+                             Manual cleanup may be required."
                         );
                     }
                 } else {
                     // Multi-threaded runtime - spawn a dedicated thread to avoid blocking workers
-                    match std::thread::spawn(move || {
-                        let timeout_result = handle.block_on(tokio::time::timeout(
-                            Duration::from_secs(10),
-                            cleanup_future,
-                        ));
+                    let spawn_result = std::thread::Builder::new()
+                        .name("ffmpeg-pool-cleanup".to_string())
+                        .spawn(move || {
+                            let timeout_result = handle.block_on(tokio::time::timeout(
+                                Duration::from_secs(10),
+                                cleanup_future,
+                            ));
 
-                        if timeout_result.is_err() {
-                            warn!("Process pool cleanup timed out during drop - some processes may leak");
+                            if timeout_result.is_err() {
+                                error!(
+                                    timeout_secs = 10,
+                                    "CRITICAL: Process pool cleanup timed out - processes LEAKED. \
+                                     Manual cleanup may be required."
+                                );
+                            }
+                        });
+
+                    match spawn_result {
+                        Ok(join_handle) => {
+                            match join_handle.join() {
+                                Err(panic_payload) => {
+                                    // Extract panic message for better diagnostics
+                                    let panic_msg = if let Some(s) =
+                                        panic_payload.downcast_ref::<String>()
+                                    {
+                                        s.clone()
+                                    } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                                        (*s).to_string()
+                                    } else {
+                                        "Unknown panic payload".to_string()
+                                    };
+
+                                    error!(
+                                        panic_message = %panic_msg,
+                                        "CRITICAL: Cleanup thread panicked during drop - THIS IS A BUG. \
+                                         Processes may be leaked."
+                                    );
+                                }
+                                Ok(()) => {
+                                    debug!("Process pool cleanup completed successfully");
+                                }
+                            }
                         }
-                    })
-                    .join()
-                    {
                         Err(e) => {
-                            warn!("Cleanup thread panicked during drop: {:?}", e);
-                        }
-                        Ok(()) => {
-                            // Cleanup completed successfully
+                            error!(
+                                error = %e,
+                                "CRITICAL: Failed to spawn cleanup thread - falling back to synchronous cleanup"
+                            );
+                            // Fall through to synchronous cleanup below
                         }
                     }
                 }

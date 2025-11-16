@@ -117,37 +117,88 @@ impl Drop for CaptureHandle {
                         .block_on(tokio::time::timeout(Duration::from_secs(5), cleanup_future));
 
                     if timeout_result.is_err() {
-                        error!("Capture cleanup timed out during drop - process may be leaked");
+                        error!(
+                            timeout_secs = 5,
+                            "CRITICAL: Capture cleanup timed out - process LEAKED. \
+                             Manual cleanup may be required."
+                        );
                     }
                 } else {
                     // Multi-threaded runtime - spawn a dedicated thread to avoid blocking workers
-                    match std::thread::spawn(move || {
-                        let timeout_result = runtime_handle
-                            .block_on(tokio::time::timeout(Duration::from_secs(5), cleanup_future));
+                    let spawn_result = std::thread::Builder::new()
+                        .name("capture-cleanup".to_string())
+                        .spawn(move || {
+                            let timeout_result = runtime_handle.block_on(tokio::time::timeout(
+                                Duration::from_secs(5),
+                                cleanup_future,
+                            ));
 
-                        if timeout_result.is_err() {
-                            error!("Capture cleanup timed out during drop - process may be leaked");
+                            if timeout_result.is_err() {
+                                error!(
+                                    timeout_secs = 5,
+                                    "CRITICAL: Capture cleanup timed out - process LEAKED. \
+                                     Manual cleanup may be required."
+                                );
+                            }
+                        });
+
+                    match spawn_result {
+                        Ok(join_handle) => {
+                            match join_handle.join() {
+                                Err(panic_payload) => {
+                                    // Extract panic message for better diagnostics
+                                    let panic_msg = if let Some(s) =
+                                        panic_payload.downcast_ref::<String>()
+                                    {
+                                        s.clone()
+                                    } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                                        (*s).to_string()
+                                    } else {
+                                        "Unknown panic payload".to_string()
+                                    };
+
+                                    error!(
+                                        panic_message = %panic_msg,
+                                        "CRITICAL: Cleanup thread panicked during drop - THIS IS A BUG. \
+                                         Process may be leaked."
+                                    );
+                                }
+                                Ok(()) => {
+                                    // Cleanup completed successfully
+                                }
+                            }
                         }
-                    })
-                    .join()
-                    {
                         Err(e) => {
-                            error!("Cleanup thread panicked during drop: {:?}", e);
-                        }
-                        Ok(()) => {
-                            // Cleanup completed successfully
+                            error!(
+                                error = %e,
+                                "CRITICAL: Failed to spawn cleanup thread - process LEAKED"
+                            );
                         }
                     }
                 }
             }));
 
-            if let Err(e) = result {
-                error!("Panic during capture cleanup: {:?}", e);
+            if let Err(panic_payload) = result {
+                // Extract panic message for better diagnostics
+                let panic_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else {
+                    "Unknown panic payload".to_string()
+                };
+
+                error!(
+                    panic_message = %panic_msg,
+                    "CRITICAL: Panic during outer capture cleanup - THIS IS A BUG"
+                );
             }
         } else {
-            // No runtime available - best effort cleanup
-            // Log warning since we can't guarantee cleanup
-            warn!("No runtime handle available for cleanup in Drop - process may leak");
+            // No runtime available - process will leak
+            error!(
+                "CRITICAL: No runtime handle available for cleanup in Drop - process LEAKED. \
+                 CaptureHandle must be created within a tokio runtime context."
+            );
         }
     }
 }
@@ -283,29 +334,68 @@ pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
                             {
                                 // Try SIGTERM first for graceful shutdown
                                 // Use tokio::process::Command for consistency
-                                let kill_result = tokio::process::Command::new("kill")
+                                match tokio::process::Command::new("kill")
                                     .arg("-TERM")
                                     .arg(pid.to_string())
                                     .status()
-                                    .await;
+                                    .await
+                                {
+                                    Ok(status) if status.success() => {
+                                        killed_count += 1;
 
-                                if kill_result.is_ok() {
-                                    killed_count += 1;
+                                        // Wait a bit for graceful shutdown
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
 
-                                    // Wait a bit for graceful shutdown
-                                    tokio::time::sleep(Duration::from_millis(100)).await;
+                                        // Check if still running, use SIGKILL if needed
+                                        if tokio::fs::metadata(format!("/proc/{}", pid))
+                                            .await
+                                            .is_ok()
+                                        {
+                                            warn!(
+                                                pid,
+                                                "Process didn't respond to SIGTERM, using SIGKILL"
+                                            );
 
-                                    // Check if still running, use SIGKILL if needed
-                                    if tokio::fs::metadata(format!("/proc/{}", pid)).await.is_ok() {
-                                        warn!(
+                                            match tokio::process::Command::new("kill")
+                                                .arg("-KILL")
+                                                .arg(pid.to_string())
+                                                .status()
+                                                .await
+                                            {
+                                                Ok(status) if status.success() => {
+                                                    debug!(pid, "SIGKILL sent successfully");
+                                                }
+                                                Ok(status) => {
+                                                    error!(
+                                                        pid,
+                                                        exit_code = status.code(),
+                                                        "CRITICAL: SIGKILL returned non-zero - process may be unkillable. \
+                                                         This indicates a kernel issue or permission problem."
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    error!(
+                                                        pid,
+                                                        error = %e,
+                                                        "CRITICAL: Failed to send SIGKILL - process is LEAKED and unkillable"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Ok(status) => {
+                                        error!(
                                             pid,
-                                            "Process didn't respond to SIGTERM, using SIGKILL"
+                                            exit_code = status.code(),
+                                            "SIGTERM returned non-zero - cannot kill orphaned process"
                                         );
-                                        let _ = tokio::process::Command::new("kill")
-                                            .arg("-KILL")
-                                            .arg(pid.to_string())
-                                            .status()
-                                            .await;
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            pid,
+                                            error = %e,
+                                            "Failed to send SIGTERM to orphaned process"
+                                        );
                                     }
                                 }
                             }
