@@ -612,6 +612,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires Chrome browser to be installed"]
     async fn test_website_source_lifecycle() {
         #[cfg(feature = "website_embedded")]
         {
@@ -657,6 +658,7 @@ mod tests {
 
     #[cfg(feature = "website_embedded")]
     #[tokio::test]
+    #[ignore = "Requires Chrome browser to be installed"]
     async fn test_headless_element_screenshot_size() {
         use image::ImageFormat;
 
@@ -682,6 +684,7 @@ mod tests {
 
     #[cfg(feature = "website_embedded")]
     #[tokio::test]
+    #[ignore = "Requires Chrome browser to be installed"]
     async fn test_headless_zero_size_element_error() {
         use std::io::Write;
 
