@@ -3,8 +3,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use gl_capture::{
-    hardware_accel::AccelerationDetector, CaptureSource, FfmpegConfig, FfmpegSource,
-    HardwareAccel, StreamingFfmpegSource,
+    hardware_accel::AccelerationDetector, CaptureSource, FfmpegConfig, FfmpegSource, HardwareAccel,
+    StreamingFfmpegSource,
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::runtime::Runtime;

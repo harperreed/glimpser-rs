@@ -4,7 +4,9 @@
 use gl_core::Result;
 use image::{GrayImage, ImageBuffer, Luma};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+#[cfg(not(feature = "heavy_opencv"))]
+use tracing::warn;
+use tracing::{debug, info};
 
 #[cfg(feature = "heavy_opencv")]
 pub mod opencv_detector;
