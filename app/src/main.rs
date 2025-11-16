@@ -379,14 +379,9 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
         Arc::from(client)
     };
 
-    // Initialize job scheduler
-    let scheduler_config = SchedulerConfig {
-        max_concurrent_jobs: 10,
-        job_timeout_seconds: 300, // 5 minutes
-        enable_persistence: true,
-        history_retention_days: 30,
-        enable_metrics: true,
-    };
+    // Initialize job scheduler with default configuration
+    // Default includes retry logic, dead letter queue, and sensible limits
+    let scheduler_config = SchedulerConfig::default();
 
     // Need to create Arc for capture_manager temporarily for JobScheduler::new
     let capture_manager_arc = Arc::new(capture_manager);
