@@ -182,11 +182,7 @@ impl Db {
     ///
     /// Same as `with_transaction` but allows specifying a custom timeout duration.
     #[instrument(skip(self, f))]
-    pub async fn with_custom_timeout<F, T, Fut>(
-        &self,
-        f: F,
-        timeout: Duration,
-    ) -> Result<T>
+    pub async fn with_custom_timeout<F, T, Fut>(&self, f: F, timeout: Duration) -> Result<T>
     where
         F: FnOnce(&mut Transaction<'_, sqlx::Sqlite>) -> Fut,
         Fut: Future<Output = Result<T>>,
@@ -196,11 +192,7 @@ impl Db {
 
     /// Internal method to execute a transaction with the given timeout
     #[instrument(skip(self, f))]
-    async fn execute_transaction<F, T, Fut>(
-        &self,
-        f: F,
-        timeout: Duration,
-    ) -> Result<T>
+    async fn execute_transaction<F, T, Fut>(&self, f: F, timeout: Duration) -> Result<T>
     where
         F: FnOnce(&mut Transaction<'_, sqlx::Sqlite>) -> Fut,
         Fut: Future<Output = Result<T>>,

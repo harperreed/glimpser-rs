@@ -45,10 +45,14 @@ async fn main() {
     };
 
     // Initialize database with migrations and configured transaction timeout
-    let transaction_timeout = std::time::Duration::from_secs(config.database.transaction_timeout_seconds);
+    let transaction_timeout =
+        std::time::Duration::from_secs(config.database.transaction_timeout_seconds);
     let db = match Db::new_with_timeout(&config.database.path, transaction_timeout).await {
         Ok(db) => {
-            tracing::info!("Database initialized successfully with transaction timeout: {:?}", transaction_timeout);
+            tracing::info!(
+                "Database initialized successfully with transaction timeout: {:?}",
+                transaction_timeout
+            );
             db
         }
         Err(e) => {

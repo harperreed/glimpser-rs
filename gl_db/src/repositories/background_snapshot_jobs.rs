@@ -128,7 +128,7 @@ impl BackgroundSnapshotJobsRepository {
                     created_at, created_by, metadata
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                "#
+                "#,
             )
             .bind(&id)
             .bind(&request.input_path)
@@ -140,7 +140,9 @@ impl BackgroundSnapshotJobsRepository {
             .bind(&request.metadata)
             .execute(&mut *tx)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create background snapshot job: {}", e)))?;
+            .map_err(|e| {
+                Error::Database(format!("Failed to create background snapshot job: {}", e))
+            })?;
 
             // Get the created job within same transaction
             let job = sqlx::query_as::<_, BackgroundSnapshotJob>(
@@ -161,7 +163,7 @@ impl BackgroundSnapshotJobsRepository {
                     metadata
                 FROM background_snapshot_jobs
                 WHERE id = ?
-                "#
+                "#,
             )
             .bind(&id)
             .fetch_one(&mut *tx)

@@ -19,9 +19,10 @@ use std::{
 use tracing::{debug, info, instrument, warn};
 
 /// FFmpeg hardware acceleration types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum HardwareAccel {
     /// Software decoding (no acceleration)
+    #[default]
     None,
     /// Video Acceleration API (Linux)
     Vaapi,
@@ -31,12 +32,6 @@ pub enum HardwareAccel {
     Qsv,
     /// VideoToolbox (macOS)
     VideoToolbox,
-}
-
-impl Default for HardwareAccel {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Configuration for FFmpeg capture
@@ -79,20 +74,15 @@ impl Default for FfmpegConfig {
 }
 
 /// RTSP transport options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RtspTransport {
     /// Use TCP transport
+    #[default]
     Tcp,
     /// Use UDP transport
     Udp,
     /// Let FFmpeg decide transport
     Auto,
-}
-
-impl Default for RtspTransport {
-    fn default() -> Self {
-        Self::Tcp
-    }
 }
 
 /// FFmpeg-based capture source
