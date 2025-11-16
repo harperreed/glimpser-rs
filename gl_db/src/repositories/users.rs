@@ -141,8 +141,13 @@ impl<'a> UserRepository<'a> {
     /// This method uses a transaction internally to ensure atomicity of the
     /// read-then-write operation. If any step fails, the entire operation is
     /// rolled back to prevent partial updates.
+    ///
+    /// Transaction timeout: 30 seconds (reasonable default for repository operations)
     #[instrument(skip(self, request))]
     pub async fn update(&self, id: &str, request: UpdateUserRequest) -> Result<User> {
+        use std::time::Duration;
+        use tracing::warn;
+
         debug!("Updating user: {}", id);
 
         // Validate that at least one field is provided
@@ -165,52 +170,71 @@ impl<'a> UserRepository<'a> {
             .await
             .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        // Get current user to preserve unchanged fields within transaction
-        let current_user = sqlx::query_as!(
-            User,
-            "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE id = ?1",
-            id
-        )
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to find user by id: {}", e)))?
-        .ok_or_else(|| Error::NotFound("User not found".to_string()))?;
-
-        // Use provided values or fall back to current values
-        let username = request.username.unwrap_or(current_user.username);
-        let email = request.email.unwrap_or(current_user.email);
-        let password_hash = request.password_hash.unwrap_or(current_user.password_hash);
-        let is_active = request
-            .is_active
-            .unwrap_or(current_user.is_active.unwrap_or(true));
-
-        // Single update query with all fields within transaction
-        let user = sqlx::query_as!(
-            User,
-            r#"
-            UPDATE users
-            SET username = ?1, email = ?2, password_hash = ?3, is_active = ?4, updated_at = ?5
-            WHERE id = ?6
-            RETURNING id, username, email, password_hash, is_active, created_at, updated_at
-            "#,
-            username,
-            email,
-            password_hash,
-            is_active,
-            now,
-            id
-        )
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to update user: {}", e)))?;
-
-        // Commit transaction
-        tx.commit()
+        // Wrap the transaction operations in a timeout to prevent indefinite hangs
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            // Get current user to preserve unchanged fields within transaction
+            let current_user = sqlx::query_as!(
+                User,
+                "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE id = ?1",
+                id
+            )
+            .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
+            .map_err(|e| Error::Database(format!("Failed to find user by id: {}", e)))?
+            .ok_or_else(|| Error::NotFound("User not found".to_string()))?;
 
-        debug!("Successfully updated user: {}", user.id);
-        Ok(user)
+            // Use provided values or fall back to current values
+            let username = request.username.unwrap_or(current_user.username);
+            let email = request.email.unwrap_or(current_user.email);
+            let password_hash = request.password_hash.unwrap_or(current_user.password_hash);
+            let is_active = request
+                .is_active
+                .unwrap_or(current_user.is_active.unwrap_or(true));
+
+            // Single update query with all fields within transaction
+            let user = sqlx::query_as::<_, User>(
+                r#"
+                UPDATE users
+                SET username = ?1, email = ?2, password_hash = ?3, is_active = ?4, updated_at = ?5
+                WHERE id = ?6
+                RETURNING id, username, email, password_hash, is_active, created_at, updated_at
+                "#
+            )
+            .bind(&username)
+            .bind(&email)
+            .bind(&password_hash)
+            .bind(is_active)
+            .bind(&now)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to update user: {}", e)))?;
+
+            // Commit transaction
+            tx.commit()
+                .await
+                .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
+
+            Ok::<User, Error>(user)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(user)) => {
+                debug!("Successfully updated user: {}", user.id);
+                Ok(user)
+            }
+            Ok(Err(e)) => {
+                warn!("User update transaction failed (will auto-rollback): {}", e);
+                Err(e)
+            }
+            Err(_) => {
+                warn!("User update transaction timed out after 30 seconds (will auto-rollback)");
+                Err(Error::Database(
+                    "User update transaction timed out after 30 seconds".to_string(),
+                ))
+            }
+        }
     }
 
     /// Delete a user (soft delete - mark as inactive)

@@ -99,10 +99,15 @@ impl BackgroundSnapshotJobsRepository {
     /// This method uses a transaction internally to ensure atomicity of the
     /// insert-then-select operation. If any step fails, the entire operation is
     /// rolled back to prevent orphaned records.
+    ///
+    /// Transaction timeout: 30 seconds (reasonable default for repository operations)
     pub async fn create(
         pool: &SqlitePool,
         request: CreateBackgroundJobRequest,
     ) -> Result<BackgroundSnapshotJob> {
+        use std::time::Duration;
+        use tracing::warn;
+
         let id = Id::new().to_string();
         let now = now_iso8601();
 
@@ -114,80 +119,78 @@ impl BackgroundSnapshotJobsRepository {
             .await
             .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        let _row = sqlx::query!(
-            r#"
-            INSERT INTO background_snapshot_jobs (
-                id, input_path, stream_id, status, config,
-                created_at, created_by, metadata
+        // Wrap the transaction operations in a timeout to prevent indefinite hangs
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            sqlx::query(
+                r#"
+                INSERT INTO background_snapshot_jobs (
+                    id, input_path, stream_id, status, config,
+                    created_at, created_by, metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            id,
-            request.input_path,
-            request.stream_id,
-            "pending",
-            request.config,
-            now,
-            request.created_by,
-            request.metadata
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to create background snapshot job: {}", e)))?;
-
-        // Get the created job within same transaction
-        let job = sqlx::query!(
-            r#"
-            SELECT
-                id,
-                input_path,
-                stream_id,
-                status,
-                config,
-                result_size,
-                error_message,
-                created_at,
-                started_at,
-                completed_at,
-                duration_ms,
-                created_by,
-                metadata
-            FROM background_snapshot_jobs
-            WHERE id = ?
-            "#,
-            id
-        )
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| {
-            Error::Database(format!(
-                "Failed to get created background snapshot job: {}",
-                e
-            ))
-        })?;
-
-        let job = BackgroundSnapshotJob {
-            id: job.id.unwrap(),
-            input_path: job.input_path,
-            stream_id: job.stream_id,
-            status: job.status,
-            config: job.config,
-            result_size: job.result_size,
-            error_message: job.error_message,
-            created_at: job.created_at,
-            started_at: job.started_at,
-            completed_at: job.completed_at,
-            duration_ms: job.duration_ms,
-            created_by: job.created_by,
-            metadata: job.metadata,
-        };
-
-        // Commit transaction
-        tx.commit()
+            .bind(&id)
+            .bind(&request.input_path)
+            .bind(&request.stream_id)
+            .bind("pending")
+            .bind(&request.config)
+            .bind(&now)
+            .bind(&request.created_by)
+            .bind(&request.metadata)
+            .execute(&mut *tx)
             .await
-            .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
+            .map_err(|e| Error::Database(format!("Failed to create background snapshot job: {}", e)))?;
 
-        Ok(job)
+            // Get the created job within same transaction
+            let job = sqlx::query_as::<_, BackgroundSnapshotJob>(
+                r#"
+                SELECT
+                    id,
+                    input_path,
+                    stream_id,
+                    status,
+                    config,
+                    result_size,
+                    error_message,
+                    created_at,
+                    started_at,
+                    completed_at,
+                    duration_ms,
+                    created_by,
+                    metadata
+                FROM background_snapshot_jobs
+                WHERE id = ?
+                "#
+            )
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| {
+                Error::Database(format!(
+                    "Failed to get created background snapshot job: {}",
+                    e
+                ))
+            })?;
+
+            // Commit transaction
+            tx.commit()
+                .await
+                .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
+
+            Ok::<BackgroundSnapshotJob, Error>(job)
+        })
+        .await;
+
+        match result {
+            Ok(result) => result,
+            Err(_) => {
+                warn!("Background job creation transaction timed out after 30 seconds (will auto-rollback)");
+                Err(Error::Database(
+                    "Background job creation transaction timed out after 30 seconds".to_string(),
+                ))
+            }
+        }
     }
 
     /// Get a background snapshot job by ID

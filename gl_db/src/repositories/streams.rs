@@ -96,7 +96,12 @@ impl<'a> StreamRepository<'a> {
     /// This method uses a transaction internally to ensure atomicity of the
     /// read-then-write operation. If any step fails, the entire operation is
     /// rolled back to prevent partial updates.
+    ///
+    /// Transaction timeout: 30 seconds (reasonable default for repository operations)
     pub async fn update(&self, id: &str, request: UpdateStreamRequest) -> Result<Option<Stream>> {
+        use std::time::Duration;
+        use tracing::warn;
+
         let now = now_iso8601();
 
         // Use transaction to ensure atomicity of read-then-write operation
@@ -108,54 +113,68 @@ impl<'a> StreamRepository<'a> {
             .await
             .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        // Fetch existing stream within transaction
-        let existing = sqlx::query_as::<_, Stream>(
-            r#"
-            SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
-                   execution_status, last_executed_at, last_error_message
-            FROM streams WHERE id = ?1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to find stream: {}", e)))?;
-
-        let existing = match existing {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-
-        let name = request.name.unwrap_or(existing.name);
-        let description = request.description.or(existing.description);
-        let config = request.config.unwrap_or(existing.config);
-        let is_default = request.is_default.unwrap_or(existing.is_default);
-
-        let stream = sqlx::query_as::<_, Stream>(
-            r#"
-            UPDATE streams
-            SET name = ?1, description = ?2, config = ?3, is_default = ?4, updated_at = ?5
-            WHERE id = ?6
-            RETURNING id, user_id, name, description, config, is_default, created_at, updated_at,
-                      execution_status, last_executed_at, last_error_message
-            "#,
-        )
-        .bind(&name)
-        .bind(&description)
-        .bind(&config)
-        .bind(is_default)
-        .bind(&now)
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to update stream: {}", e)))?;
-
-        // Commit transaction
-        tx.commit()
+        // Wrap the transaction operations in a timeout to prevent indefinite hangs
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            // Fetch existing stream within transaction
+            let existing = sqlx::query_as::<_, Stream>(
+                r#"
+                SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                       execution_status, last_executed_at, last_error_message
+                FROM streams WHERE id = ?1
+                "#,
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
+            .map_err(|e| Error::Database(format!("Failed to find stream: {}", e)))?;
 
-        Ok(stream)
+            let existing = match existing {
+                Some(s) => s,
+                None => return Ok(None),
+            };
+
+            let name = request.name.unwrap_or(existing.name);
+            let description = request.description.or(existing.description);
+            let config = request.config.unwrap_or(existing.config);
+            let is_default = request.is_default.unwrap_or(existing.is_default);
+
+            let stream = sqlx::query_as::<_, Stream>(
+                r#"
+                UPDATE streams
+                SET name = ?1, description = ?2, config = ?3, is_default = ?4, updated_at = ?5
+                WHERE id = ?6
+                RETURNING id, user_id, name, description, config, is_default, created_at, updated_at,
+                          execution_status, last_executed_at, last_error_message
+                "#,
+            )
+            .bind(&name)
+            .bind(&description)
+            .bind(&config)
+            .bind(is_default)
+            .bind(&now)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to update stream: {}", e)))?;
+
+            // Commit transaction
+            tx.commit()
+                .await
+                .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
+
+            Ok::<Option<Stream>, Error>(stream)
+        })
+        .await;
+
+        match result {
+            Ok(result) => result,
+            Err(_) => {
+                warn!("Stream update transaction timed out after 30 seconds (will auto-rollback)");
+                Err(Error::Database(
+                    "Stream update transaction timed out after 30 seconds".to_string(),
+                ))
+            }
+        }
     }
 
     pub async fn delete(&self, id: &str) -> Result<bool> {
