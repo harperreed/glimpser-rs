@@ -179,6 +179,17 @@ impl ProcessHealthTracker {
 
     /// Mark a failed operation
     pub fn mark_failure(&mut self, reason: String) {
+        // If already failed, update the reason but don't increment counter
+        if matches!(self.health, ProcessHealth::Failed { .. }) {
+            warn!(
+                consecutive_failures = self.consecutive_failures,
+                reason = %reason,
+                "Process already failed, updating failure reason"
+            );
+            self.health = ProcessHealth::Failed { reason };
+            return;
+        }
+
         self.consecutive_failures += 1;
 
         if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
@@ -874,11 +885,11 @@ mod tests {
         for i in 1..(MAX_CONSECUTIVE_FAILURES - 1) {
             tracker.mark_failure(format!("Failure {}", i));
         }
-        assert!(matches!(tracker.health(), ProcessHealth::Degraded { .. }));
+        assert!(matches!(tracker.health(), ProcessHealth::Degraded));
 
         // One more failure - should still be Degraded
         tracker.mark_failure("Near threshold".to_string());
-        assert!(matches!(tracker.health(), ProcessHealth::Degraded { .. }));
+        assert!(matches!(tracker.health(), ProcessHealth::Degraded));
         assert_eq!(tracker.consecutive_failures(), MAX_CONSECUTIVE_FAILURES - 1);
 
         // Cross threshold - should be Failed
@@ -895,7 +906,7 @@ mod tests {
         tracker.mark_failure("Failure 1".to_string());
         tracker.mark_failure("Failure 2".to_string());
         assert_eq!(tracker.consecutive_failures(), 2);
-        assert!(matches!(tracker.health(), ProcessHealth::Degraded { .. }));
+        assert!(matches!(tracker.health(), ProcessHealth::Degraded));
 
         // Reset with success
         tracker.mark_success();
@@ -905,6 +916,64 @@ mod tests {
         // Can mark failures again from clean slate
         tracker.mark_failure("New failure".to_string());
         assert_eq!(tracker.consecutive_failures(), 1);
+    }
+
+    #[test]
+    fn test_process_health_tracker_failed_state_behavior() {
+        let mut tracker = ProcessHealthTracker::new();
+
+        // Reach Failed state
+        for i in 1..=MAX_CONSECUTIVE_FAILURES {
+            tracker.mark_failure(format!("Failure {}", i));
+        }
+        assert!(matches!(tracker.health(), ProcessHealth::Failed { .. }));
+        assert_eq!(tracker.consecutive_failures(), MAX_CONSECUTIVE_FAILURES);
+
+        // Mark more failures - counter should NOT increment
+        tracker.mark_failure("Additional failure 1".to_string());
+        assert_eq!(
+            tracker.consecutive_failures(),
+            MAX_CONSECUTIVE_FAILURES,
+            "Counter should not increment past MAX when already Failed"
+        );
+        assert!(matches!(tracker.health(), ProcessHealth::Failed { .. }));
+
+        tracker.mark_failure("Additional failure 2".to_string());
+        assert_eq!(
+            tracker.consecutive_failures(),
+            MAX_CONSECUTIVE_FAILURES,
+            "Counter should stay at MAX even with more failures"
+        );
+
+        // Verify reason gets updated (check the error message contains latest failure)
+        if let ProcessHealth::Failed { reason } = tracker.health() {
+            assert_eq!(reason, "Additional failure 2");
+        } else {
+            panic!("Expected Failed state");
+        }
+    }
+
+    #[test]
+    fn test_process_health_tracker_recovery_from_failed() {
+        let mut tracker = ProcessHealthTracker::new();
+
+        // Reach Failed state
+        for i in 1..=MAX_CONSECUTIVE_FAILURES {
+            tracker.mark_failure(format!("Failure {}", i));
+        }
+        assert!(matches!(tracker.health(), ProcessHealth::Failed { .. }));
+        assert_eq!(tracker.consecutive_failures(), MAX_CONSECUTIVE_FAILURES);
+
+        // Recovery with success
+        tracker.mark_success();
+        assert!(tracker.is_healthy());
+        assert_eq!(tracker.consecutive_failures(), 0);
+        assert!(matches!(tracker.health(), ProcessHealth::Healthy));
+
+        // Can start failing again from scratch
+        tracker.mark_failure("New failure after recovery".to_string());
+        assert_eq!(tracker.consecutive_failures(), 1);
+        assert!(matches!(tracker.health(), ProcessHealth::Degraded));
     }
 
     // Integration tests would go here but require ffmpeg to be installed
