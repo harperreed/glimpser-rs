@@ -14,9 +14,6 @@ repos:
           - id: fmt
             name: "rust: format"
             description: "Runs cargo fmt on Rust code"
-          - id: cargo-check
-            name: "rust: check"
-            description: "Runs cargo check on Rust code"
           - id: clippy
             name: "rust: clippy"
             description: "Runs clippy on Rust code"
