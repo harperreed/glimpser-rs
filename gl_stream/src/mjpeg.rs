@@ -168,8 +168,11 @@ impl Stream for MjpegStream {
                                 connection_id = %self.connection_id,
                                 expected = expected_seq,
                                 received = frame.sequence,
+                                had_expected_gap = ?self.expected_gap,
                                 "Received out-of-order frame with backwards sequence"
                             );
+                            // Clear expected_gap since this is an anomaly
+                            self.expected_gap = None;
                         } else {
                             // Forward gap - frames were missed
                             let gap = frame.sequence - expected_seq;
@@ -208,6 +211,18 @@ impl Stream for MjpegStream {
                         // Sequence is as expected, clear any pending expected gap
                         self.expected_gap = None;
                     }
+                } else {
+                    // First frame received - clear any expected_gap from Lagged before first frame
+                    // (We can't have a "gap" if we haven't received any frames yet)
+                    if self.expected_gap.is_some() {
+                        debug!(
+                            connection_id = %self.connection_id,
+                            had_expected_gap = ?self.expected_gap,
+                            first_sequence = frame.sequence,
+                            "Clearing expected gap - first frame received after lag before subscription"
+                        );
+                    }
+                    self.expected_gap = None;
                 }
 
                 self.last_sequence = Some(frame.sequence);
@@ -226,7 +241,8 @@ impl Stream for MjpegStream {
                 self.buffer.clear();
                 write!(
                     &mut self.buffer,
-                    "--{boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: {len}\r\n\r\n",
+                    "--{}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+                    boundary, len
                 )
                 .unwrap();
                 self.buffer.extend_from_slice(&frame.data);
