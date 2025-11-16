@@ -18,9 +18,10 @@ use tokio::{fs, sync::Mutex};
 use tracing::{debug, info, instrument};
 
 /// Output format for yt-dlp
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum OutputFormat {
     /// Best available quality
+    #[default]
     Best,
     /// Worst available quality
     Worst,
@@ -28,12 +29,6 @@ pub enum OutputFormat {
     FormatId(String),
     /// Best video with height limit
     BestWithHeight(u32),
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        Self::Best
-    }
 }
 
 /// Configuration for yt-dlp capture

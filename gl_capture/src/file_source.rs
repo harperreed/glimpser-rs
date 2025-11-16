@@ -245,9 +245,11 @@ mod tests {
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let video_path = temp_dir.join("test.mp4");
 
-        let mut config = SnapshotConfig::default();
-        config.quality = 95;
-        config.max_width = Some(1280);
+        let config = SnapshotConfig {
+            quality: 95,
+            max_width: Some(1280),
+            ..Default::default()
+        };
 
         let source = FileSource::with_config(&video_path, config);
         assert_eq!(source.config().quality, 95);
