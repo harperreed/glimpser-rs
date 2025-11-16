@@ -387,7 +387,7 @@ mod tests {
         // Fast receiver should get recent frames
         if let Ok(frame) = receiver1.try_recv() {
             // Should be able to receive something
-            assert!(frame.len() > 0);
+            assert!(!frame.is_empty());
         }
 
         // Slow receiver might lag

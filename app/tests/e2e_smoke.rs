@@ -25,6 +25,7 @@ struct E2ETestSetup {
     obs_base_url: String,
 }
 
+#[allow(dead_code)]
 impl E2ETestSetup {
     /// Create a new E2E test setup with temporary database and configuration
     async fn new() -> Result<Self, Box<dyn std::error::Error>> {
@@ -125,7 +126,7 @@ impl E2ETestSetup {
 
         let response = self
             .client
-            .post(&format!("{}/api/auth/login", self.web_base_url))
+            .post(format!("{}/api/auth/login", self.web_base_url))
             .json(&login_payload)
             .send()
             .await?;
@@ -192,12 +193,14 @@ impl E2ETestSetup {
                 .with_override("/api/upload", 10 * 1024 * 1024),
             update_service: {
                 // Create a test update service with dummy configuration
-                let mut update_config = gl_update::UpdateConfig::default();
                 // Valid Ed25519 public key for testing (this is a test key, not for production)
-                update_config.public_key =
-                    "8f7e3a2d4b1c9e6f8a5b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f".to_string();
                 // Use a writable temp directory for testing instead of /usr/local/bin
-                update_config.install_dir = std::env::temp_dir();
+                let update_config = gl_update::UpdateConfig {
+                    public_key: "8f7e3a2d4b1c9e6f8a5b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f"
+                        .to_string(),
+                    install_dir: std::env::temp_dir(),
+                    ..Default::default()
+                };
                 let service = gl_update::UpdateService::new(update_config)
                     .expect("Failed to create test update service");
                 std::sync::Arc::new(tokio::sync::Mutex::new(service))
@@ -248,7 +251,7 @@ impl E2ETestSetup {
         let response = timeout(
             Duration::from_secs(5),
             self.client
-                .get(&format!("{}/health", self.web_base_url))
+                .get(format!("{}/health", self.web_base_url))
                 .send(),
         )
         .await??;
@@ -265,7 +268,7 @@ impl E2ETestSetup {
         let response = timeout(
             Duration::from_secs(5),
             self.client
-                .get(&format!("{}/health", self.obs_base_url))
+                .get(format!("{}/health", self.obs_base_url))
                 .send(),
         )
         .await??;
@@ -292,7 +295,7 @@ impl E2ETestSetup {
 
         let response = self
             .client
-            .post(&format!("{}/api/captures", self.web_base_url))
+            .post(format!("{}/api/captures", self.web_base_url))
             .header("Authorization", format!("Bearer {}", token))
             .json(&capture_payload)
             .send()
@@ -316,7 +319,7 @@ impl E2ETestSetup {
         let response = timeout(
             Duration::from_secs(5),
             self.client
-                .get(&format!("{}/metrics", self.obs_base_url))
+                .get(format!("{}/metrics", self.obs_base_url))
                 .send(),
         )
         .await??;
