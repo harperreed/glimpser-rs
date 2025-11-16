@@ -9,6 +9,42 @@ use sqlx::{
 };
 use tracing::{debug, info, instrument};
 
+/// Allowed table names for statistics queries
+/// This is a security measure to prevent SQL injection via dynamic table names
+const ALLOWED_TABLES: &[&str] = &[
+    "users",
+    "api_keys",
+    "streams",
+    "captures",
+    "jobs",
+    "alerts",
+    "events",
+];
+
+/// Validates that a table name is in the allowed list and contains only safe SQL identifier characters
+///
+/// # Security
+/// This function prevents SQL injection by:
+/// 1. Checking against an allow-list of known table names
+/// 2. Validating that the name contains only alphanumeric characters and underscores
+///
+/// # Arguments
+/// * `table` - The table name to validate
+///
+/// # Returns
+/// * `true` if the table name is valid and allowed, `false` otherwise
+fn is_valid_table_name(table: &str) -> bool {
+    // First check if table is in the allow-list
+    if !ALLOWED_TABLES.contains(&table) {
+        return false;
+    }
+
+    // Additional validation: ensure table name contains only safe characters
+    // This is defense in depth - even though we check the allow-list,
+    // we also validate the actual characters to prevent injection
+    table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Database connection pool and operations
 #[derive(Debug, Clone)]
 pub struct Db {
@@ -101,17 +137,31 @@ impl Db {
     }
 
     /// Get database statistics
+    ///
+    /// # Security
+    /// This method uses an allow-list of table names (ALLOWED_TABLES) to prevent SQL injection.
+    /// All table names are validated before being used in queries.
     #[instrument(skip(self))]
     pub async fn stats(&self) -> Result<DatabaseStats> {
         debug!("Gathering database statistics");
 
-        let tables = vec![
-            "users", "api_keys", "streams", "captures", "jobs", "alerts", "events",
-        ];
-
         let mut table_counts = std::collections::HashMap::new();
 
-        for table in &tables {
+        // Iterate over the allowed tables constant
+        for &table in ALLOWED_TABLES {
+            // Validate table name against allow-list and character rules
+            // This is defense in depth - the const should already be safe,
+            // but we validate to prevent issues if the const is ever modified incorrectly
+            if !is_valid_table_name(table) {
+                return Err(Error::Database(format!(
+                    "Invalid table name encountered: {}. This is a security violation.",
+                    table
+                )));
+            }
+
+            // Safe to use table name in query after validation
+            // Note: SQLx doesn't support parameterized table names, so we use format!
+            // but only after strict validation
             let query = format!("SELECT COUNT(*) as count FROM {}", table);
             let row = sqlx::query(&query)
                 .fetch_one(&self.pool)
@@ -368,6 +418,95 @@ mod tests {
             assert!(
                 stats.table_counts.contains_key(table),
                 "Table {} should exist",
+                table
+            );
+        }
+    }
+
+    #[test]
+    fn test_valid_table_name_validation() {
+        // Test valid table names from the allow-list
+        assert!(is_valid_table_name("users"));
+        assert!(is_valid_table_name("api_keys"));
+        assert!(is_valid_table_name("streams"));
+        assert!(is_valid_table_name("captures"));
+        assert!(is_valid_table_name("jobs"));
+        assert!(is_valid_table_name("alerts"));
+        assert!(is_valid_table_name("events"));
+    }
+
+    #[test]
+    fn test_invalid_table_name_validation() {
+        // Test table names not in the allow-list
+        assert!(!is_valid_table_name("malicious_table"));
+        assert!(!is_valid_table_name("DROP TABLE users"));
+        assert!(!is_valid_table_name("users; DROP TABLE users--"));
+
+        // Test SQL injection attempts
+        assert!(!is_valid_table_name("users' OR '1'='1"));
+        assert!(!is_valid_table_name("users--"));
+        assert!(!is_valid_table_name("users/*"));
+        assert!(!is_valid_table_name("users; DELETE FROM users"));
+
+        // Test special characters that should be rejected
+        assert!(!is_valid_table_name("users;"));
+        assert!(!is_valid_table_name("users'"));
+        assert!(!is_valid_table_name("users\""));
+        assert!(!is_valid_table_name("users "));
+        assert!(!is_valid_table_name(" users"));
+        assert!(!is_valid_table_name("users-table"));
+        assert!(!is_valid_table_name("users.table"));
+
+        // Test empty and whitespace
+        assert!(!is_valid_table_name(""));
+        assert!(!is_valid_table_name(" "));
+        assert!(!is_valid_table_name("\t"));
+        assert!(!is_valid_table_name("\n"));
+    }
+
+    #[test]
+    fn test_allowed_tables_constant() {
+        // Verify all tables in ALLOWED_TABLES are valid
+        for &table in ALLOWED_TABLES {
+            assert!(
+                is_valid_table_name(table),
+                "ALLOWED_TABLES contains invalid table name: {}",
+                table
+            );
+        }
+
+        // Verify expected tables are present
+        assert!(ALLOWED_TABLES.contains(&"users"));
+        assert!(ALLOWED_TABLES.contains(&"api_keys"));
+        assert!(ALLOWED_TABLES.contains(&"streams"));
+        assert!(ALLOWED_TABLES.contains(&"captures"));
+        assert!(ALLOWED_TABLES.contains(&"jobs"));
+        assert!(ALLOWED_TABLES.contains(&"alerts"));
+        assert!(ALLOWED_TABLES.contains(&"events"));
+    }
+
+    #[tokio::test]
+    async fn test_stats_uses_allowed_tables_only() {
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+
+        let stats = db.stats().await.expect("Stats should be available");
+
+        // Verify stats only contains allowed tables
+        for table_name in stats.table_counts.keys() {
+            assert!(
+                ALLOWED_TABLES.contains(&table_name.as_str()),
+                "Stats contains unauthorized table: {}",
+                table_name
+            );
+        }
+
+        // Verify all allowed tables are in stats
+        for &table in ALLOWED_TABLES {
+            assert!(
+                stats.table_counts.contains_key(table),
+                "Stats missing allowed table: {}",
                 table
             );
         }
