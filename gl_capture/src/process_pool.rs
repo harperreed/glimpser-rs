@@ -441,15 +441,16 @@ impl FfmpegProcess {
                 "Buffer overflow detected - implementing overflow protection"
             );
 
-            // Strategy: Drop old data and look for next valid JPEG start
-            // This prevents unbounded memory growth while attempting recovery
-            if let Some(jpeg_start) = self.find_jpeg_start(&self.frame_buffer[..]) {
-                // Keep data from the last found JPEG start
-                self.frame_buffer.advance(jpeg_start);
+            // Strategy: Keep only the most recent incomplete frame by finding the last JPEG start marker
+            // This aggressively drops old/corrupt data while preserving the newest frame attempt
+            if let Some(last_jpeg_start) = self.find_last_jpeg_start(&self.frame_buffer[..]) {
+                // Keep data from the last (most recent) JPEG start marker found
+                let bytes_to_drop = last_jpeg_start;
+                self.frame_buffer.advance(bytes_to_drop);
                 warn!(
-                    bytes_dropped = jpeg_start,
+                    bytes_dropped = bytes_to_drop,
                     buffer_remaining = self.frame_buffer.len(),
-                    "Dropped old buffer data, retained from last JPEG start marker"
+                    "Dropped old buffer data, retained from most recent JPEG start marker"
                 );
             } else {
                 // No JPEG markers found - clear the entire buffer
@@ -477,9 +478,14 @@ impl FfmpegProcess {
         Ok(())
     }
 
-    /// Find the start of a JPEG frame (0xFF 0xD8)
+    /// Find the start of a JPEG frame (0xFF 0xD8) - returns first occurrence
     fn find_jpeg_start(&self, buffer: &[u8]) -> Option<usize> {
         buffer.windows(2).position(|w| w[0] == 0xFF && w[1] == 0xD8)
+    }
+
+    /// Find the last JPEG start marker (0xFF 0xD8) - returns last occurrence
+    fn find_last_jpeg_start(&self, buffer: &[u8]) -> Option<usize> {
+        buffer.windows(2).rposition(|w| w[0] == 0xFF && w[1] == 0xD8)
     }
 
     /// Find the end of a JPEG frame (0xFF 0xD9)
@@ -720,14 +726,15 @@ impl FfmpegProcessPool {
                 max_buffer_size = max_buffer_size.max(buffer_size);
                 total_buffer_overflows += overflow_count;
 
-                // Log buffer metrics if concerning
-                if buffer_size > BUFFER_WARNING_THRESHOLD as u64 {
+                // Log buffer metrics if critically high (only if approaching max to avoid spam)
+                // The check_buffer_overflow method already warns at BUFFER_WARNING_THRESHOLD
+                if buffer_size > (MAX_BUFFER_SIZE as u64 * 8 / 10) {
                     warn!(
                         process_index = index,
                         buffer_size = buffer_size,
                         peak_buffer = peak_buffer,
                         overflow_count = overflow_count,
-                        "Process has elevated buffer usage"
+                        "Process has critically high buffer usage (>80% of max)"
                     );
                 }
 
@@ -1102,6 +1109,41 @@ mod tests {
             .windows(2)
             .position(|w| w[0] == 0xFF && w[1] == 0xD9);
         assert_eq!(end, Some(102));
+    }
+
+    #[test]
+    fn test_find_last_jpeg_start() {
+        // Test finding the last JPEG start marker (for overflow recovery)
+        let mut buffer = vec![0xAA; 1000]; // Corrupt data
+
+        // Add first JPEG marker at position 100
+        buffer[100] = 0xFF;
+        buffer[101] = 0xD8;
+
+        // Add second JPEG marker at position 500
+        buffer[500] = 0xFF;
+        buffer[501] = 0xD8;
+
+        // Add third JPEG marker at position 800
+        buffer[800] = 0xFF;
+        buffer[801] = 0xD8;
+
+        // Test find first JPEG start (should find position 100)
+        let first = buffer
+            .windows(2)
+            .position(|w| w[0] == 0xFF && w[1] == 0xD8);
+        assert_eq!(first, Some(100));
+
+        // Test find last JPEG start (should find position 800)
+        let last = buffer
+            .windows(2)
+            .rposition(|w| w[0] == 0xFF && w[1] == 0xD8);
+        assert_eq!(last, Some(800));
+
+        // Verify that using rposition gives us the most recent frame start
+        // This is important for overflow recovery to keep only the newest data
+        assert!(last.unwrap() > first.unwrap());
+        assert_eq!(last.unwrap(), 800);
     }
 
     #[test]
