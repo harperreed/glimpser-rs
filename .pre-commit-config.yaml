@@ -17,7 +17,6 @@ repos:
           - id: clippy
             name: "rust: clippy"
             description: "Runs clippy on Rust code"
-            args: ['--all-features']
 
     - repo: https://github.com/charliermarsh/ruff-pre-commit
       rev: v0.1.9
