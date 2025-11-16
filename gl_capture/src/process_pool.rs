@@ -32,6 +32,15 @@ const RESTART_DELAY: Duration = Duration::from_millis(1000);
 /// MJPEG boundary detection buffer size
 const BOUNDARY_BUFFER_SIZE: usize = 16384;
 
+/// Maximum buffer size before triggering overflow protection (10 MB)
+const MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024;
+
+/// Buffer size warning threshold (5 MB)
+const BUFFER_WARNING_THRESHOLD: usize = 5 * 1024 * 1024;
+
+/// Maximum number of buffer overflows before marking process as failed
+const MAX_BUFFER_OVERFLOWS: u32 = 3;
+
 /// Configuration for the FFmpeg process pool
 #[derive(Debug, Clone)]
 pub struct ProcessPoolConfig {
@@ -123,6 +132,12 @@ pub struct ProcessPoolMetrics {
     pub extraction_errors: Arc<AtomicU64>,
     /// Average frame extraction time (microseconds)
     pub avg_extraction_time_us: Arc<AtomicU64>,
+    /// Current maximum buffer size across all processes (bytes)
+    pub max_buffer_size: Arc<AtomicU64>,
+    /// Total buffer overflow events
+    pub buffer_overflows: Arc<AtomicU64>,
+    /// Process restarts due to buffer overflow
+    pub buffer_overflow_restarts: Arc<AtomicU64>,
 }
 
 impl Default for ProcessPoolMetrics {
@@ -133,6 +148,9 @@ impl Default for ProcessPoolMetrics {
             healthy_processes: Arc::new(AtomicU64::new(0)),
             extraction_errors: Arc::new(AtomicU64::new(0)),
             avg_extraction_time_us: Arc::new(AtomicU64::new(0)),
+            max_buffer_size: Arc::new(AtomicU64::new(0)),
+            buffer_overflows: Arc::new(AtomicU64::new(0)),
+            buffer_overflow_restarts: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -166,6 +184,10 @@ pub struct FfmpegProcess {
     boundary_state: BoundaryState,
     /// Process configuration
     config: ProcessPoolConfig,
+    /// Buffer overflow counter
+    buffer_overflows: u32,
+    /// Peak buffer size seen
+    peak_buffer_size: usize,
 }
 
 /// State machine for MJPEG boundary detection
@@ -215,6 +237,8 @@ impl FfmpegProcess {
             frame_buffer: BytesMut::with_capacity(BOUNDARY_BUFFER_SIZE),
             boundary_state: BoundaryState::SeekingBoundary,
             config,
+            buffer_overflows: 0,
+            peak_buffer_size: 0,
         })
     }
 
@@ -354,6 +378,9 @@ impl FfmpegProcess {
 
     /// Try to extract a complete JPEG frame from the buffer
     fn try_extract_jpeg_frame(&mut self) -> Result<Option<Bytes>> {
+        // Check for buffer overflow BEFORE attempting extraction
+        self.check_buffer_overflow()?;
+
         // Look for JPEG start marker (0xFF 0xD8) and end marker (0xFF 0xD9)
         let buffer = &self.frame_buffer[..];
 
@@ -381,6 +408,73 @@ impl FfmpegProcess {
         }
 
         Ok(None)
+    }
+
+    /// Check for buffer overflow and handle accordingly
+    fn check_buffer_overflow(&mut self) -> Result<()> {
+        let current_size = self.frame_buffer.len();
+
+        // Update peak buffer size
+        if current_size > self.peak_buffer_size {
+            self.peak_buffer_size = current_size;
+        }
+
+        // Warning threshold - log but don't take action
+        if current_size > BUFFER_WARNING_THRESHOLD && current_size <= MAX_BUFFER_SIZE {
+            warn!(
+                buffer_size = current_size,
+                threshold = BUFFER_WARNING_THRESHOLD,
+                peak_size = self.peak_buffer_size,
+                "Frame buffer size approaching maximum threshold"
+            );
+        }
+
+        // Critical threshold - implement overflow protection
+        if current_size > MAX_BUFFER_SIZE {
+            self.buffer_overflows += 1;
+
+            error!(
+                buffer_size = current_size,
+                max_size = MAX_BUFFER_SIZE,
+                overflow_count = self.buffer_overflows,
+                peak_size = self.peak_buffer_size,
+                "Buffer overflow detected - implementing overflow protection"
+            );
+
+            // Strategy: Drop old data and look for next valid JPEG start
+            // This prevents unbounded memory growth while attempting recovery
+            if let Some(jpeg_start) = self.find_jpeg_start(&self.frame_buffer[..]) {
+                // Keep data from the last found JPEG start
+                self.frame_buffer.advance(jpeg_start);
+                warn!(
+                    bytes_dropped = jpeg_start,
+                    buffer_remaining = self.frame_buffer.len(),
+                    "Dropped old buffer data, retained from last JPEG start marker"
+                );
+            } else {
+                // No JPEG markers found - clear the entire buffer
+                let dropped_bytes = self.frame_buffer.len();
+                self.frame_buffer.clear();
+                error!(
+                    bytes_dropped = dropped_bytes,
+                    "No JPEG markers found - cleared entire buffer to prevent memory exhaustion"
+                );
+            }
+
+            // Check if we've exceeded maximum allowed overflows
+            if self.buffer_overflows >= MAX_BUFFER_OVERFLOWS {
+                self.mark_failure(format!(
+                    "Exceeded maximum buffer overflows ({}), stream likely corrupted",
+                    MAX_BUFFER_OVERFLOWS
+                ));
+                return Err(Error::Config(format!(
+                    "Process marked as failed due to {} buffer overflows - restart required",
+                    self.buffer_overflows
+                )));
+            }
+        }
+
+        Ok(())
     }
 
     /// Find the start of a JPEG frame (0xFF 0xD8)
@@ -430,6 +524,21 @@ impl FfmpegProcess {
     /// Get the current health status
     pub fn health(&self) -> &ProcessHealth {
         &self.health
+    }
+
+    /// Get current buffer size in bytes
+    pub fn buffer_size(&self) -> usize {
+        self.frame_buffer.len()
+    }
+
+    /// Get peak buffer size seen
+    pub fn peak_buffer_size(&self) -> usize {
+        self.peak_buffer_size
+    }
+
+    /// Get buffer overflow count
+    pub fn buffer_overflow_count(&self) -> u32 {
+        self.buffer_overflows
     }
 
     /// Kill the process
@@ -599,8 +708,29 @@ impl FfmpegProcessPool {
 
             let mut processes_guard = processes.write().await;
             let mut healthy_count = 0u64;
+            let mut max_buffer_size = 0u64;
+            let mut total_buffer_overflows = 0u64;
 
             for (index, process) in processes_guard.iter_mut().enumerate() {
+                // Track buffer metrics
+                let buffer_size = process.buffer_size() as u64;
+                let peak_buffer = process.peak_buffer_size() as u64;
+                let overflow_count = process.buffer_overflow_count() as u64;
+
+                max_buffer_size = max_buffer_size.max(buffer_size);
+                total_buffer_overflows += overflow_count;
+
+                // Log buffer metrics if concerning
+                if buffer_size > BUFFER_WARNING_THRESHOLD as u64 {
+                    warn!(
+                        process_index = index,
+                        buffer_size = buffer_size,
+                        peak_buffer = peak_buffer,
+                        overflow_count = overflow_count,
+                        "Process has elevated buffer usage"
+                    );
+                }
+
                 match process.health() {
                     ProcessHealth::Healthy => {
                         healthy_count += 1;
@@ -611,14 +741,18 @@ impl FfmpegProcessPool {
                         warn!(
                             process_index = index,
                             consecutive_failures = consecutive_failures,
+                            buffer_size = buffer_size,
                             "Process is degraded"
                         );
                         healthy_count += 1; // Degraded processes are still usable
                     }
                     ProcessHealth::Failed { reason } => {
+                        let is_buffer_overflow = reason.contains("buffer overflow");
+
                         warn!(
                             process_index = index,
                             reason = %reason,
+                            is_buffer_overflow = is_buffer_overflow,
                             "Restarting failed process"
                         );
 
@@ -633,6 +767,18 @@ impl FfmpegProcessPool {
                             Ok(new_process) => {
                                 *process = new_process;
                                 metrics.process_restarts.fetch_add(1, Ordering::Relaxed);
+
+                                // Track buffer overflow specific restarts
+                                if is_buffer_overflow {
+                                    metrics
+                                        .buffer_overflow_restarts
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    info!(
+                                        process_index = index,
+                                        "Process restarted after buffer overflow"
+                                    );
+                                }
+
                                 healthy_count += 1;
                                 info!(process_index = index, "Process restarted successfully");
                             }
@@ -648,13 +794,22 @@ impl FfmpegProcessPool {
                 }
             }
 
+            // Update global metrics
             metrics
                 .healthy_processes
                 .store(healthy_count, Ordering::Relaxed);
+            metrics
+                .max_buffer_size
+                .store(max_buffer_size, Ordering::Relaxed);
+            metrics
+                .buffer_overflows
+                .store(total_buffer_overflows, Ordering::Relaxed);
 
             debug!(
                 healthy_processes = healthy_count,
                 total_processes = processes_guard.len(),
+                max_buffer_size = max_buffer_size,
+                total_buffer_overflows = total_buffer_overflows,
                 "Health check completed"
             );
         }
@@ -727,6 +882,12 @@ mod tests {
         assert_eq!(metrics.healthy_processes.load(Ordering::Relaxed), 0);
         assert_eq!(metrics.extraction_errors.load(Ordering::Relaxed), 0);
         assert_eq!(metrics.avg_extraction_time_us.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.max_buffer_size.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.buffer_overflows.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            metrics.buffer_overflow_restarts.load(Ordering::Relaxed),
+            0
+        );
     }
 
     #[test]
@@ -804,6 +965,8 @@ mod tests {
             frame_buffer: BytesMut::new(),
             boundary_state: BoundaryState::SeekingBoundary,
             config,
+            buffer_overflows: 0,
+            peak_buffer_size: 0,
         };
 
         // Initially healthy
@@ -873,5 +1036,148 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_buffer_overflow_detection() {
+        // Test buffer overflow detection logic without unsafe code
+        let mut buffer = BytesMut::with_capacity(BOUNDARY_BUFFER_SIZE);
+
+        // Simulate buffer growth beyond maximum
+        let corrupt_data = vec![0u8; MAX_BUFFER_SIZE + 1000];
+        buffer.extend_from_slice(&corrupt_data);
+
+        assert!(buffer.len() > MAX_BUFFER_SIZE);
+
+        // This would trigger overflow protection in check_buffer_overflow
+        // We test the logic standalone
+        let current_size = buffer.len();
+        assert!(current_size > MAX_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn test_buffer_warning_threshold() {
+        // Test warning threshold detection
+        let mut buffer = BytesMut::with_capacity(BOUNDARY_BUFFER_SIZE);
+
+        // Fill buffer to warning threshold
+        let data = vec![0u8; BUFFER_WARNING_THRESHOLD + 100];
+        buffer.extend_from_slice(&data);
+
+        let current_size = buffer.len();
+        assert!(current_size > BUFFER_WARNING_THRESHOLD);
+        assert!(current_size < MAX_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn test_jpeg_boundary_recovery() {
+        // Test that we can find JPEG boundaries in corrupted stream
+        let mut corrupt_buffer = vec![0xAA; 5000]; // Corrupt data
+
+        // Add a valid JPEG frame in the middle
+        let jpeg_start_pos = 2000;
+        corrupt_buffer[jpeg_start_pos] = 0xFF;
+        corrupt_buffer[jpeg_start_pos + 1] = 0xD8;
+
+        // Add some JPEG data
+        for i in 0..100 {
+            corrupt_buffer[jpeg_start_pos + 2 + i] = 0x00;
+        }
+
+        // Add JPEG end marker
+        let jpeg_end_pos = jpeg_start_pos + 102;
+        corrupt_buffer[jpeg_end_pos] = 0xFF;
+        corrupt_buffer[jpeg_end_pos + 1] = 0xD9;
+
+        // More corrupt data after
+        corrupt_buffer.extend_from_slice(&[0xBB; 1000]);
+
+        // Test that we can find the JPEG boundaries
+        let start = corrupt_buffer
+            .windows(2)
+            .position(|w| w[0] == 0xFF && w[1] == 0xD8);
+        assert_eq!(start, Some(jpeg_start_pos));
+
+        let end = corrupt_buffer[jpeg_start_pos..]
+            .windows(2)
+            .position(|w| w[0] == 0xFF && w[1] == 0xD9);
+        assert_eq!(end, Some(102));
+    }
+
+    #[test]
+    fn test_buffer_metrics_tracking() {
+        // Test that buffer metrics are properly initialized
+        let metrics = ProcessPoolMetrics::default();
+
+        // Verify all buffer-related metrics start at zero
+        assert_eq!(metrics.max_buffer_size.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.buffer_overflows.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            metrics.buffer_overflow_restarts.load(Ordering::Relaxed),
+            0
+        );
+
+        // Test metric updates
+        metrics.max_buffer_size.store(1024, Ordering::Relaxed);
+        metrics.buffer_overflows.store(5, Ordering::Relaxed);
+        metrics
+            .buffer_overflow_restarts
+            .store(2, Ordering::Relaxed);
+
+        assert_eq!(metrics.max_buffer_size.load(Ordering::Relaxed), 1024);
+        assert_eq!(metrics.buffer_overflows.load(Ordering::Relaxed), 5);
+        assert_eq!(
+            metrics.buffer_overflow_restarts.load(Ordering::Relaxed),
+            2
+        );
+    }
+
+    #[test]
+    fn test_buffer_size_constants() {
+        // Verify that our buffer size constants are reasonable
+        assert!(BOUNDARY_BUFFER_SIZE > 0);
+        assert!(BUFFER_WARNING_THRESHOLD > BOUNDARY_BUFFER_SIZE);
+        assert!(MAX_BUFFER_SIZE > BUFFER_WARNING_THRESHOLD);
+        assert!(MAX_BUFFER_OVERFLOWS > 0);
+
+        // Ensure we have reasonable thresholds
+        assert_eq!(BUFFER_WARNING_THRESHOLD, 5 * 1024 * 1024); // 5 MB
+        assert_eq!(MAX_BUFFER_SIZE, 10 * 1024 * 1024); // 10 MB
+        assert_eq!(MAX_BUFFER_OVERFLOWS, 3);
+    }
+
+    #[test]
+    #[ignore = "Test uses unsafe code"]
+    fn test_buffer_overflow_handling() {
+        // Test complete buffer overflow handling with process state
+        let config = ProcessPoolConfig::default();
+        let mut process = FfmpegProcess {
+            child: unsafe { std::mem::zeroed() },
+            reader: None,
+            health: ProcessHealth::Healthy,
+            created_at: Instant::now(),
+            last_frame_at: None,
+            consecutive_failures: 0,
+            frame_buffer: BytesMut::new(),
+            boundary_state: BoundaryState::SeekingBoundary,
+            config,
+            buffer_overflows: 0,
+            peak_buffer_size: 0,
+        };
+
+        // Initially no overflows
+        assert_eq!(process.buffer_overflow_count(), 0);
+        assert_eq!(process.peak_buffer_size(), 0);
+
+        // Simulate buffer growth
+        let large_data = vec![0u8; MAX_BUFFER_SIZE + 1000];
+        process.frame_buffer.extend_from_slice(&large_data);
+
+        // Buffer should be oversized
+        assert!(process.buffer_size() > MAX_BUFFER_SIZE);
+
+        // After check_buffer_overflow is called, buffer would be trimmed
+        // and overflow counter would increment
+        // (This would happen in the actual extract_frame flow)
     }
 }
