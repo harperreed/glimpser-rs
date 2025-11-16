@@ -1,5 +1,14 @@
 //! ABOUTME: Database layer with SQLite, migrations, and repositories
 //! ABOUTME: Handles all data persistence and database operations
+//!
+//! ## SQLite Version Requirements
+//!
+//! This library requires SQLite 3.8.0 or higher for optimal performance and features:
+//! - WAL mode support (3.7.0+)
+//! - Memory-mapped I/O (3.7.17+)
+//! - Improved busy handler (3.8.0+)
+//!
+//! The pragma validation system will warn about unsupported features on older versions.
 
 use gl_core::{Error, Result};
 use sqlx::{
@@ -7,7 +16,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
     Row, Sqlite, SqlitePool,
 };
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, warn, instrument};
 
 /// Database connection pool and operations
 #[derive(Debug, Clone)]
@@ -15,7 +24,157 @@ pub struct Db {
     pool: SqlitePool,
 }
 
+/// Pragma configuration for validation
+#[derive(Debug)]
+struct PragmaConfig {
+    name: &'static str,
+    expected: &'static str,
+    min_version: Option<&'static str>,
+}
+
+impl PragmaConfig {
+    fn new(name: &'static str, expected: &'static str) -> Self {
+        Self {
+            name,
+            expected,
+            min_version: None,
+        }
+    }
+
+    fn with_min_version(name: &'static str, expected: &'static str, min_version: &'static str) -> Self {
+        Self {
+            name,
+            expected,
+            min_version: Some(min_version),
+        }
+    }
+}
+
 impl Db {
+    /// Validate and log pragma settings
+    #[instrument(skip(pool))]
+    async fn validate_pragmas(pool: &SqlitePool) -> Result<()> {
+        info!("Validating SQLite pragma settings");
+
+        // Get SQLite version first
+        let version_row = sqlx::query("SELECT sqlite_version() as version")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to get SQLite version: {}", e)))?;
+
+        let sqlite_version: String = version_row.get("version");
+        info!("SQLite version: {}", sqlite_version);
+
+        // Define expected pragma values
+        let pragmas = vec![
+            PragmaConfig::new("foreign_keys", "1"),
+            PragmaConfig::new("synchronous", "1"), // NORMAL = 1
+            PragmaConfig::new("cache_size", "-10000"), // Negative means KB, so -10000 = 10MB
+            PragmaConfig::new("temp_store", "2"), // MEMORY = 2
+            PragmaConfig::new("busy_timeout", "30000"),
+            PragmaConfig::with_min_version("mmap_size", "268435456", "3.7.17"),
+        ];
+
+        let mut validation_errors = Vec::new();
+
+        for pragma in pragmas {
+            // Check version requirement if specified
+            if let Some(min_version) = pragma.min_version {
+                if !Self::version_meets_requirement(&sqlite_version, min_version) {
+                    warn!(
+                        "Pragma '{}' requires SQLite {} but current version is {}. Skipping validation.",
+                        pragma.name, min_version, sqlite_version
+                    );
+                    continue;
+                }
+            }
+
+            // Query the current pragma value
+            let query = format!("PRAGMA {}", pragma.name);
+            match sqlx::query(&query).fetch_one(pool).await {
+                Ok(row) => {
+                    // Try to get the value as a string first, then as i64
+                    let actual_value = if let Ok(val) = row.try_get::<String, _>(0) {
+                        val
+                    } else if let Ok(val) = row.try_get::<i64, _>(0) {
+                        val.to_string()
+                    } else {
+                        validation_errors.push(format!(
+                            "Pragma '{}': Unable to read value",
+                            pragma.name
+                        ));
+                        continue;
+                    };
+
+                    if actual_value == pragma.expected {
+                        debug!("Pragma '{}' validated: {}", pragma.name, actual_value);
+                    } else {
+                        warn!(
+                            "Pragma '{}' mismatch: expected '{}', got '{}'",
+                            pragma.name, pragma.expected, actual_value
+                        );
+                        validation_errors.push(format!(
+                            "Pragma '{}': expected '{}', got '{}'",
+                            pragma.name, pragma.expected, actual_value
+                        ));
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to query pragma '{}': {}", pragma.name, e);
+                    validation_errors.push(format!(
+                        "Pragma '{}': query failed - {}",
+                        pragma.name, e
+                    ));
+                }
+            }
+        }
+
+        // Log summary
+        if validation_errors.is_empty() {
+            info!("All pragma settings validated successfully");
+            Ok(())
+        } else {
+            warn!(
+                "Pragma validation completed with {} issue(s): {}",
+                validation_errors.len(),
+                validation_errors.join("; ")
+            );
+            // Don't fail on pragma validation errors, just warn
+            // This allows the database to continue working even if some optimizations fail
+            Ok(())
+        }
+    }
+
+    /// Check if SQLite version meets minimum requirement
+    fn version_meets_requirement(current: &str, required: &str) -> bool {
+        let parse_version = |v: &str| -> Option<Vec<u32>> {
+            v.split('.')
+                .map(|part| part.parse::<u32>().ok())
+                .collect::<Option<Vec<_>>>()
+        };
+
+        let current_parts = match parse_version(current) {
+            Some(parts) => parts,
+            None => return false,
+        };
+
+        let required_parts = match parse_version(required) {
+            Some(parts) => parts,
+            None => return false,
+        };
+
+        for (c, r) in current_parts.iter().zip(required_parts.iter()) {
+            match c.cmp(r) {
+                std::cmp::Ordering::Greater => return true,
+                std::cmp::Ordering::Less => return false,
+                std::cmp::Ordering::Equal => continue,
+            }
+        }
+
+        // If all parts are equal up to the length of required_parts, version meets requirement
+        true
+    }
+
     /// Create a new database connection with migrations
     #[instrument(skip(db_path))]
     pub async fn new(db_path: &str) -> Result<Self> {
@@ -52,6 +211,9 @@ impl Db {
             .connect_with(connect_options)
             .await
             .map_err(|e| Error::Database(format!("Failed to create connection pool: {}", e)))?;
+
+        // Validate pragma settings
+        Self::validate_pragmas(&pool).await?;
 
         let db = Self { pool };
 
@@ -371,5 +533,89 @@ mod tests {
                 table
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_pragma_validation() {
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+
+        // Pragma validation should have already run during database initialization
+        // Let's manually verify some key pragmas
+        let pool = db.pool();
+
+        // Check foreign_keys is enabled
+        let fk_row = sqlx::query("PRAGMA foreign_keys")
+            .fetch_one(pool)
+            .await
+            .expect("Should be able to query foreign_keys pragma");
+        let fk_value: i64 = fk_row.get(0);
+        assert_eq!(fk_value, 1, "Foreign keys should be enabled");
+
+        // Check synchronous mode
+        let sync_row = sqlx::query("PRAGMA synchronous")
+            .fetch_one(pool)
+            .await
+            .expect("Should be able to query synchronous pragma");
+        let sync_value: i64 = sync_row.get(0);
+        assert_eq!(sync_value, 1, "Synchronous should be NORMAL (1)");
+
+        // Check temp_store is in memory
+        let temp_row = sqlx::query("PRAGMA temp_store")
+            .fetch_one(pool)
+            .await
+            .expect("Should be able to query temp_store pragma");
+        let temp_value: i64 = temp_row.get(0);
+        assert_eq!(temp_value, 2, "Temp store should be MEMORY (2)");
+    }
+
+    #[test]
+    fn test_version_comparison() {
+        // Test exact match
+        assert!(Db::version_meets_requirement("3.8.0", "3.8.0"));
+
+        // Test newer major version
+        assert!(Db::version_meets_requirement("4.0.0", "3.8.0"));
+
+        // Test newer minor version
+        assert!(Db::version_meets_requirement("3.9.0", "3.8.0"));
+
+        // Test newer patch version
+        assert!(Db::version_meets_requirement("3.8.1", "3.8.0"));
+
+        // Test older version
+        assert!(!Db::version_meets_requirement("3.7.0", "3.8.0"));
+
+        // Test with different number of components
+        assert!(Db::version_meets_requirement("3.8.0.1", "3.8.0"));
+        assert!(Db::version_meets_requirement("3.8", "3.8.0"));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_version_detection() {
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+
+        // Query SQLite version
+        let version_row = sqlx::query("SELECT sqlite_version() as version")
+            .fetch_one(db.pool())
+            .await
+            .expect("Should be able to get SQLite version");
+
+        let version: String = version_row.get("version");
+        assert!(!version.is_empty(), "SQLite version should not be empty");
+        assert!(
+            version.starts_with("3."),
+            "SQLite version should be 3.x.x"
+        );
+
+        // Verify it meets our minimum requirement
+        assert!(
+            Db::version_meets_requirement(&version, "3.8.0"),
+            "SQLite version {} should meet minimum requirement 3.8.0",
+            version
+        );
     }
 }
