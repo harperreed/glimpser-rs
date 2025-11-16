@@ -21,28 +21,55 @@ const ALLOWED_TABLES: &[&str] = &[
     "events",
 ];
 
-/// Validates that a table name is in the allowed list and contains only safe SQL identifier characters
+/// Validates that a table name contains only safe SQL identifier characters
 ///
 /// # Security
-/// This function prevents SQL injection by:
-/// 1. Checking against an allow-list of known table names
-/// 2. Validating that the name contains only alphanumeric characters and underscores
+/// This function validates SQL identifiers by ensuring they:
+/// 1. Are not empty
+/// 2. Start with a letter or underscore (valid SQL identifier start)
+/// 3. Contain only alphanumeric characters and underscores
+///
+/// # Arguments
+/// * `table` - The table name to validate
+///
+/// # Returns
+/// * `true` if the table name is valid, `false` otherwise
+fn is_safe_sql_identifier(table: &str) -> bool {
+    // Must not be empty
+    if table.is_empty() {
+        return false;
+    }
+
+    // Must start with a letter or underscore (SQL identifier rules)
+    let mut chars = table.chars();
+    if let Some(first) = chars.next() {
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return false;
+        }
+    }
+
+    // All characters must be alphanumeric or underscore
+    table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Validates that a table name is in the allowed list and is a safe SQL identifier
+///
+/// # Security
+/// This function prevents SQL injection by checking against an allow-list
+/// of known table names.
 ///
 /// # Arguments
 /// * `table` - The table name to validate
 ///
 /// # Returns
 /// * `true` if the table name is valid and allowed, `false` otherwise
+///
+/// # Note
+/// This function is currently used in tests and kept for potential future use
+/// when validating table names from external sources (config, API, etc.)
+#[allow(dead_code)]
 fn is_valid_table_name(table: &str) -> bool {
-    // First check if table is in the allow-list
-    if !ALLOWED_TABLES.contains(&table) {
-        return false;
-    }
-
-    // Additional validation: ensure table name contains only safe characters
-    // This is defense in depth - even though we check the allow-list,
-    // we also validate the actual characters to prevent injection
-    table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    ALLOWED_TABLES.contains(&table) && is_safe_sql_identifier(table)
 }
 
 /// Database connection pool and operations
@@ -140,7 +167,7 @@ impl Db {
     ///
     /// # Security
     /// This method uses an allow-list of table names (ALLOWED_TABLES) to prevent SQL injection.
-    /// All table names are validated before being used in queries.
+    /// All table names are validated to ensure they're safe SQL identifiers before being used in queries.
     #[instrument(skip(self))]
     pub async fn stats(&self) -> Result<DatabaseStats> {
         debug!("Gathering database statistics");
@@ -149,19 +176,19 @@ impl Db {
 
         // Iterate over the allowed tables constant
         for &table in ALLOWED_TABLES {
-            // Validate table name against allow-list and character rules
+            // Validate that the table name is a safe SQL identifier
             // This is defense in depth - the const should already be safe,
-            // but we validate to prevent issues if the const is ever modified incorrectly
-            if !is_valid_table_name(table) {
+            // but we validate to catch any programming errors if ALLOWED_TABLES is modified
+            if !is_safe_sql_identifier(table) {
                 return Err(Error::Database(format!(
-                    "Invalid table name encountered: {}. This is a security violation.",
+                    "ALLOWED_TABLES contains invalid SQL identifier: '{}'. This is a programming error.",
                     table
                 )));
             }
 
             // Safe to use table name in query after validation
             // Note: SQLx doesn't support parameterized table names, so we use format!
-            // but only after strict validation
+            // but only after strict validation against the allow-list and identifier rules
             let query = format!("SELECT COUNT(*) as count FROM {}", table);
             let row = sqlx::query(&query)
                 .fetch_one(&self.pool)
@@ -424,6 +451,36 @@ mod tests {
     }
 
     #[test]
+    fn test_safe_sql_identifier_validation() {
+        // Test valid SQL identifiers
+        assert!(is_safe_sql_identifier("users"));
+        assert!(is_safe_sql_identifier("api_keys"));
+        assert!(is_safe_sql_identifier("_private"));
+        assert!(is_safe_sql_identifier("table123"));
+        assert!(is_safe_sql_identifier("MyTable"));
+
+        // Test invalid - starts with number
+        assert!(!is_safe_sql_identifier("1users"));
+        assert!(!is_safe_sql_identifier("9table"));
+
+        // Test invalid - empty
+        assert!(!is_safe_sql_identifier(""));
+
+        // Test invalid - special characters
+        assert!(!is_safe_sql_identifier("user-table"));
+        assert!(!is_safe_sql_identifier("user.table"));
+        assert!(!is_safe_sql_identifier("user table"));
+        assert!(!is_safe_sql_identifier("user;table"));
+        assert!(!is_safe_sql_identifier("user'table"));
+        assert!(!is_safe_sql_identifier("user\"table"));
+
+        // Test invalid - SQL injection attempts
+        assert!(!is_safe_sql_identifier("users' OR '1'='1"));
+        assert!(!is_safe_sql_identifier("users; DROP TABLE users"));
+        assert!(!is_safe_sql_identifier("users--"));
+    }
+
+    #[test]
     fn test_valid_table_name_validation() {
         // Test valid table names from the allow-list
         assert!(is_valid_table_name("users"));
@@ -437,12 +494,14 @@ mod tests {
 
     #[test]
     fn test_invalid_table_name_validation() {
-        // Test table names not in the allow-list
+        // Test table names not in the allow-list (even if valid identifiers)
         assert!(!is_valid_table_name("malicious_table"));
-        assert!(!is_valid_table_name("DROP TABLE users"));
-        assert!(!is_valid_table_name("users; DROP TABLE users--"));
+        assert!(!is_valid_table_name("other_table"));
+        assert!(!is_valid_table_name("passwords"));
 
         // Test SQL injection attempts
+        assert!(!is_valid_table_name("DROP TABLE users"));
+        assert!(!is_valid_table_name("users; DROP TABLE users--"));
         assert!(!is_valid_table_name("users' OR '1'='1"));
         assert!(!is_valid_table_name("users--"));
         assert!(!is_valid_table_name("users/*"));
@@ -462,15 +521,18 @@ mod tests {
         assert!(!is_valid_table_name(" "));
         assert!(!is_valid_table_name("\t"));
         assert!(!is_valid_table_name("\n"));
+
+        // Test identifiers starting with numbers
+        assert!(!is_valid_table_name("1users"));
     }
 
     #[test]
     fn test_allowed_tables_constant() {
-        // Verify all tables in ALLOWED_TABLES are valid
+        // Verify all tables in ALLOWED_TABLES are safe SQL identifiers
         for &table in ALLOWED_TABLES {
             assert!(
-                is_valid_table_name(table),
-                "ALLOWED_TABLES contains invalid table name: {}",
+                is_safe_sql_identifier(table),
+                "ALLOWED_TABLES contains invalid SQL identifier: {}",
                 table
             );
         }
@@ -483,6 +545,9 @@ mod tests {
         assert!(ALLOWED_TABLES.contains(&"jobs"));
         assert!(ALLOWED_TABLES.contains(&"alerts"));
         assert!(ALLOWED_TABLES.contains(&"events"));
+
+        // Verify count
+        assert_eq!(ALLOWED_TABLES.len(), 7, "Expected 7 allowed tables");
     }
 
     #[tokio::test]
