@@ -88,7 +88,7 @@ impl Db {
     /// Create a new database connection with migrations and default retry configuration
     #[instrument(skip(db_path))]
     pub async fn new(db_path: &str) -> Result<Self> {
-        Self::new_with_retry(db_path, DatabaseRetryConfig::default()).await
+        Self::new_with_retry(db_path, DatabaseRetryConfig::default(), 10).await
     }
 
     /// Create a new database connection with migrations and custom retry configuration
@@ -96,6 +96,7 @@ impl Db {
     pub async fn new_with_retry(
         db_path: &str,
         retry_config: DatabaseRetryConfig,
+        pool_size: u32,
     ) -> Result<Self> {
         info!(
             "Initializing database at: {} (max_attempts: {}, initial_delay: {}ms)",
@@ -118,7 +119,7 @@ impl Db {
                 tokio::time::sleep(delay).await;
             }
 
-            match Self::try_initialize(db_path, &database_url).await {
+            match Self::try_initialize(db_path, &database_url, pool_size).await {
                 Ok(db) => {
                     // Run migrations (will retry entire initialization if this fails)
                     match db.migrate().await {
@@ -168,7 +169,7 @@ impl Db {
     }
 
     /// Try to initialize the database connection (single attempt)
-    async fn try_initialize(db_path: &str, database_url: &str) -> Result<Self> {
+    async fn try_initialize(db_path: &str, database_url: &str, pool_size: u32) -> Result<Self> {
         // Create database if it doesn't exist
         if !Sqlite::database_exists(database_url)
             .await
@@ -192,9 +193,9 @@ impl Db {
             .pragma("busy_timeout", "30000") // 30 second timeout for lock contention
             .pragma("mmap_size", "268435456"); // 256 MB memory-mapped I/O
 
-        // Create connection pool
+        // Create connection pool with configured size
         let pool = SqlitePoolOptions::new()
-            .max_connections(10)
+            .max_connections(pool_size)
             .min_connections(1)
             .connect_with(connect_options)
             .await

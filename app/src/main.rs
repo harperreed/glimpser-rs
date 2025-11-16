@@ -52,7 +52,13 @@ async fn main() {
         config.database.retry.backoff_multiplier,
     );
 
-    let db = match Db::new_with_retry(&config.database.path, retry_config).await {
+    let db = match Db::new_with_retry(
+        &config.database.path,
+        retry_config,
+        config.database.pool_size,
+    )
+    .await
+    {
         Ok(db) => {
             tracing::info!("Database initialized successfully");
             db

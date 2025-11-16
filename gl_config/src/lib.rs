@@ -119,8 +119,8 @@ pub struct DatabaseConfig {
 /// Database connection retry configuration
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
 pub struct DatabaseRetryConfig {
-    /// Maximum number of retry attempts for database connections
-    #[validate(range(min = 0, max = 20))]
+    /// Maximum number of retry attempts for database connections (minimum 1)
+    #[validate(range(min = 1, max = 20))]
     pub max_attempts: u32,
     /// Initial delay between retries in milliseconds
     #[validate(range(min = 100, max = 30000))]
