@@ -71,8 +71,8 @@ pub struct CircuitBreakerConfig {
 impl Default for CircuitBreakerConfig {
     fn default() -> Self {
         Self {
-            failure_threshold: 5,       // Open after 5 consecutive failures
-            success_threshold: 2,        // Close after 2 consecutive successes in half-open
+            failure_threshold: 5, // Open after 5 consecutive failures
+            success_threshold: 2, // Close after 2 consecutive successes in half-open
             initial_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(60),
             backoff_multiplier: 2.0,
@@ -211,7 +211,9 @@ impl CircuitBreaker {
                     state.opened_at = Some(Instant::now());
 
                     // Calculate exponential backoff
-                    let backoff_multiplier = self.config.backoff_multiplier
+                    let backoff_multiplier = self
+                        .config
+                        .backoff_multiplier
                         .powi((state.consecutive_failures - self.config.failure_threshold) as i32);
                     let new_backoff = state.current_backoff.mul_f64(backoff_multiplier);
                     state.current_backoff = new_backoff.min(self.config.max_backoff);
@@ -223,14 +225,14 @@ impl CircuitBreaker {
                 }
             }
             CircuitState::HalfOpen => {
-                warn!(
-                    "Circuit breaker transitioning from HalfOpen to Open after failure"
-                );
+                warn!("Circuit breaker transitioning from HalfOpen to Open after failure");
                 state.state = CircuitState::Open;
                 state.opened_at = Some(Instant::now());
 
                 // Increase backoff on half-open failure
-                let new_backoff = state.current_backoff.mul_f64(self.config.backoff_multiplier);
+                let new_backoff = state
+                    .current_backoff
+                    .mul_f64(self.config.backoff_multiplier);
                 state.current_backoff = new_backoff.min(self.config.max_backoff);
             }
             CircuitState::Open => {
@@ -282,12 +284,12 @@ impl CircuitBreaker {
             consecutive_failures: state.consecutive_failures,
             total_failures: self.total_failures.load(Ordering::Relaxed),
             total_successes: self.total_successes.load(Ordering::Relaxed),
-            last_failure: state.last_failure_time.map(|time| {
-                humantime::format_rfc3339(time).to_string()
-            }),
-            last_success: state.last_success_time.map(|time| {
-                humantime::format_rfc3339(time).to_string()
-            }),
+            last_failure: state
+                .last_failure_time
+                .map(|time| humantime::format_rfc3339(time).to_string()),
+            last_success: state
+                .last_success_time
+                .map(|time| humantime::format_rfc3339(time).to_string()),
             current_backoff_secs: state.current_backoff.as_secs(),
             next_retry_at,
         }
