@@ -137,6 +137,10 @@ impl<'a> UserRepository<'a> {
     }
 
     /// Update a user
+    ///
+    /// This method uses a transaction internally to ensure atomicity of the
+    /// read-then-write operation. If any step fails, the entire operation is
+    /// rolled back to prevent partial updates.
     #[instrument(skip(self, request))]
     pub async fn update(&self, id: &str, request: UpdateUserRequest) -> Result<User> {
         debug!("Updating user: {}", id);
@@ -153,6 +157,8 @@ impl<'a> UserRepository<'a> {
         let now = now_iso8601();
 
         // Use transaction to ensure atomicity of read-then-write operation
+        // Note: This creates a transaction directly rather than using Db::with_transaction()
+        // because repositories only have access to SqlitePool, not the Db wrapper
         let mut tx = self
             .pool
             .begin()

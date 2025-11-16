@@ -95,6 +95,10 @@ pub struct BackgroundSnapshotJobsRepository;
 
 impl BackgroundSnapshotJobsRepository {
     /// Create a new background snapshot job
+    ///
+    /// This method uses a transaction internally to ensure atomicity of the
+    /// insert-then-select operation. If any step fails, the entire operation is
+    /// rolled back to prevent orphaned records.
     pub async fn create(
         pool: &SqlitePool,
         request: CreateBackgroundJobRequest,
@@ -103,6 +107,8 @@ impl BackgroundSnapshotJobsRepository {
         let now = now_iso8601();
 
         // Use transaction to ensure atomicity of insert-then-select operation
+        // Note: This creates a transaction directly rather than using Db::with_transaction()
+        // because this static method only has access to SqlitePool, not the Db wrapper
         let mut tx = pool
             .begin()
             .await

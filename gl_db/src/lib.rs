@@ -15,13 +15,23 @@ use tracing::{debug, info, instrument, warn};
 #[derive(Debug, Clone)]
 pub struct Db {
     pool: SqlitePool,
+    transaction_timeout: Duration,
 }
 
 impl Db {
-    /// Create a new database connection with migrations
+    /// Create a new database connection with migrations and default timeout (30s)
     #[instrument(skip(db_path))]
     pub async fn new(db_path: &str) -> Result<Self> {
-        info!("Initializing database at: {}", db_path);
+        Self::new_with_timeout(db_path, Duration::from_secs(30)).await
+    }
+
+    /// Create a new database connection with migrations and custom transaction timeout
+    #[instrument(skip(db_path))]
+    pub async fn new_with_timeout(db_path: &str, transaction_timeout: Duration) -> Result<Self> {
+        info!(
+            "Initializing database at: {} with transaction timeout: {:?}",
+            db_path, transaction_timeout
+        );
 
         // Create database if it doesn't exist
         let database_url = format!("sqlite://{}", db_path);
@@ -55,7 +65,10 @@ impl Db {
             .await
             .map_err(|e| Error::Database(format!("Failed to create connection pool: {}", e)))?;
 
-        let db = Self { pool };
+        let db = Self {
+            pool,
+            transaction_timeout,
+        };
 
         // Run migrations
         db.migrate().await?;
@@ -85,7 +98,16 @@ impl Db {
 
     /// Create a Db instance from an existing pool (for testing/reuse)
     pub fn from_pool(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            transaction_timeout: Duration::from_secs(30), // Default timeout
+        }
+    }
+
+    /// Set the transaction timeout duration
+    pub fn with_transaction_timeout(mut self, timeout: Duration) -> Self {
+        self.transaction_timeout = timeout;
+        self
     }
 
     /// Check database health
@@ -130,12 +152,14 @@ impl Db {
         Ok(DatabaseStats { table_counts })
     }
 
-    /// Execute a function within a database transaction with timeout
+    /// Execute a function within a database transaction with configured timeout
     ///
     /// This method provides automatic transaction management with:
     /// - Automatic rollback on error
     /// - Timeout protection to prevent long-running transactions
     /// - Proper error handling and logging
+    ///
+    /// Uses the transaction timeout configured on the Db instance (default: 30 seconds).
     ///
     /// # Example
     /// ```ignore
@@ -151,14 +175,28 @@ impl Db {
         F: FnOnce(&mut Transaction<'_, sqlx::Sqlite>) -> Fut,
         Fut: Future<Output = Result<T>>,
     {
-        self.with_transaction_timeout(f, Duration::from_secs(30)).await
+        self.execute_transaction(f, self.transaction_timeout).await
     }
 
     /// Execute a function within a database transaction with custom timeout
     ///
     /// Same as `with_transaction` but allows specifying a custom timeout duration.
     #[instrument(skip(self, f))]
-    pub async fn with_transaction_timeout<F, T, Fut>(
+    pub async fn with_custom_timeout<F, T, Fut>(
+        &self,
+        f: F,
+        timeout: Duration,
+    ) -> Result<T>
+    where
+        F: FnOnce(&mut Transaction<'_, sqlx::Sqlite>) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        self.execute_transaction(f, timeout).await
+    }
+
+    /// Internal method to execute a transaction with the given timeout
+    #[instrument(skip(self, f))]
+    async fn execute_transaction<F, T, Fut>(
         &self,
         f: F,
         timeout: Duration,
@@ -177,18 +215,10 @@ impl Db {
             .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
 
         // Execute the function with timeout
-        let result = tokio::time::timeout(timeout, f(&mut tx))
-            .await
-            .map_err(|_| {
-                warn!("Transaction timeout exceeded: {:?}", timeout);
-                Error::Database(format!(
-                    "Transaction timeout exceeded after {:?}",
-                    timeout
-                ))
-            })?;
+        let result = tokio::time::timeout(timeout, f(&mut tx)).await;
 
         match result {
-            Ok(value) => {
+            Ok(Ok(value)) => {
                 // Commit the transaction on success
                 tx.commit()
                     .await
@@ -196,10 +226,28 @@ impl Db {
                 debug!("Transaction committed successfully");
                 Ok(value)
             }
-            Err(e) => {
-                // Rollback happens automatically when tx is dropped
+            Ok(Err(e)) => {
+                // Explicit rollback on application error
                 warn!("Transaction failed, rolling back: {}", e);
+                if let Err(rollback_err) = tx.rollback().await {
+                    warn!("Failed to rollback transaction: {}", rollback_err);
+                } else {
+                    debug!("Transaction rolled back successfully");
+                }
                 Err(e)
+            }
+            Err(_) => {
+                // Timeout occurred
+                warn!("Transaction timeout exceeded: {:?}", timeout);
+                if let Err(rollback_err) = tx.rollback().await {
+                    warn!("Failed to rollback timed-out transaction: {}", rollback_err);
+                } else {
+                    debug!("Timed-out transaction rolled back successfully");
+                }
+                Err(Error::Database(format!(
+                    "Transaction timeout exceeded after {:?}",
+                    timeout
+                )))
             }
         }
     }

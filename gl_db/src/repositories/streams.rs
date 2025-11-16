@@ -91,10 +91,17 @@ impl<'a> StreamRepository<'a> {
         Ok(stream)
     }
 
+    /// Update a stream
+    ///
+    /// This method uses a transaction internally to ensure atomicity of the
+    /// read-then-write operation. If any step fails, the entire operation is
+    /// rolled back to prevent partial updates.
     pub async fn update(&self, id: &str, request: UpdateStreamRequest) -> Result<Option<Stream>> {
         let now = now_iso8601();
 
         // Use transaction to ensure atomicity of read-then-write operation
+        // Note: This creates a transaction directly rather than using Db::with_transaction()
+        // because repositories only have access to SqlitePool, not the Db wrapper
         let mut tx = self
             .pool
             .begin()
