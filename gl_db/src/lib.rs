@@ -69,7 +69,7 @@ impl Db {
         let pragmas = vec![
             PragmaConfig::new("foreign_keys", "1"),
             PragmaConfig::new("synchronous", "1"), // NORMAL = 1
-            PragmaConfig::new("cache_size", "-10000"), // Negative means KB, so -10000 = 10MB
+            PragmaConfig::new("cache_size", "10000"), // 10000 pages (typically ~40MB with 4KB pages)
             PragmaConfig::new("temp_store", "2"), // MEMORY = 2
             PragmaConfig::new("busy_timeout", "30000"),
             PragmaConfig::with_min_version("mmap_size", "268435456", "3.7.17"),
@@ -561,6 +561,14 @@ mod tests {
         let sync_value: i64 = sync_row.get(0);
         assert_eq!(sync_value, 1, "Synchronous should be NORMAL (1)");
 
+        // Check cache_size
+        let cache_row = sqlx::query("PRAGMA cache_size")
+            .fetch_one(pool)
+            .await
+            .expect("Should be able to query cache_size pragma");
+        let cache_value: i64 = cache_row.get(0);
+        assert_eq!(cache_value, 10000, "Cache size should be 10000 pages");
+
         // Check temp_store is in memory
         let temp_row = sqlx::query("PRAGMA temp_store")
             .fetch_one(pool)
@@ -568,6 +576,14 @@ mod tests {
             .expect("Should be able to query temp_store pragma");
         let temp_value: i64 = temp_row.get(0);
         assert_eq!(temp_value, 2, "Temp store should be MEMORY (2)");
+
+        // Check busy_timeout
+        let busy_row = sqlx::query("PRAGMA busy_timeout")
+            .fetch_one(pool)
+            .await
+            .expect("Should be able to query busy_timeout pragma");
+        let busy_value: i64 = busy_row.get(0);
+        assert_eq!(busy_value, 30000, "Busy timeout should be 30000ms");
     }
 
     #[test]
