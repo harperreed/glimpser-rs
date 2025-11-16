@@ -427,6 +427,8 @@ impl FfmpegProcess {
     /// Mark the process as having failed
     fn mark_failure(&mut self, reason: String) {
         self.consecutive_failures += 1;
+        // Update activity timestamp - process is responding, just with errors
+        self.last_activity_at = Instant::now();
 
         if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
             warn!(
