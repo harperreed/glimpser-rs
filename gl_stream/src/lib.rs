@@ -105,19 +105,22 @@ pub struct StreamSession {
 ///
 /// This guard wraps a broadcast receiver and automatically calls `unsubscribe()`
 /// when dropped, preventing double-unsubscribe scenarios.
+///
+/// The guard implements `Deref` and `DerefMut` to `broadcast::Receiver<Bytes>`,
+/// allowing direct access to receiver methods.
 pub struct SubscriptionGuard {
     /// The broadcast receiver for frames
     receiver: broadcast::Receiver<Bytes>,
     /// Reference to the session for unsubscribe
     session: Arc<StreamSession>,
     /// Whether this guard is still active (prevents double-unsubscribe)
-    active: Arc<AtomicBool>,
+    active: AtomicBool,
     /// Unique subscription ID for debugging
     id: Uuid,
 }
 
 impl SubscriptionGuard {
-    /// Get a reference to the underlying receiver
+    /// Get a reference to the underlying receiver (prefer using Deref/DerefMut)
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<Bytes> {
         &mut self.receiver
     }
@@ -131,16 +134,33 @@ impl SubscriptionGuard {
 
     /// Check if this subscription is still active
     pub fn is_active(&self) -> bool {
-        self.active.load(Ordering::Relaxed)
+        self.active.load(Ordering::SeqCst)
     }
 }
 
 impl Drop for SubscriptionGuard {
     fn drop(&mut self) {
         // Only unsubscribe if still active (prevents double-unsubscribe)
-        if self.active.swap(false, Ordering::Relaxed) {
+        // Use SeqCst ordering to ensure this is visible across all threads
+        if self.active.swap(false, Ordering::SeqCst) {
             self.session.unsubscribe_internal(self.id);
         }
+    }
+}
+
+// Implement Deref to allow transparent access to receiver methods
+impl std::ops::Deref for SubscriptionGuard {
+    type Target = broadcast::Receiver<Bytes>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.receiver
+    }
+}
+
+// Implement DerefMut to allow mutable access to receiver methods
+impl std::ops::DerefMut for SubscriptionGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.receiver
     }
 }
 
@@ -272,7 +292,7 @@ impl StreamSession {
         SubscriptionGuard {
             receiver: self.frame_sender.subscribe(),
             session: Arc::clone(self),
-            active: Arc::new(AtomicBool::new(true)),
+            active: AtomicBool::new(true),
             id: subscriber_id,
         }
     }
@@ -661,6 +681,34 @@ mod tests {
 
             // Remaining manual unsubscribe
             session.unsubscribe();
+            assert_eq!(session.subscriber_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_subscription_guard_deref() {
+        let _test_id = create_test_id();
+        let (_temp_dir, video_path) = create_test_video_file().await;
+
+        let template_id = Id::new();
+        let source = FileSource::new(video_path);
+        let config = StreamConfig::default();
+        let metrics = StreamMetrics::new();
+
+        if let Ok(capture) = source.start().await {
+            let session = Arc::new(StreamSession::new(template_id, capture, config, metrics));
+
+            // Create guard - demonstrates Deref/DerefMut allowing direct receiver access
+            let mut guard = session.subscribe_with_guard();
+            assert_eq!(session.subscriber_count(), 1);
+
+            // Can call receiver methods directly thanks to Deref
+            // try_recv() requires &mut self, demonstrating DerefMut works
+            let result = guard.try_recv();
+            assert!(matches!(result, Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
+
+            // Guard still auto-cleanup on drop
+            drop(guard);
             assert_eq!(session.subscriber_count(), 0);
         }
     }
