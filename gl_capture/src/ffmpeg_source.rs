@@ -1,7 +1,10 @@
 //! ABOUTME: FFmpeg-based capture source for live streams and RTSP feeds
 //! ABOUTME: Implements CaptureSource trait with hardware acceleration support
 
-use crate::{CaptureHandle, CaptureSource, SnapshotConfig};
+use crate::{
+    snapshot_limiter::{SnapshotLimiterConfig, SnapshotResourceLimiter},
+    CaptureHandle, CaptureSource, SnapshotConfig,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
@@ -60,6 +63,9 @@ pub struct FfmpegConfig {
     pub timeout: Option<u32>,
     /// Snapshot configuration
     pub snapshot_config: SnapshotConfig,
+    /// Resource limiter configuration
+    #[serde(default)]
+    pub limiter_config: SnapshotLimiterConfig,
 }
 
 impl Default for FfmpegConfig {
@@ -74,6 +80,7 @@ impl Default for FfmpegConfig {
             buffer_size: None,
             timeout: Some(30),
             snapshot_config: SnapshotConfig::default(),
+            limiter_config: SnapshotLimiterConfig::default(),
         }
     }
 }
@@ -101,15 +108,18 @@ pub struct FfmpegSource {
     config: FfmpegConfig,
     is_running: Arc<AtomicBool>,
     restart_count: Arc<AtomicU64>,
+    limiter: SnapshotResourceLimiter,
 }
 
 impl FfmpegSource {
     /// Create a new FFmpeg capture source
     pub fn new(config: FfmpegConfig) -> Self {
+        let limiter = SnapshotResourceLimiter::new(config.limiter_config.clone());
         Self {
             config,
             is_running: Arc::new(AtomicBool::new(false)),
             restart_count: Arc::new(AtomicU64::new(0)),
+            limiter,
         }
     }
 
@@ -355,6 +365,9 @@ impl CaptureSource for FfmpegSource {
         let command = self.build_snapshot_command();
         debug!(command = ?command, "Running FFmpeg snapshot command");
 
+        // Acquire permit from resource limiter to prevent thread pool exhaustion
+        let _permit = self.limiter.acquire().await?;
+
         // Run FFmpeg in a blocking thread to avoid blocking the async executor
         let result = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
@@ -465,6 +478,7 @@ mod tests {
             buffer_size: None,
             timeout: Some(10),
             snapshot_config: SnapshotConfig::default(),
+            limiter_config: SnapshotLimiterConfig::default(),
         }
     }
 

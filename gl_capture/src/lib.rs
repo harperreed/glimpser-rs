@@ -15,6 +15,7 @@ pub mod ffmpeg_source;
 pub mod file_source;
 pub mod hardware_accel;
 pub mod process_pool;
+pub mod snapshot_limiter;
 pub mod streaming_source;
 pub mod yt_dlp_source;
 
@@ -32,6 +33,7 @@ pub use file_source::FileSource;
 pub use process_pool::{
     FfmpegProcess, FfmpegProcessPool, ProcessHealth, ProcessPoolConfig, ProcessPoolMetrics,
 };
+pub use snapshot_limiter::{SnapshotLimiterConfig, SnapshotResourceLimiter};
 pub use streaming_source::{StreamingFfmpegSource, StreamingSourceConfig};
 pub use yt_dlp_source::{OutputFormat, YtDlpConfig, YtDlpSource};
 
@@ -140,10 +142,16 @@ impl Default for SnapshotConfig {
 }
 
 /// Utility function to generate JPEG snapshots using ffmpeg
-#[instrument(skip(input_path))]
+///
+/// # Arguments
+/// * `input_path` - Path to the input file
+/// * `config` - Snapshot configuration
+/// * `limiter` - Optional resource limiter to prevent thread pool exhaustion
+#[instrument(skip(input_path, limiter))]
 pub async fn generate_snapshot_with_ffmpeg(
     input_path: &Path,
     config: &SnapshotConfig,
+    limiter: Option<&snapshot_limiter::SnapshotResourceLimiter>,
 ) -> Result<Bytes> {
     info!(
         input = %input_path.display(),
@@ -183,6 +191,13 @@ pub async fn generate_snapshot_with_ffmpeg(
         .timeout(config.timeout);
 
     debug!(command = ?spec, "Running ffmpeg command");
+
+    // Acquire permit if limiter is provided
+    let _permit = if let Some(limiter) = limiter {
+        Some(limiter.acquire().await?)
+    } else {
+        None
+    };
 
     // Run FFmpeg in a blocking thread to avoid blocking the async executor
     let result = tokio::task::spawn_blocking(move || {

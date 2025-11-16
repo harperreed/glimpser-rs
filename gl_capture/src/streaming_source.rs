@@ -329,6 +329,7 @@ mod tests {
             buffer_size: None,
             timeout: Some(10),
             snapshot_config: SnapshotConfig::default(),
+            limiter_config: crate::SnapshotLimiterConfig::default(),
         };
 
         let config = StreamingSourceConfig {

@@ -1,7 +1,11 @@
 //! ABOUTME: Background FFmpeg processor for handling snapshot generation without blocking
 //! ABOUTME: Provides job queue and status tracking for long-running FFmpeg operations
 
-use crate::{generate_snapshot_with_ffmpeg, SnapshotConfig};
+use crate::{
+    generate_snapshot_with_ffmpeg,
+    snapshot_limiter::{SnapshotLimiterConfig, SnapshotResourceLimiter},
+    SnapshotConfig,
+};
 use bytes::Bytes;
 use gl_core::{time::now_iso8601, Error, Id, Result};
 use serde::{Deserialize, Serialize};
@@ -78,23 +82,33 @@ pub struct BackgroundSnapshotProcessor {
     request_sender: mpsc::UnboundedSender<ProcessRequest>,
     /// Handle to the background processing task
     _processor_handle: JoinHandle<()>,
+    /// Resource limiter to prevent thread pool exhaustion
+    limiter: SnapshotResourceLimiter,
 }
 
 impl BackgroundSnapshotProcessor {
     /// Create a new background snapshot processor
     pub fn new() -> Self {
+        Self::with_config(SnapshotLimiterConfig::default())
+    }
+
+    /// Create a new background snapshot processor with custom limiter configuration
+    pub fn with_config(limiter_config: SnapshotLimiterConfig) -> Self {
         let jobs = Arc::new(RwLock::new(HashMap::new()));
         let (request_sender, request_receiver) = mpsc::unbounded_channel();
+        let limiter = SnapshotResourceLimiter::new(limiter_config);
 
         let jobs_clone = jobs.clone();
+        let limiter_clone = limiter.clone();
         let processor_handle = tokio::spawn(async move {
-            Self::process_requests(jobs_clone, request_receiver).await;
+            Self::process_requests(jobs_clone, request_receiver, limiter_clone).await;
         });
 
         Self {
             jobs,
             request_sender,
             _processor_handle: processor_handle,
+            limiter,
         }
     }
 
@@ -303,6 +317,7 @@ impl BackgroundSnapshotProcessor {
     async fn process_requests(
         jobs: Arc<RwLock<HashMap<String, SnapshotJob>>>,
         mut request_receiver: mpsc::UnboundedReceiver<ProcessRequest>,
+        limiter: SnapshotResourceLimiter,
     ) {
         info!("Background snapshot processor started");
 
@@ -323,6 +338,7 @@ impl BackgroundSnapshotProcessor {
             let jobs_clone = jobs.clone();
             let processing_job = request.job.clone();
             let result_sender = request.result_sender;
+            let limiter_clone = limiter.clone();
 
             tokio::task::spawn_blocking(move || {
                 let runtime = tokio::runtime::Handle::current();
@@ -330,6 +346,7 @@ impl BackgroundSnapshotProcessor {
                     generate_snapshot_with_ffmpeg(
                         &processing_job.input_path,
                         &processing_job.config,
+                        Some(&limiter_clone),
                     )
                     .await
                 });
@@ -378,6 +395,10 @@ impl BackgroundSnapshotProcessor {
         }
 
         stats.total = jobs.len();
+        stats.limiter_active_operations = self.limiter.active_operations();
+        stats.limiter_total_operations = self.limiter.total_operations();
+        stats.limiter_available_permits = self.limiter.available_permits();
+        stats.limiter_is_saturated = self.limiter.is_saturated();
         stats
     }
 }
@@ -397,6 +418,10 @@ pub struct ProcessorStats {
     pub completed: usize,
     pub failed: usize,
     pub cancelled: usize,
+    pub limiter_active_operations: u64,
+    pub limiter_total_operations: u64,
+    pub limiter_available_permits: usize,
+    pub limiter_is_saturated: bool,
 }
 
 #[cfg(test)]

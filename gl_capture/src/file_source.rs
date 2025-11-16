@@ -117,6 +117,7 @@ impl FileSource {
                 buffer_size: Some("1M".to_string()),
                 timeout: Some(30),
                 snapshot_config: self.config.clone(),
+                limiter_config: crate::SnapshotLimiterConfig::default(),
             };
 
             // Create streaming config optimized for file sources
