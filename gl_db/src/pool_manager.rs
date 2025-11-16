@@ -41,9 +41,8 @@ impl Default for PoolManagerConfig {
 impl PoolManagerConfig {
     /// Calculate delay for a given retry attempt
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let delay_ms =
-            (self.initial_retry_delay.as_millis() as f64 * self.retry_multiplier.powi(attempt as i32))
-                as u64;
+        let delay_ms = (self.initial_retry_delay.as_millis() as f64
+            * self.retry_multiplier.powi(attempt as i32)) as u64;
         let delay = Duration::from_millis(delay_ms);
         delay.min(self.max_retry_delay)
     }
@@ -117,7 +116,8 @@ impl PoolManager {
 
         // Update circuit breaker state
         let state = self.circuit_breaker.state();
-        self.metrics.set_circuit_breaker_state(state.to_metric_value());
+        self.metrics
+            .set_circuit_breaker_state(state.to_metric_value());
     }
 
     /// Acquire a connection with timeout and retry logic
@@ -249,7 +249,7 @@ impl PoolManager {
         F: FnOnce(&mut SqliteConnection) -> futures_util::future::BoxFuture<'_, Result<T>>,
     {
         let mut conn = self.acquire().await?;
-        f(&mut *conn).await
+        f(&mut conn).await
     }
 }
 

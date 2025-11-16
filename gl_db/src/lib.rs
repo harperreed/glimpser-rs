@@ -123,7 +123,9 @@ impl Db {
         pool_config: pool_manager::PoolManagerConfig,
         circuit_breaker_config: circuit_breaker::CircuitBreakerConfig,
     ) -> Self {
-        let circuit_breaker = Arc::new(circuit_breaker::DatabaseCircuitBreaker::new(circuit_breaker_config));
+        let circuit_breaker = Arc::new(circuit_breaker::DatabaseCircuitBreaker::new(
+            circuit_breaker_config,
+        ));
         let metrics = Arc::new(metrics::PoolMetrics::new());
         let pool_manager = pool_manager::PoolManager::with_components(
             pool.clone(),
@@ -185,7 +187,10 @@ impl Db {
         let pool_stats = Some(self.get_pool_stats());
 
         debug!("Database statistics gathered successfully");
-        Ok(DatabaseStats { table_counts, pool_stats })
+        Ok(DatabaseStats {
+            table_counts,
+            pool_stats,
+        })
     }
 
     /// Get detailed pool statistics
