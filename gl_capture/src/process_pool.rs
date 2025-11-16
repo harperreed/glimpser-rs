@@ -145,6 +145,73 @@ pub enum ProcessHealth {
     Failed { reason: String },
 }
 
+/// Tracks process health state machine
+#[derive(Debug, Clone)]
+pub struct ProcessHealthTracker {
+    health: ProcessHealth,
+    consecutive_failures: u32,
+}
+
+impl ProcessHealthTracker {
+    /// Create a new health tracker
+    pub fn new() -> Self {
+        Self {
+            health: ProcessHealth::Healthy,
+            consecutive_failures: 0,
+        }
+    }
+
+    /// Check if the process is healthy
+    pub fn is_healthy(&self) -> bool {
+        matches!(self.health, ProcessHealth::Healthy)
+    }
+
+    /// Get the current health status
+    pub fn health(&self) -> &ProcessHealth {
+        &self.health
+    }
+
+    /// Mark a successful operation
+    pub fn mark_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.health = ProcessHealth::Healthy;
+    }
+
+    /// Mark a failed operation
+    pub fn mark_failure(&mut self, reason: String) {
+        self.consecutive_failures += 1;
+
+        if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+            warn!(
+                consecutive_failures = self.consecutive_failures,
+                reason = %reason,
+                "Process marked as failed"
+            );
+            self.health = ProcessHealth::Failed { reason };
+        } else {
+            self.health = ProcessHealth::Degraded {
+                consecutive_failures: self.consecutive_failures,
+            };
+            warn!(
+                consecutive_failures = self.consecutive_failures,
+                reason = %reason,
+                "Process marked as degraded"
+            );
+        }
+    }
+
+    /// Get consecutive failure count
+    pub fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+}
+
+impl Default for ProcessHealthTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A single FFmpeg worker process for continuous frame extraction
 #[allow(dead_code)]
 pub struct FfmpegProcess {
@@ -152,14 +219,12 @@ pub struct FfmpegProcess {
     child: Child,
     /// Persistent buffered reader for stdout
     reader: Option<BufReader<tokio::process::ChildStdout>>,
-    /// Process health status
-    health: ProcessHealth,
+    /// Process health tracker
+    health_tracker: ProcessHealthTracker,
     /// Process creation timestamp
     created_at: Instant,
     /// Last successful frame extraction
     last_frame_at: Option<Instant>,
-    /// Consecutive failure count
-    consecutive_failures: u32,
     /// Frame output buffer
     frame_buffer: BytesMut,
     /// MJPEG boundary detection state
@@ -208,10 +273,9 @@ impl FfmpegProcess {
         Ok(Self {
             child,
             reader,
-            health: ProcessHealth::Healthy,
+            health_tracker: ProcessHealthTracker::new(),
             created_at: Instant::now(),
             last_frame_at: None,
-            consecutive_failures: 0,
             frame_buffer: BytesMut::with_capacity(BOUNDARY_BUFFER_SIZE),
             boundary_state: BoundaryState::SeekingBoundary,
             config,
@@ -395,41 +459,22 @@ impl FfmpegProcess {
 
     /// Mark the process as having a successful operation
     fn mark_success(&mut self) {
-        self.consecutive_failures = 0;
-        self.health = ProcessHealth::Healthy;
+        self.health_tracker.mark_success();
     }
 
     /// Mark the process as having failed
     fn mark_failure(&mut self, reason: String) {
-        self.consecutive_failures += 1;
-
-        if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-            warn!(
-                consecutive_failures = self.consecutive_failures,
-                reason = %reason,
-                "FFmpeg process marked as failed"
-            );
-            self.health = ProcessHealth::Failed { reason };
-        } else {
-            self.health = ProcessHealth::Degraded {
-                consecutive_failures: self.consecutive_failures,
-            };
-            warn!(
-                consecutive_failures = self.consecutive_failures,
-                reason = %reason,
-                "FFmpeg process degraded"
-            );
-        }
+        self.health_tracker.mark_failure(reason);
     }
 
     /// Check if the process is healthy
     pub fn is_healthy(&self) -> bool {
-        matches!(self.health, ProcessHealth::Healthy)
+        self.health_tracker.is_healthy()
     }
 
     /// Get the current health status
     pub fn health(&self) -> &ProcessHealth {
-        &self.health
+        self.health_tracker.health()
     }
 
     /// Kill the process
@@ -791,41 +836,77 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Test uses unsafe code that causes UB panics"]
-    fn test_process_health_state_machine() {
-        let config = ProcessPoolConfig::default();
-        let mut process = FfmpegProcess {
-            child: unsafe { std::mem::zeroed() },
-            reader: None,
-            health: ProcessHealth::Healthy,
-            created_at: Instant::now(),
-            last_frame_at: None,
-            consecutive_failures: 0,
-            frame_buffer: BytesMut::new(),
-            boundary_state: BoundaryState::SeekingBoundary,
-            config,
-        };
+    fn test_process_health_tracker_state_machine() {
+        let mut tracker = ProcessHealthTracker::new();
 
         // Initially healthy
-        assert!(process.is_healthy());
-        assert_eq!(process.consecutive_failures, 0);
+        assert!(tracker.is_healthy());
+        assert_eq!(tracker.consecutive_failures(), 0);
+        assert!(matches!(tracker.health(), ProcessHealth::Healthy));
 
-        // Mark failures
+        // Mark failures - should transition to Degraded
         for i in 1..MAX_CONSECUTIVE_FAILURES {
-            process.mark_failure(format!("Test failure {}", i));
-            assert!(matches!(process.health, ProcessHealth::Degraded { .. }));
-            assert_eq!(process.consecutive_failures, i);
+            tracker.mark_failure(format!("Test failure {}", i));
+            assert!(!tracker.is_healthy());
+            assert_eq!(tracker.consecutive_failures(), i);
+            assert!(matches!(
+                tracker.health(),
+                ProcessHealth::Degraded { consecutive_failures } if *consecutive_failures == i
+            ));
         }
 
-        // Final failure should mark as failed
-        process.mark_failure("Final failure".to_string());
-        assert!(matches!(process.health, ProcessHealth::Failed { .. }));
-        assert!(!process.is_healthy());
+        // Final failure should mark as Failed
+        tracker.mark_failure("Final failure".to_string());
+        assert!(!tracker.is_healthy());
+        assert_eq!(tracker.consecutive_failures(), MAX_CONSECUTIVE_FAILURES);
+        assert!(matches!(tracker.health(), ProcessHealth::Failed { .. }));
 
-        // Success should reset
-        process.mark_success();
-        assert!(process.is_healthy());
-        assert_eq!(process.consecutive_failures, 0);
+        // Success should reset to Healthy
+        tracker.mark_success();
+        assert!(tracker.is_healthy());
+        assert_eq!(tracker.consecutive_failures(), 0);
+        assert!(matches!(tracker.health(), ProcessHealth::Healthy));
+    }
+
+    #[test]
+    fn test_process_health_tracker_failure_threshold() {
+        let mut tracker = ProcessHealthTracker::new();
+
+        // Just before threshold - should be Degraded
+        for i in 1..(MAX_CONSECUTIVE_FAILURES - 1) {
+            tracker.mark_failure(format!("Failure {}", i));
+        }
+        assert!(matches!(tracker.health(), ProcessHealth::Degraded { .. }));
+
+        // One more failure - should still be Degraded
+        tracker.mark_failure("Near threshold".to_string());
+        assert!(matches!(tracker.health(), ProcessHealth::Degraded { .. }));
+        assert_eq!(tracker.consecutive_failures(), MAX_CONSECUTIVE_FAILURES - 1);
+
+        // Cross threshold - should be Failed
+        tracker.mark_failure("Threshold crossed".to_string());
+        assert!(matches!(tracker.health(), ProcessHealth::Failed { .. }));
+        assert_eq!(tracker.consecutive_failures(), MAX_CONSECUTIVE_FAILURES);
+    }
+
+    #[test]
+    fn test_process_health_tracker_reset() {
+        let mut tracker = ProcessHealthTracker::new();
+
+        // Accumulate some failures
+        tracker.mark_failure("Failure 1".to_string());
+        tracker.mark_failure("Failure 2".to_string());
+        assert_eq!(tracker.consecutive_failures(), 2);
+        assert!(matches!(tracker.health(), ProcessHealth::Degraded { .. }));
+
+        // Reset with success
+        tracker.mark_success();
+        assert!(tracker.is_healthy());
+        assert_eq!(tracker.consecutive_failures(), 0);
+
+        // Can mark failures again from clean slate
+        tracker.mark_failure("New failure".to_string());
+        assert_eq!(tracker.consecutive_failures(), 1);
     }
 
     // Integration tests would go here but require ffmpeg to be installed
