@@ -396,7 +396,10 @@ impl JobScheduler {
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(timeout_seconds)).await;
                 if !timeout_token.is_cancelled() {
-                    debug!("Job {} timeout watchdog firing, signaling cancellation", execution_id_for_timeout);
+                    debug!(
+                        "Job {} timeout watchdog firing, signaling cancellation",
+                        execution_id_for_timeout
+                    );
                     timeout_token.cancel();
                 }
             });
@@ -408,7 +411,10 @@ impl JobScheduler {
                 Ok(output) => {
                     if cancellation_token_for_task.is_cancelled() {
                         // Job completed but was cancelled/timed out
-                        warn!("Job {} completed after cancellation/timeout", execution_id_for_task);
+                        warn!(
+                            "Job {} completed after cancellation/timeout",
+                            execution_id_for_task
+                        );
                         result.status = JobStatus::TimedOut;
                         result.error = Some("Job execution timed out".to_string());
                         result.completed_at = Some(Utc::now());
@@ -540,8 +546,8 @@ impl JobScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     // Mock capture service for testing
     struct MockCaptureService;
@@ -596,7 +602,11 @@ mod tests {
             Ok(None)
         }
 
-        async fn get_job_results(&self, _job_id: &str, _limit: Option<u32>) -> Result<Vec<JobResult>> {
+        async fn get_job_results(
+            &self,
+            _job_id: &str,
+            _limit: Option<u32>,
+        ) -> Result<Vec<JobResult>> {
             Ok(vec![])
         }
 
@@ -693,7 +703,9 @@ mod tests {
             cleanup_called: cleanup_called.clone(),
         });
 
-        scheduler.register_handler("test_cancellation".to_string(), handler).await;
+        scheduler
+            .register_handler("test_cancellation".to_string(), handler)
+            .await;
         scheduler.start().await.unwrap();
 
         let job = JobDefinition::new(
@@ -732,7 +744,9 @@ mod tests {
             cleanup_called: cleanup_called.clone(),
         });
 
-        scheduler.register_handler("test_cancellation".to_string(), handler).await;
+        scheduler
+            .register_handler("test_cancellation".to_string(), handler)
+            .await;
         scheduler.start().await.unwrap();
 
         let job = JobDefinition::new(
@@ -770,7 +784,9 @@ mod tests {
             cleanup_called: cleanup_called.clone(),
         });
 
-        scheduler.register_handler("test_cancellation".to_string(), handler).await;
+        scheduler
+            .register_handler("test_cancellation".to_string(), handler)
+            .await;
         scheduler.start().await.unwrap();
 
         let job = JobDefinition::new(

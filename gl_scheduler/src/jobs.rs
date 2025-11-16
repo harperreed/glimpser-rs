@@ -23,22 +23,35 @@ use tracing::{debug, info, warn};
 /// ## Cleanup Guidelines
 ///
 /// 1. **Check cancellation token regularly** during long-running operations:
-///    ```rust
+///    ```rust,no_run
+///    # use gl_core::Result;
+///    # use gl_scheduler::JobContext;
+///    # async fn example(context: JobContext) -> Result<()> {
 ///    if context.cancellation_token.is_cancelled() {
 ///        // Clean up resources (close files, connections, etc.)
 ///        return Err(gl_core::Error::Cancelled("Job was cancelled".into()));
 ///    }
+///    # Ok(())
+///    # }
 ///    ```
 ///
 /// 2. **Use timeout-aware operations** where possible:
-///    ```rust
+///    ```rust,no_run
+///    # use gl_core::Result;
+///    # use gl_scheduler::JobContext;
+///    # async fn some_operation() -> Result<()> { Ok(()) }
+///    # async fn example(context: JobContext) -> Result<()> {
 ///    tokio::select! {
-///        result = some_operation() => { /* handle result */ },
+///        result = some_operation() => {
+///            result?; // Handle the result
+///        },
 ///        _ = context.cancellation_token.cancelled() => {
 ///            // Clean up and return early
 ///            return Err(gl_core::Error::Cancelled("Job was cancelled".into()));
 ///        }
 ///    }
+///    # Ok(())
+///    # }
 ///    ```
 ///
 /// 3. **Clean up resources in all code paths**:
@@ -116,7 +129,9 @@ impl JobHandler for SmartSnapshotJob {
 
         // Check for cancellation at start
         if context.cancellation_token.is_cancelled() {
-            return Err(gl_core::Error::Cancelled("Job cancelled before start".into()));
+            return Err(gl_core::Error::Cancelled(
+                "Job cancelled before start".into(),
+            ));
         }
 
         // Extract parameters
@@ -134,7 +149,9 @@ impl JobHandler for SmartSnapshotJob {
 
         // Check for cancellation before capture
         if context.cancellation_token.is_cancelled() {
-            return Err(gl_core::Error::Cancelled("Job cancelled before capture".into()));
+            return Err(gl_core::Error::Cancelled(
+                "Job cancelled before capture".into(),
+            ));
         }
 
         // 1. Take screenshot using capture service
@@ -154,7 +171,9 @@ impl JobHandler for SmartSnapshotJob {
 
         // Check for cancellation after capture
         if context.cancellation_token.is_cancelled() {
-            return Err(gl_core::Error::Cancelled("Job cancelled after capture".into()));
+            return Err(gl_core::Error::Cancelled(
+                "Job cancelled after capture".into(),
+            ));
         }
 
         // 2. Load image once and calculate both hash and dimensions efficiently
@@ -244,7 +263,9 @@ impl JobHandler for SmartSnapshotJob {
 
         // Check for cancellation before storage operation
         if context.cancellation_token.is_cancelled() {
-            return Err(gl_core::Error::Cancelled("Job cancelled before storage".into()));
+            return Err(gl_core::Error::Cancelled(
+                "Job cancelled before storage".into(),
+            ));
         }
 
         // 5. Only store if hash changed significantly or no previous hash exists
@@ -530,7 +551,9 @@ impl JobHandler for MaintenanceJob {
         // Cleanup old job results
         if params.cleanup_old_jobs.unwrap_or(true) {
             if context.cancellation_token.is_cancelled() {
-                return Err(gl_core::Error::Cancelled("Job cancelled during cleanup".into()));
+                return Err(gl_core::Error::Cancelled(
+                    "Job cancelled during cleanup".into(),
+                ));
             }
             info!("Cleaning up old job execution records");
             // TODO: Implement cleanup logic
@@ -540,7 +563,9 @@ impl JobHandler for MaintenanceJob {
         // Cleanup old snapshots (keep based on retention policy)
         if params.cleanup_old_snapshots.unwrap_or(true) {
             if context.cancellation_token.is_cancelled() {
-                return Err(gl_core::Error::Cancelled("Job cancelled during cleanup".into()));
+                return Err(gl_core::Error::Cancelled(
+                    "Job cancelled during cleanup".into(),
+                ));
             }
             info!("Cleaning up old snapshot files based on retention policy");
             // TODO: Implement snapshot cleanup
@@ -551,7 +576,9 @@ impl JobHandler for MaintenanceJob {
         // Database maintenance
         if params.database_maintenance.unwrap_or(true) {
             if context.cancellation_token.is_cancelled() {
-                return Err(gl_core::Error::Cancelled("Job cancelled during cleanup".into()));
+                return Err(gl_core::Error::Cancelled(
+                    "Job cancelled during cleanup".into(),
+                ));
             }
             info!("Running database maintenance tasks");
             // TODO: VACUUM, analyze, etc.
