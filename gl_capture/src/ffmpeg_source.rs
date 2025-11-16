@@ -366,11 +366,12 @@ impl CaptureSource for FfmpegSource {
             tokio::task::spawn_blocking(move || {
                 let runtime = tokio::runtime::Handle::current();
                 runtime.block_on(run(command))
-            })
-        ).await {
-            Ok(spawn_result) => {
-                spawn_result.map_err(|e| Error::Config(format!("Background FFmpeg task failed: {}", e)))?
-            },
+            }),
+        )
+        .await
+        {
+            Ok(spawn_result) => spawn_result
+                .map_err(|e| Error::Config(format!("Background FFmpeg task failed: {}", e)))?,
             Err(_) => {
                 // Timeout occurred - FFmpeg process is stuck
                 counter!(

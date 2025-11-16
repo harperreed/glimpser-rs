@@ -472,10 +472,7 @@ impl FfmpegProcess {
     /// Mark the process as stuck
     pub fn mark_stuck(&mut self) {
         let seconds_stuck = self.last_activity_at.elapsed().as_secs();
-        warn!(
-            seconds_stuck,
-            "Marking FFmpeg process as stuck"
-        );
+        warn!(seconds_stuck, "Marking FFmpeg process as stuck");
         self.health = ProcessHealth::Stuck { seconds_stuck };
     }
 
@@ -667,7 +664,11 @@ impl FfmpegProcessPool {
             for (index, process) in processes_guard.iter_mut().enumerate() {
                 // First check if process is stuck based on watchdog timer
                 if process.is_stuck(config.process_timeout)
-                    && matches!(process.health(), ProcessHealth::Healthy | ProcessHealth::Degraded { .. }) {
+                    && matches!(
+                        process.health(),
+                        ProcessHealth::Healthy | ProcessHealth::Degraded { .. }
+                    )
+                {
                     let time_stuck = process.time_since_activity();
                     warn!(
                         process_index = index,
@@ -675,7 +676,9 @@ impl FfmpegProcessPool {
                         "Process watchdog detected stuck process"
                     );
                     process.mark_stuck();
-                    metrics.stuck_processes_detected.fetch_add(1, Ordering::Relaxed);
+                    metrics
+                        .stuck_processes_detected
+                        .fetch_add(1, Ordering::Relaxed);
                 }
 
                 // Handle different health states
@@ -703,7 +706,9 @@ impl FfmpegProcessPool {
 
                         // Kill the stuck process
                         let _ = process.kill().await;
-                        metrics.processes_killed_timeout.fetch_add(1, Ordering::Relaxed);
+                        metrics
+                            .processes_killed_timeout
+                            .fetch_add(1, Ordering::Relaxed);
 
                         // Wait a bit before restarting
                         sleep(RESTART_DELAY).await;
@@ -714,7 +719,10 @@ impl FfmpegProcessPool {
                                 *process = new_process;
                                 metrics.process_restarts.fetch_add(1, Ordering::Relaxed);
                                 healthy_count += 1;
-                                info!(process_index = index, "Stuck process restarted successfully");
+                                info!(
+                                    process_index = index,
+                                    "Stuck process restarted successfully"
+                                );
                             }
                             Err(e) => {
                                 error!(
@@ -744,7 +752,10 @@ impl FfmpegProcessPool {
                                 *process = new_process;
                                 metrics.process_restarts.fetch_add(1, Ordering::Relaxed);
                                 healthy_count += 1;
-                                info!(process_index = index, "Failed process restarted successfully");
+                                info!(
+                                    process_index = index,
+                                    "Failed process restarted successfully"
+                                );
                             }
                             Err(e) => {
                                 error!(
@@ -979,9 +990,15 @@ mod tests {
         let metrics = ProcessPoolMetrics::default();
 
         // Simulate stuck process detection
-        metrics.stuck_processes_detected.fetch_add(1, Ordering::Relaxed);
-        metrics.processes_killed_timeout.fetch_add(1, Ordering::Relaxed);
-        metrics.frame_extraction_timeouts.fetch_add(1, Ordering::Relaxed);
+        metrics
+            .stuck_processes_detected
+            .fetch_add(1, Ordering::Relaxed);
+        metrics
+            .processes_killed_timeout
+            .fetch_add(1, Ordering::Relaxed);
+        metrics
+            .frame_extraction_timeouts
+            .fetch_add(1, Ordering::Relaxed);
 
         assert_eq!(metrics.stuck_processes_detected.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.processes_killed_timeout.load(Ordering::Relaxed), 1);
@@ -991,9 +1008,13 @@ mod tests {
     #[test]
     fn test_process_health_variants() {
         let healthy = ProcessHealth::Healthy;
-        let degraded = ProcessHealth::Degraded { consecutive_failures: 3 };
+        let degraded = ProcessHealth::Degraded {
+            consecutive_failures: 3,
+        };
         let stuck = ProcessHealth::Stuck { seconds_stuck: 120 };
-        let failed = ProcessHealth::Failed { reason: "test".to_string() };
+        let failed = ProcessHealth::Failed {
+            reason: "test".to_string(),
+        };
 
         assert!(matches!(healthy, ProcessHealth::Healthy));
         assert!(matches!(degraded, ProcessHealth::Degraded { .. }));
