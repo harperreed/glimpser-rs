@@ -93,7 +93,7 @@ async fn test_complete_update_workflow() {
     let config = UpdateConfig {
         repository: "test/repo".to_string(),
         current_version: "1.1.0".to_string(),
-        public_key: public_key,
+        public_key,
         strategy: UpdateStrategyType::Sidecar,
         health_check_url: format!("{}/healthz", health_server.uri()),
         health_check_timeout_seconds: 5,

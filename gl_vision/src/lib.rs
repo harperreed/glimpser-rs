@@ -50,18 +50,13 @@ impl Default for MotionConfig {
 }
 
 /// Available motion detection algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MotionAlgorithm {
     /// Pure-Rust pixel difference algorithm
+    #[default]
     PixelDiff,
     /// OpenCV MOG2 background subtraction (requires heavy_opencv feature)
     Mog2,
-}
-
-impl Default for MotionAlgorithm {
-    fn default() -> Self {
-        Self::PixelDiff
-    }
 }
 
 /// Result of motion detection

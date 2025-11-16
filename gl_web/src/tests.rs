@@ -26,8 +26,10 @@ async fn create_test_app_state() -> AppState {
     let stream_metrics = gl_stream::StreamMetrics::new();
     let stream_manager = Arc::new(StreamManager::new(stream_metrics));
 
-    let mut test_security_config = SecurityConfig::default();
-    test_security_config.jwt_secret = "test_secret_key_32_characters_minimum".to_string();
+    let test_security_config = SecurityConfig {
+        jwt_secret: "test_secret_key_32_characters_minimum".to_string(),
+        ..Default::default()
+    };
 
     AppState {
         db: db.clone(),
@@ -41,12 +43,14 @@ async fn create_test_app_state() -> AppState {
         background_snapshot_service,
         update_service: {
             // Create a test update service with dummy configuration
-            let mut update_config = gl_update::UpdateConfig::default();
             // Valid Ed25519 public key for testing (this is a test key, not for production)
-            update_config.public_key =
-                "8f7e3a2d4b1c9e6f8a5b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f".to_string();
             // Use a writable temp directory for testing instead of /usr/local/bin
-            update_config.install_dir = std::env::temp_dir();
+            let update_config = gl_update::UpdateConfig {
+                public_key: "8f7e3a2d4b1c9e6f8a5b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f"
+                    .to_string(),
+                install_dir: std::env::temp_dir(),
+                ..Default::default()
+            };
             let service = gl_update::UpdateService::new(update_config)
                 .expect("Failed to create test update service");
             std::sync::Arc::new(tokio::sync::Mutex::new(service))
@@ -245,7 +249,7 @@ async fn test_settings_streams_routes_exist() {
     let req = test::TestRequest::post()
         .uri("/api/settings/_health")
         .insert_header(("authorization", format!("Bearer {}", token)))
-        .set_json(&serde_json::json!({"ping":"pong"}))
+        .set_json(serde_json::json!({"ping":"pong"}))
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
