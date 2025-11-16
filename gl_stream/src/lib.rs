@@ -445,11 +445,15 @@ mod tests {
                 let session = Arc::new(StreamSession::new(template_id, capture, config, metrics));
 
                 // First subscriber should succeed
-                let _receiver1 = session.subscribe().expect("First subscription should succeed");
+                let _receiver1 = session
+                    .subscribe()
+                    .expect("First subscription should succeed");
                 assert_eq!(session.subscriber_count(), 1);
 
                 // Second subscriber should succeed
-                let _receiver2 = session.subscribe().expect("Second subscription should succeed");
+                let _receiver2 = session
+                    .subscribe()
+                    .expect("Second subscription should succeed");
                 assert_eq!(session.subscriber_count(), 2);
 
                 // Third subscriber should fail (max_clients = 2)
@@ -465,7 +469,10 @@ mod tests {
                         "Error message should mention max subscribers: {}",
                         error_msg
                     );
-                    assert!(error_msg.contains("2"), "Error should show max_clients value");
+                    assert!(
+                        error_msg.contains("2"),
+                        "Error should show max_clients value"
+                    );
                 }
 
                 // After unsubscribing, should be able to subscribe again
@@ -542,7 +549,11 @@ mod tests {
 
                 // Calling unsubscribe when count is 0 should not underflow
                 session.unsubscribe();
-                assert_eq!(session.subscriber_count(), 0, "Count should remain 0, not underflow");
+                assert_eq!(
+                    session.subscriber_count(),
+                    0,
+                    "Count should remain 0, not underflow"
+                );
 
                 // Subscribe and verify count increases
                 let _receiver = session.subscribe().expect("Should succeed");
@@ -552,7 +563,11 @@ mod tests {
                 session.unsubscribe();
                 assert_eq!(session.subscriber_count(), 0);
                 session.unsubscribe();
-                assert_eq!(session.subscriber_count(), 0, "Count should remain 0 after extra unsubscribe");
+                assert_eq!(
+                    session.subscriber_count(),
+                    0,
+                    "Count should remain 0 after extra unsubscribe"
+                );
             }
             Err(_) => {
                 // Expected when ffmpeg isn't available
