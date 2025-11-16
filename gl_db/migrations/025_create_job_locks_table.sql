@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS job_locks (
     FOREIGN KEY (job_id) REFERENCES scheduled_jobs(id) ON DELETE CASCADE
 );
 
+-- CRITICAL: Unique constraint to prevent multiple active locks for the same job
+-- This prevents race conditions where two instances try to acquire a lock simultaneously
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_locks_unique_active
+ON job_locks(job_id) WHERE status = 'acquired';
+
 -- Index for quickly finding active locks for a job
 CREATE INDEX IF NOT EXISTS idx_job_locks_job_id_status
 ON job_locks(job_id, status);

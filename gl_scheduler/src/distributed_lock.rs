@@ -190,7 +190,9 @@ impl DistributedLockManager {
         };
 
         // Insert the lock record
-        sqlx::query(
+        // Note: If another instance acquired the lock between our check and insert,
+        // this will fail with a unique constraint violation, which we handle gracefully
+        match sqlx::query(
             r#"
             INSERT INTO job_locks (
                 id, job_id, execution_id, instance_id,
@@ -207,15 +209,30 @@ impl DistributedLockManager {
         .bind(lock.status.as_str())
         .execute(&self.pool)
         .await
-        .map_err(|e| {
-            Error::Database(format!("Failed to insert lock for job {}: {}", job_id, e))
-        })?;
-
-        info!(
-            "Successfully acquired lock for job {} (execution {}), expires at {}",
-            job_id, execution_id, lease_expires_at
-        );
-        Ok(Some(lock))
+        {
+            Ok(_) => {
+                info!(
+                    "Successfully acquired lock for job {} (execution {}), expires at {}",
+                    job_id, execution_id, lease_expires_at
+                );
+                Ok(Some(lock))
+            }
+            Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => {
+                // Another instance acquired the lock between our check and insert
+                debug!(
+                    "Lock acquisition race detected for job {} - another instance won",
+                    job_id
+                );
+                Ok(None)
+            }
+            Err(e) => {
+                // Some other database error occurred
+                Err(Error::Database(format!(
+                    "Failed to insert lock for job {}: {}",
+                    job_id, e
+                )))
+            }
+        }
     }
 
     /// Release a lock after job execution completes
@@ -476,11 +493,39 @@ mod tests {
         let db_path = format!("test_lock_{}.db", test_id);
         let db = Db::new(&db_path).await?;
 
-        // Disable foreign key constraints for tests
-        sqlx::query("PRAGMA foreign_keys = OFF")
+        // Drop and recreate the job_locks table without foreign key constraint for tests
+        // The migration already created it, but we need to recreate it without FK
+        sqlx::query("DROP TABLE IF EXISTS job_locks")
             .execute(db.pool())
             .await
-            .map_err(|e| Error::Database(format!("Failed to disable foreign keys: {}", e)))?;
+            .map_err(|e| Error::Database(format!("Failed to drop job_locks table: {}", e)))?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE job_locks (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                execution_id TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                locked_at TEXT NOT NULL,
+                lease_expires_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'acquired',
+                released_at TEXT
+            )
+            "#,
+        )
+        .execute(db.pool())
+        .await
+        .map_err(|e| Error::Database(format!("Failed to create job_locks table: {}", e)))?;
+
+        // Create the unique constraint that prevents duplicate active locks
+        // This matches the production migration
+        sqlx::query(
+            "CREATE UNIQUE INDEX idx_job_locks_unique_active ON job_locks(job_id) WHERE status = 'acquired'"
+        )
+        .execute(db.pool())
+        .await
+        .map_err(|e| Error::Database(format!("Failed to create unique index: {}", e)))?;
 
         Ok(db)
     }

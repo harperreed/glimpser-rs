@@ -282,6 +282,7 @@ impl JobScheduler {
             tokio::spawn(async move {
                 let mut interval =
                     tokio::time::interval(tokio::time::Duration::from_secs(60)); // Run every minute
+                let mut cleanup_counter: u32 = 0;
 
                 loop {
                     interval.tick().await;
@@ -292,16 +293,12 @@ impl JobScheduler {
                     }
 
                     // Cleanup old locks (every hour)
-                    static mut CLEANUP_COUNTER: u32 = 0;
-                    unsafe {
-                        CLEANUP_COUNTER += 1;
-                        if CLEANUP_COUNTER >= 60 {
-                            if let Err(e) = lock_manager_clone.cleanup_old_locks(retention_days).await
-                            {
-                                warn!("Failed to cleanup old locks: {}", e);
-                            }
-                            CLEANUP_COUNTER = 0;
+                    cleanup_counter += 1;
+                    if cleanup_counter >= 60 {
+                        if let Err(e) = lock_manager_clone.cleanup_old_locks(retention_days).await {
+                            warn!("Failed to cleanup old locks: {}", e);
                         }
+                        cleanup_counter = 0;
                     }
                 }
             });
