@@ -40,16 +40,18 @@ fn is_safe_sql_identifier(table: &str) -> bool {
         return false;
     }
 
-    // Must start with a letter or underscore (SQL identifier rules)
     let mut chars = table.chars();
-    if let Some(first) = chars.next() {
-        if !(first.is_ascii_alphabetic() || first == '_') {
-            return false;
-        }
+
+    // First character must be a letter or underscore (SQL identifier rules)
+    // Safe to unwrap because we already checked the string is not empty
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
     }
 
-    // All characters must be alphanumeric or underscore
-    table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    // Remaining characters must be alphanumeric or underscore
+    // Note: We use the same iterator, so this only checks chars after the first
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Validates that a table name is in the allowed list and is a safe SQL identifier
@@ -459,9 +461,15 @@ mod tests {
         assert!(is_safe_sql_identifier("table123"));
         assert!(is_safe_sql_identifier("MyTable"));
 
+        // Test valid single character identifiers
+        assert!(is_safe_sql_identifier("_"));
+        assert!(is_safe_sql_identifier("a"));
+        assert!(is_safe_sql_identifier("Z"));
+
         // Test invalid - starts with number
         assert!(!is_safe_sql_identifier("1users"));
         assert!(!is_safe_sql_identifier("9table"));
+        assert!(!is_safe_sql_identifier("0"));
 
         // Test invalid - empty
         assert!(!is_safe_sql_identifier(""));
@@ -473,6 +481,8 @@ mod tests {
         assert!(!is_safe_sql_identifier("user;table"));
         assert!(!is_safe_sql_identifier("user'table"));
         assert!(!is_safe_sql_identifier("user\"table"));
+        assert!(!is_safe_sql_identifier("$"));
+        assert!(!is_safe_sql_identifier("@table"));
 
         // Test invalid - SQL injection attempts
         assert!(!is_safe_sql_identifier("users' OR '1'='1"));
