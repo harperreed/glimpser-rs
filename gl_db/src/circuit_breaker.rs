@@ -133,12 +133,19 @@ impl DatabaseCircuitBreaker {
 
     /// Record a failed operation
     pub fn record_failure(&self) {
-        let failures = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
+        // Reset success count - any failure breaks the success streak
+        self.success_count.store(0, Ordering::Relaxed);
 
-        if failures >= self.config.failure_threshold {
-            let was_open = self.is_open.load(Ordering::Relaxed);
+        let failures = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
+        let was_open = self.is_open.load(Ordering::Relaxed);
+
+        // In half-open state, any failure should restart the recovery timer
+        let is_half_open = was_open && self.state() == CircuitState::HalfOpen;
+
+        if failures >= self.config.failure_threshold || is_half_open {
             self.is_open.store(true, Ordering::Relaxed);
 
+            // Update last failure time to restart recovery timer
             if let Ok(mut last_failure) = self.last_failure_time.lock() {
                 *last_failure = Some(SystemTime::now());
             }
@@ -148,6 +155,11 @@ impl DatabaseCircuitBreaker {
                     failures = failures,
                     timeout_secs = self.config.timeout_duration.as_secs(),
                     "Database circuit breaker opened due to consecutive failures"
+                );
+            } else if is_half_open {
+                debug!(
+                    failures = failures,
+                    "Database circuit breaker failure during recovery, restarting timeout"
                 );
             }
         } else {
@@ -245,5 +257,56 @@ mod tests {
         breaker.record_success();
         assert_eq!(breaker.failure_count(), 0);
         assert!(!breaker.is_open());
+    }
+
+    #[test]
+    fn test_failure_resets_success_count() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 3,
+            timeout_duration: Duration::from_millis(10),
+        };
+        let breaker = DatabaseCircuitBreaker::new(config);
+
+        // Open the circuit
+        breaker.record_failure();
+        breaker.record_failure();
+        breaker.record_failure();
+        assert!(breaker.is_open());
+        assert_eq!(breaker.state(), CircuitState::Open);
+
+        // Wait for half-open state
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(breaker.state(), CircuitState::HalfOpen);
+        assert!(!breaker.is_open()); // HalfOpen allows requests
+
+        // Record some successes
+        breaker.record_success();
+        breaker.record_success();
+        assert_eq!(breaker.success_count(), 2);
+        assert_eq!(breaker.state(), CircuitState::HalfOpen); // Still half-open
+
+        // Record a failure - should reset success count
+        breaker.record_failure();
+        assert_eq!(breaker.success_count(), 0);
+        assert_eq!(breaker.state(), CircuitState::Open); // Back to open
+
+        // Wait again for half-open
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(breaker.state(), CircuitState::HalfOpen);
+
+        // Now need 3 consecutive successes to close (not just 1 more)
+        breaker.record_success();
+        assert_eq!(breaker.success_count(), 1);
+        assert_eq!(breaker.state(), CircuitState::HalfOpen);
+
+        breaker.record_success();
+        assert_eq!(breaker.success_count(), 2);
+        assert_eq!(breaker.state(), CircuitState::HalfOpen);
+
+        breaker.record_success();
+        assert_eq!(breaker.success_count(), 0); // Reset after closing
+        assert!(!breaker.is_open());
+        assert_eq!(breaker.state(), CircuitState::Closed);
     }
 }

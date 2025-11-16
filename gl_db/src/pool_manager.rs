@@ -133,6 +133,14 @@ impl PoolManager {
         let mut attempt = 0;
 
         loop {
+            // Check circuit breaker before each attempt (it may have opened during retries)
+            if attempt > 0 && self.circuit_breaker.is_open() {
+                self.metrics.record_failed();
+                return Err(Error::Database(
+                    "Database circuit breaker opened during retry attempts".to_string(),
+                ));
+            }
+
             // Update metrics before acquisition attempt
             self.update_pool_metrics();
 
