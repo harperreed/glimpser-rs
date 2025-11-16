@@ -256,7 +256,7 @@ impl StreamSession {
     /// Subscribe to the frame stream
     pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
         let subscriber_count = self.subscribers.fetch_add(1, Ordering::Relaxed) + 1;
-        self.metrics.subscribers.set(subscriber_count as i64);
+        self.metrics.subscribers.inc();
 
         info!(
             session_id = %self.id,
@@ -280,7 +280,7 @@ impl StreamSession {
     pub fn subscribe_with_guard(self: &Arc<Self>) -> SubscriptionGuard {
         let subscriber_id = Uuid::new_v4();
         let subscriber_count = self.subscribers.fetch_add(1, Ordering::Relaxed) + 1;
-        self.metrics.subscribers.set(subscriber_count as i64);
+        self.metrics.subscribers.inc();
 
         info!(
             session_id = %self.id,
@@ -333,7 +333,7 @@ impl StreamSession {
                 Ok(_) => {
                     // Successfully decremented
                     let new_count = current - 1;
-                    self.metrics.subscribers.set(new_count as i64);
+                    self.metrics.subscribers.dec();
 
                     info!(
                         session_id = %self.id,
