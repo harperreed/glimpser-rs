@@ -163,15 +163,21 @@ impl Db {
             None => return false,
         };
 
-        for (c, r) in current_parts.iter().zip(required_parts.iter()) {
-            match c.cmp(r) {
+        // Compare version parts, treating missing parts as 0
+        let max_len = current_parts.len().max(required_parts.len());
+
+        for i in 0..max_len {
+            let current_part = current_parts.get(i).copied().unwrap_or(0);
+            let required_part = required_parts.get(i).copied().unwrap_or(0);
+
+            match current_part.cmp(&required_part) {
                 std::cmp::Ordering::Greater => return true,
                 std::cmp::Ordering::Less => return false,
                 std::cmp::Ordering::Equal => continue,
             }
         }
 
-        // If all parts are equal up to the length of required_parts, version meets requirement
+        // If all parts are equal, version meets requirement
         true
     }
 
@@ -605,7 +611,19 @@ mod tests {
 
         // Test with different number of components
         assert!(Db::version_meets_requirement("3.8.0.1", "3.8.0"));
-        assert!(Db::version_meets_requirement("3.8", "3.8.0"));
+        assert!(Db::version_meets_requirement("3.8", "3.8.0")); // 3.8 is treated as 3.8.0
+
+        // CRITICAL BUG FIX: Test shorter current version that's less than required
+        // Before fix: "3.7" vs "3.7.1" would return true (WRONG!)
+        // After fix: "3.7" vs "3.7.1" returns false (CORRECT - 3.7.0 < 3.7.1)
+        assert!(!Db::version_meets_requirement("3.7", "3.7.1"));
+        assert!(!Db::version_meets_requirement("3.7.0", "3.7.1"));
+        assert!(Db::version_meets_requirement("3.7.1", "3.7.1"));
+        assert!(Db::version_meets_requirement("3.7.2", "3.7.1"));
+
+        // Test shorter required version
+        assert!(Db::version_meets_requirement("3.8.5", "3.8")); // 3.8.5 >= 3.8.0
+        assert!(!Db::version_meets_requirement("3.7.5", "3.8")); // 3.7.5 < 3.8.0
     }
 
     #[tokio::test]
