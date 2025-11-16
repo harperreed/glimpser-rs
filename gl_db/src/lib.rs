@@ -67,8 +67,9 @@ impl DatabaseRetryConfig {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .subsec_nanos();
-            // Convert nanos to a value between 0.9 and 1.1
-            0.9 + ((nanos % 200) as f64 / 1000.0)
+            // Convert nanos to a value between 0.9 and 1.1 (±10%)
+            // nanos % 201 gives 0-200, divide by 1000 gives 0.0-0.2, add 0.9 gives 0.9-1.1
+            0.9 + ((nanos % 201) as f64 / 1000.0)
         };
 
         let final_delay = (capped_delay * jitter) as u64;
@@ -119,8 +120,8 @@ impl Db {
 
             match Self::try_initialize(db_path, &database_url).await {
                 Ok(db) => {
-                    // Run migrations with retry
-                    match Self::try_migrate_with_retry(&db, &retry_config).await {
+                    // Run migrations (will retry entire initialization if this fails)
+                    match db.migrate().await {
                         Ok(_) => {
                             info!(
                                 attempts = attempt + 1,
@@ -132,7 +133,7 @@ impl Db {
                             warn!(
                                 attempt = attempt + 1,
                                 error = %e,
-                                "Database migration failed"
+                                "Database migration failed, will retry initialization"
                             );
                             last_error = Some(e);
                             continue;
@@ -200,57 +201,6 @@ impl Db {
             .map_err(|e| Error::Database(format!("Failed to create connection pool: {}", e)))?;
 
         Ok(Self { pool })
-    }
-
-    /// Try to run migrations with retry logic
-    async fn try_migrate_with_retry(
-        db: &Db,
-        retry_config: &DatabaseRetryConfig,
-    ) -> Result<()> {
-        let mut last_error = None;
-
-        for attempt in 0..retry_config.max_attempts {
-            if attempt > 0 {
-                let delay = retry_config.calculate_delay(attempt - 1);
-                warn!(
-                    attempt = attempt + 1,
-                    max_attempts = retry_config.max_attempts,
-                    delay_ms = delay.as_millis(),
-                    "Migration failed, retrying after delay..."
-                );
-                tokio::time::sleep(delay).await;
-            }
-
-            match db.migrate().await {
-                Ok(_) => {
-                    info!(attempts = attempt + 1, "Database migrations completed successfully");
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!(
-                        attempt = attempt + 1,
-                        error = %e,
-                        "Migration attempt failed"
-                    );
-                    last_error = Some(e);
-                    continue;
-                }
-            }
-        }
-
-        // All retries exhausted
-        let error_msg = match last_error {
-            Some(e) => format!(
-                "Failed to run migrations after {} attempts: {}",
-                retry_config.max_attempts, e
-            ),
-            None => format!(
-                "Failed to run migrations after {} attempts",
-                retry_config.max_attempts
-            ),
-        };
-
-        Err(Error::Database(error_msg))
     }
 
     /// Run database migrations
