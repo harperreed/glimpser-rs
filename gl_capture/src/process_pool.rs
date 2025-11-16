@@ -693,7 +693,59 @@ impl FfmpegProcessPool {
 
 impl Drop for FfmpegProcessPool {
     fn drop(&mut self) {
+        use tracing::warn;
+
+        // CRITICAL FIX: Actually kill child processes during drop
+        // This prevents FFmpeg zombie processes from accumulating
         self.shutdown.store(true, Ordering::Relaxed);
+
+        // Try to get a runtime handle for async cleanup
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            // We have a runtime - use it to kill processes
+            let processes = self.processes.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handle.block_on(async move {
+                    let mut procs = processes.write().await;
+                    for process in procs.iter_mut() {
+                        let _ = process.kill().await;
+                    }
+                    procs.clear();
+                })
+            }));
+
+            if let Err(e) = result {
+                warn!("Panic during process pool cleanup: {:?}", e);
+            }
+        } else {
+            // No runtime available - try synchronous cleanup
+            // This is a last resort and may not work perfectly
+            warn!("No runtime available for process pool cleanup - attempting synchronous kill");
+
+            // Try to access processes without async lock
+            // This is best-effort only
+            if let Ok(mut procs) = self.processes.try_write() {
+                for process in procs.iter_mut() {
+                    // Synchronous kill using the child process directly
+                    match process.child.try_wait() {
+                        Ok(Some(_)) => {
+                            // Process already exited
+                        }
+                        Ok(None) => {
+                            // Process is still running - try to kill it synchronously
+                            if let Err(e) = process.child.start_kill() {
+                                warn!("Failed to kill FFmpeg process: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to check process status: {}", e);
+                        }
+                    }
+                }
+                procs.clear();
+            } else {
+                warn!("Could not acquire lock on processes during drop - some processes may leak");
+            }
+        }
     }
 }
 

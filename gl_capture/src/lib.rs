@@ -5,7 +5,11 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
 use gl_proc::{run, CommandSpec};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -43,13 +47,24 @@ pub use website_source::{WebDriverClient, WebsiteConfig, WebsiteSource};
 pub struct CaptureHandle {
     source: Arc<dyn CaptureSource + Send + Sync>,
     state: Arc<Mutex<CaptureState>>,
+    /// Runtime handle for synchronous cleanup in Drop
+    /// This is wrapped in Option so we can take it during drop
+    runtime_handle: Option<tokio::runtime::Handle>,
 }
 
 impl CaptureHandle {
     pub(crate) fn new(source: Arc<dyn CaptureSource + Send + Sync>) -> Self {
+        // Capture the current runtime handle for use in Drop
+        let runtime_handle = tokio::runtime::Handle::try_current().ok();
+
+        if runtime_handle.is_none() {
+            warn!("CaptureHandle created outside of tokio runtime - cleanup may not work properly");
+        }
+
         Self {
             source,
             state: Arc::new(Mutex::new(CaptureState::Running)),
+            runtime_handle,
         }
     }
 
@@ -80,16 +95,46 @@ impl Drop for CaptureHandle {
         let source = Arc::clone(&self.source);
         let state = Arc::clone(&self.state);
 
-        // Spawn a task to stop the capture gracefully
-        tokio::spawn(async move {
-            let mut guard = state.lock().await;
-            if matches!(*guard, CaptureState::Running) {
-                *guard = CaptureState::Stopped;
-                if let Err(e) = source.stop().await {
-                    warn!(error = %e, "Failed to stop capture during drop");
-                }
+        // CRITICAL FIX: Use blocking cleanup with timeout to ensure processes are stopped
+        // This prevents FFmpeg process leaks during runtime shutdown
+        if let Some(runtime_handle) = self.runtime_handle.take() {
+            // Use block_in_place to avoid blocking the async runtime
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                runtime_handle.block_on(async move {
+                    // Use timeout to prevent hanging during shutdown
+                    let cleanup = async {
+                        let mut guard = state.lock().await;
+                        if matches!(*guard, CaptureState::Running) {
+                            *guard = CaptureState::Stopped;
+                            if let Err(e) = source.stop().await {
+                                warn!(error = %e, "Failed to stop capture during drop");
+                            }
+                        }
+                    };
+
+                    // Give cleanup 5 seconds to complete
+                    if let Err(_) = tokio::time::timeout(Duration::from_secs(5), cleanup).await {
+                        error!("Capture cleanup timed out during drop - process may be leaked");
+                    }
+                })
+            }));
+
+            if let Err(e) = result {
+                error!("Panic during capture cleanup: {:?}", e);
             }
-        });
+        } else {
+            // Fallback: spawn a detached task (may not run during shutdown)
+            warn!("No runtime handle available for cleanup - spawning detached task");
+            tokio::spawn(async move {
+                let mut guard = state.lock().await;
+                if matches!(*guard, CaptureState::Running) {
+                    *guard = CaptureState::Stopped;
+                    if let Err(e) = source.stop().await {
+                        warn!(error = %e, "Failed to stop capture during drop");
+                    }
+                }
+            });
+        }
     }
 }
 
@@ -135,6 +180,98 @@ impl Default for SnapshotConfig {
             max_width: Some(1920),
             max_height: Some(1080),
             timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+/// Cleanup orphaned FFmpeg processes from previous runs
+/// This should be called on application startup to prevent accumulation of zombie processes
+#[instrument]
+pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
+    info!("Cleaning up orphaned FFmpeg processes from previous runs");
+
+    // Use pgrep to find all ffmpeg processes
+    let pgrep_result = tokio::process::Command::new("pgrep")
+        .arg("-f")
+        .arg("ffmpeg")
+        .output()
+        .await;
+
+    match pgrep_result {
+        Ok(output) if output.status.success() => {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            let current_pid = std::process::id();
+
+            let mut killed_count = 0;
+            for pid_str in pids.lines() {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    // Don't kill our own process or if it's the parent
+                    if pid == current_pid {
+                        continue;
+                    }
+
+                    // Check if this is actually an ffmpeg process we spawned
+                    // by checking the command line
+                    let cmdline_result = tokio::fs::read_to_string(format!("/proc/{}/cmdline", pid))
+                        .await;
+
+                    if let Ok(cmdline) = cmdline_result {
+                        // Only kill if it looks like one of our ffmpeg processes
+                        // (has pipe:1 output or mjpeg format)
+                        if cmdline.contains("pipe:1") || cmdline.contains("mjpeg") {
+                            debug!(pid, "Killing orphaned FFmpeg process");
+
+                            // Try SIGTERM first
+                            let kill_result = tokio::process::Command::new("kill")
+                                .arg("-TERM")
+                                .arg(pid.to_string())
+                                .status()
+                                .await;
+
+                            if kill_result.is_ok() {
+                                killed_count += 1;
+
+                                // Wait a bit for graceful shutdown
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                                // Check if still running, use SIGKILL if needed
+                                if tokio::fs::metadata(format!("/proc/{}", pid)).await.is_ok() {
+                                    warn!(pid, "Process didn't respond to SIGTERM, using SIGKILL");
+                                    let _ = tokio::process::Command::new("kill")
+                                        .arg("-KILL")
+                                        .arg(pid.to_string())
+                                        .status()
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if killed_count > 0 {
+                info!(
+                    killed_count,
+                    "Cleaned up orphaned FFmpeg processes"
+                );
+            } else {
+                debug!("No orphaned FFmpeg processes found");
+            }
+
+            Ok(())
+        }
+        Ok(_) => {
+            // pgrep returned no results (exit code 1) - no ffmpeg processes found
+            debug!("No FFmpeg processes found to clean up");
+            Ok(())
+        }
+        Err(e) => {
+            // pgrep command failed - this might be on a system without pgrep
+            warn!(
+                error = %e,
+                "Failed to run pgrep for orphaned process cleanup - continuing anyway"
+            );
+            Ok(())
         }
     }
 }
