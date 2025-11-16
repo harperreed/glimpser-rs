@@ -83,6 +83,8 @@ impl DatabaseCircuitBreaker {
             if let Some(last_time) = *last_failure {
                 if let Ok(elapsed) = last_time.elapsed() {
                     if elapsed > self.config.timeout_duration {
+                        // Transition to half-open: keep circuit marked as "open" but allow
+                        // requests through. Will fully close after enough successes.
                         return CircuitState::HalfOpen;
                     }
                 }
@@ -96,11 +98,9 @@ impl DatabaseCircuitBreaker {
     pub fn is_open(&self) -> bool {
         let state = self.state();
 
+        // In half-open state, allow requests through to test recovery
+        // The state will transition back to closed after enough successes
         if state == CircuitState::HalfOpen {
-            // In half-open state, allow one request through
-            // The caller will record success/failure accordingly
-            self.is_open.store(false, Ordering::Relaxed);
-            self.success_count.store(0, Ordering::Relaxed);
             return false;
         }
 

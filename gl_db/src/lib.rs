@@ -165,10 +165,13 @@ impl Db {
 
         let mut table_counts = std::collections::HashMap::new();
 
+        // Acquire connection using pool manager for resilience
+        let mut conn = self.pool_manager.acquire().await?;
+
         for table in &tables {
             let query = format!("SELECT COUNT(*) as count FROM {}", table);
             let row = sqlx::query(&query)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *conn)
                 .await
                 .map_err(|e| {
                     Error::Database(format!("Failed to get count for {}: {}", table, e))
