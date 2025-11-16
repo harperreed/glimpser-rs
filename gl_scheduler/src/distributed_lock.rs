@@ -364,33 +364,30 @@ impl DistributedLockManager {
 
     /// Get lock statistics for monitoring
     pub async fn get_lock_stats(&self) -> Result<LockStats> {
-        let acquired_count_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM job_locks WHERE status = ?",
-        )
-        .bind(LockStatus::Acquired.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to get lock stats: {}", e)))?;
+        let acquired_count_row =
+            sqlx::query("SELECT COUNT(*) as count FROM job_locks WHERE status = ?")
+                .bind(LockStatus::Acquired.as_str())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("Failed to get lock stats: {}", e)))?;
 
         let acquired_count = acquired_count_row.get::<i64, _>("count") as u64;
 
-        let released_count_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM job_locks WHERE status = ?",
-        )
-        .bind(LockStatus::Released.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to get lock stats: {}", e)))?;
+        let released_count_row =
+            sqlx::query("SELECT COUNT(*) as count FROM job_locks WHERE status = ?")
+                .bind(LockStatus::Released.as_str())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("Failed to get lock stats: {}", e)))?;
 
         let released_count = released_count_row.get::<i64, _>("count") as u64;
 
-        let expired_count_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM job_locks WHERE status = ?",
-        )
-        .bind(LockStatus::Expired.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to get lock stats: {}", e)))?;
+        let expired_count_row =
+            sqlx::query("SELECT COUNT(*) as count FROM job_locks WHERE status = ?")
+                .bind(LockStatus::Expired.as_str())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("Failed to get lock stats: {}", e)))?;
 
         let expired_count = expired_count_row.get::<i64, _>("count") as u64;
 
@@ -688,10 +685,7 @@ mod tests {
         let config = LockConfig::default();
         let manager = DistributedLockManager::new(db.pool().clone(), config);
 
-        let stats_before = manager
-            .get_lock_stats()
-            .await
-            .expect("Failed to get stats");
+        let stats_before = manager.get_lock_stats().await.expect("Failed to get stats");
 
         let job_id = "test-job-5";
         let execution_id = Id::new().to_string();
@@ -703,10 +697,7 @@ mod tests {
             .expect("Failed to acquire lock")
             .expect("Lock should be available");
 
-        let stats_after = manager
-            .get_lock_stats()
-            .await
-            .expect("Failed to get stats");
+        let stats_after = manager.get_lock_stats().await.expect("Failed to get stats");
 
         assert_eq!(
             stats_after.acquired_count,
@@ -720,10 +711,7 @@ mod tests {
             .await
             .expect("Failed to release lock");
 
-        let stats_final = manager
-            .get_lock_stats()
-            .await
-            .expect("Failed to get stats");
+        let stats_final = manager.get_lock_stats().await.expect("Failed to get stats");
 
         assert_eq!(
             stats_final.released_count,

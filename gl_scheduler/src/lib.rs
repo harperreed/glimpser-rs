@@ -31,15 +31,15 @@ pub trait CaptureService: Send + Sync {
     async fn capture(&self, stream_id: &str) -> Result<CaptureResult>;
 }
 
+pub mod distributed_lock;
 pub mod jobs;
 pub mod storage;
 pub mod types;
-pub mod distributed_lock;
 
+pub use distributed_lock::*;
 pub use jobs::*;
 pub use storage::*;
 pub use types::*;
-pub use distributed_lock::*;
 
 /// Job scheduler configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +69,7 @@ impl Default for SchedulerConfig {
             history_retention_days: 30,
             enable_metrics: true,
             enable_distributed_locking: true, // Enable by default for safety
-            lock_lease_seconds: 360, // 6 minutes (job timeout + buffer)
+            lock_lease_seconds: 360,          // 6 minutes (job timeout + buffer)
         }
     }
 }
@@ -280,8 +280,7 @@ impl JobScheduler {
             let retention_days = self.config.history_retention_days;
 
             tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(tokio::time::Duration::from_secs(60)); // Run every minute
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60)); // Run every minute
                 let mut cleanup_counter: u32 = 0;
 
                 loop {

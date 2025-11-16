@@ -387,7 +387,7 @@ async fn start_server(config: Config, db: Db) -> gl_core::Result<()> {
         history_retention_days: 30,
         enable_metrics: true,
         enable_distributed_locking: true, // Enable distributed locking for multi-instance deployments
-        lock_lease_seconds: 360, // 6 minutes (job timeout + buffer)
+        lock_lease_seconds: 360,          // 6 minutes (job timeout + buffer)
     };
 
     // Need to create Arc for capture_manager temporarily for JobScheduler::new
