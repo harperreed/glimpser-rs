@@ -100,41 +100,54 @@ impl Drop for CaptureHandle {
         if let Some(runtime_handle) = self.runtime_handle.take() {
             // Attempt cleanup with panic protection
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Check if we're already in a tokio runtime context
-                // If so, we need to use a different approach to avoid blocking the runtime
-                let cleanup_future = async move {
-                    let cleanup = async {
-                        let mut guard = state.lock().await;
-                        if matches!(*guard, CaptureState::Running) {
-                            *guard = CaptureState::Stopped;
-                            if let Err(e) = source.stop().await {
-                                warn!(error = %e, "Failed to stop capture during drop");
-                            }
-                        }
-                    };
+                // Strategy: For multi-threaded runtimes, spawn a dedicated thread to run block_on.
+                // This prevents blocking the runtime's worker threads and avoids potential panics
+                // from calling block_on within an async context.
 
-                    // Give cleanup 5 seconds to complete
-                    if tokio::time::timeout(Duration::from_secs(5), cleanup)
-                        .await
-                        .is_err()
-                    {
-                        error!("Capture cleanup timed out during drop - process may be leaked");
+                let cleanup_future = async move {
+                    let mut guard = state.lock().await;
+                    if matches!(*guard, CaptureState::Running) {
+                        *guard = CaptureState::Stopped;
+                        if let Err(e) = source.stop().await {
+                            warn!(error = %e, "Failed to stop capture during drop");
+                        }
                     }
                 };
 
-                // Use spawn_blocking to avoid blocking the runtime if we're in an async context
-                // This is safer than block_on which can cause panics
                 if runtime_handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread
                 {
-                    // Current thread runtime - just block on it
-                    runtime_handle.block_on(cleanup_future);
+                    // Current thread runtime - safe to block_on directly
+                    // Give cleanup 5 seconds to complete
+                    let timeout_result =
+                        runtime_handle.block_on(tokio::time::timeout(
+                            Duration::from_secs(5),
+                            cleanup_future,
+                        ));
+
+                    if timeout_result.is_err() {
+                        error!("Capture cleanup timed out during drop - process may be leaked");
+                    }
                 } else {
-                    // Multi-threaded runtime - use spawn_blocking if possible
-                    // Otherwise fall back to block_on
-                    let _ = std::thread::spawn(move || {
-                        runtime_handle.block_on(cleanup_future);
+                    // Multi-threaded runtime - spawn a dedicated thread to avoid blocking workers
+                    match std::thread::spawn(move || {
+                        let timeout_result = runtime_handle.block_on(tokio::time::timeout(
+                            Duration::from_secs(5),
+                            cleanup_future,
+                        ));
+
+                        if timeout_result.is_err() {
+                            error!("Capture cleanup timed out during drop - process may be leaked");
+                        }
                     })
-                    .join();
+                    .join()
+                    {
+                        Err(e) => {
+                            error!("Cleanup thread panicked during drop: {:?}", e);
+                        }
+                        Ok(()) => {
+                            // Cleanup completed successfully
+                        }
+                    }
                 }
             }));
 
@@ -249,9 +262,21 @@ pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
                             .and_then(|stat| {
                                 // Parse the stat file to get PPID (parent process ID)
                                 // Format: pid (comm) state ppid ...
-                                let parts: Vec<&str> = stat.split_whitespace().collect();
-                                if parts.len() >= 4 {
-                                    parts[3].parse::<u32>().ok()
+                                // Note: comm is in parentheses and may contain spaces, so we need to
+                                // find the closing paren and then split from there
+
+                                // Find the last ')' to skip over the comm field
+                                if let Some(rparen_pos) = stat.rfind(')') {
+                                    // Everything after ')' is: state ppid ...
+                                    let after_comm = &stat[rparen_pos + 1..];
+                                    let parts: Vec<&str> = after_comm.split_whitespace().collect();
+
+                                    // parts[0] = state, parts[1] = ppid
+                                    if parts.len() >= 2 {
+                                        parts[1].parse::<u32>().ok()
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
                                 }
@@ -266,14 +291,16 @@ pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
                                 "Killing orphaned FFmpeg process (matches our pattern)"
                             );
 
-                            // Use nix for proper signal handling if available, otherwise fall back
+                            // Try to kill the orphaned process using signals
                             #[cfg(unix)]
                             {
-                                use std::process::Command;
-
                                 // Try SIGTERM first for graceful shutdown
-                                let kill_result =
-                                    Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                                // Use tokio::process::Command for consistency
+                                let kill_result = tokio::process::Command::new("kill")
+                                    .arg("-TERM")
+                                    .arg(pid.to_string())
+                                    .status()
+                                    .await;
 
                                 if kill_result.is_ok() {
                                     killed_count += 1;
@@ -290,10 +317,11 @@ pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
                                             pid,
                                             "Process didn't respond to SIGTERM, using SIGKILL"
                                         );
-                                        let _ = Command::new("kill")
+                                        let _ = tokio::process::Command::new("kill")
                                             .arg("-KILL")
                                             .arg(pid.to_string())
-                                            .status();
+                                            .status()
+                                            .await;
                                     }
                                 }
                             }

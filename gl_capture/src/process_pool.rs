@@ -704,34 +704,50 @@ impl Drop for FfmpegProcessPool {
             // We have a runtime - use it to kill processes with timeout
             let processes = self.processes.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Use a separate thread to avoid blocking the runtime
-                let cleanup_future = async move {
-                    // Timeout for the entire cleanup operation
-                    let cleanup = async {
-                        let mut procs = processes.write().await;
-                        for process in procs.iter_mut() {
-                            let _ = process.kill().await;
-                        }
-                        procs.clear();
-                    };
+                // Strategy: For multi-threaded runtimes, spawn a dedicated thread to run block_on.
+                // This prevents blocking the runtime's worker threads and avoids potential panics
+                // from calling block_on within an async context.
 
-                    // Give cleanup 10 seconds (longer than CaptureHandle due to multiple processes)
-                    if tokio::time::timeout(Duration::from_secs(10), cleanup)
-                        .await
-                        .is_err()
-                    {
-                        warn!("Process pool cleanup timed out during drop - some processes may leak");
+                let cleanup_future = async move {
+                    let mut procs = processes.write().await;
+                    for process in procs.iter_mut() {
+                        let _ = process.kill().await;
                     }
+                    procs.clear();
                 };
 
-                // Spawn in a separate thread to avoid potential runtime issues
                 if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
-                    handle.block_on(cleanup_future);
+                    // Current thread runtime - safe to block_on directly
+                    // Give cleanup 10 seconds (longer than CaptureHandle due to multiple processes)
+                    let timeout_result = handle.block_on(tokio::time::timeout(
+                        Duration::from_secs(10),
+                        cleanup_future,
+                    ));
+
+                    if timeout_result.is_err() {
+                        warn!("Process pool cleanup timed out during drop - some processes may leak");
+                    }
                 } else {
-                    let _ = std::thread::spawn(move || {
-                        handle.block_on(cleanup_future);
+                    // Multi-threaded runtime - spawn a dedicated thread to avoid blocking workers
+                    match std::thread::spawn(move || {
+                        let timeout_result = handle.block_on(tokio::time::timeout(
+                            Duration::from_secs(10),
+                            cleanup_future,
+                        ));
+
+                        if timeout_result.is_err() {
+                            warn!("Process pool cleanup timed out during drop - some processes may leak");
+                        }
                     })
-                    .join();
+                    .join()
+                    {
+                        Err(e) => {
+                            warn!("Cleanup thread panicked during drop: {:?}", e);
+                        }
+                        Ok(()) => {
+                            // Cleanup completed successfully
+                        }
+                    }
                 }
             }));
 
