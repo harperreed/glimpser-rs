@@ -9,7 +9,7 @@ use gl_core::Result;
 use opencv::{
     core::{Mat, Size, CV_8UC1},
     prelude::*,
-    video::{BackgroundSubtractorMOG2, BackgroundSubtractorMOG2Trait},
+    video::BackgroundSubtractorMOG2,
 };
 #[cfg(feature = "heavy_opencv")]
 use tracing::debug;
@@ -18,7 +18,7 @@ use tracing::debug;
 /// OpenCV MOG2 background subtraction motion detector
 pub struct OpenCvDetector {
     config: MotionConfig,
-    mog2: opencv::core::Ptr<dyn BackgroundSubtractorMOG2Trait>,
+    mog2: opencv::core::Ptr<BackgroundSubtractorMOG2>,
     initialized: bool,
 }
 
