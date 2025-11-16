@@ -267,11 +267,26 @@ impl JobScheduler {
 
         // Cancel all running jobs gracefully
         let running_jobs = self.running_jobs.read().await;
+
+        // First, signal cancellation to all jobs
         for (job_id, running_job) in running_jobs.iter() {
             debug!("Cancelling running job: {}", job_id);
             running_job.cancellation_token.cancel();
-            // Give a brief grace period for cleanup
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        // Give all jobs a grace period to clean up (wait once for all jobs)
+        let job_count = running_jobs.len();
+        drop(running_jobs); // Release lock during grace period
+
+        if job_count > 0 {
+            debug!("Waiting for {} jobs to clean up gracefully", job_count);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        // Now abort any jobs that didn't finish
+        let mut running_jobs = self.running_jobs.write().await;
+        for (job_id, running_job) in running_jobs.drain() {
+            debug!("Force-aborting job: {}", job_id);
             running_job.handle.abort();
         }
         drop(running_jobs);
@@ -401,6 +416,8 @@ impl JobScheduler {
                             .jobs_failed
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     } else {
+                        // Job completed successfully - cancel token to stop watchdog early
+                        cancellation_token_for_task.cancel();
                         result = result.with_success(output);
                         metrics
                             .jobs_completed
@@ -408,6 +425,9 @@ impl JobScheduler {
                     }
                 }
                 Err(e) => {
+                    // Job failed - ensure token is cancelled to stop watchdog
+                    cancellation_token_for_task.cancel();
+
                     // Check if it's a cancellation error
                     if matches!(e, gl_core::Error::Cancelled(_)) {
                         result.status = JobStatus::TimedOut;
