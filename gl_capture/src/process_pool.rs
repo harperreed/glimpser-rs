@@ -451,7 +451,8 @@ impl FfmpegProcess {
                 const MIN_PROGRESS_THRESHOLD: usize = 1024; // 1 KB
 
                 if last_jpeg_start < MIN_PROGRESS_THRESHOLD
-                    && (current_size - last_jpeg_start) > MAX_BUFFER_SIZE {
+                    && (current_size - last_jpeg_start) > MAX_BUFFER_SIZE
+                {
                     // Single incomplete JPEG frame exceeds MAX_BUFFER_SIZE - this is corrupt
                     let dropped_bytes = self.frame_buffer.len();
                     self.frame_buffer.clear();
@@ -503,7 +504,9 @@ impl FfmpegProcess {
 
     /// Find the last JPEG start marker (0xFF 0xD8) - returns last occurrence
     fn find_last_jpeg_start(&self, buffer: &[u8]) -> Option<usize> {
-        buffer.windows(2).rposition(|w| w[0] == 0xFF && w[1] == 0xD8)
+        buffer
+            .windows(2)
+            .rposition(|w| w[0] == 0xFF && w[1] == 0xD8)
     }
 
     /// Find the end of a JPEG frame (0xFF 0xD9)
@@ -909,10 +912,7 @@ mod tests {
         assert_eq!(metrics.avg_extraction_time_us.load(Ordering::Relaxed), 0);
         assert_eq!(metrics.max_buffer_size.load(Ordering::Relaxed), 0);
         assert_eq!(metrics.buffer_overflows.load(Ordering::Relaxed), 0);
-        assert_eq!(
-            metrics.buffer_overflow_restarts.load(Ordering::Relaxed),
-            0
-        );
+        assert_eq!(metrics.buffer_overflow_restarts.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -1147,9 +1147,7 @@ mod tests {
         buffer[801] = 0xD8;
 
         // Test find first JPEG start (should find position 100)
-        let first = buffer
-            .windows(2)
-            .position(|w| w[0] == 0xFF && w[1] == 0xD8);
+        let first = buffer.windows(2).position(|w| w[0] == 0xFF && w[1] == 0xD8);
         assert_eq!(first, Some(100));
 
         // Test find last JPEG start (should find position 800)
@@ -1172,24 +1170,16 @@ mod tests {
         // Verify all buffer-related metrics start at zero
         assert_eq!(metrics.max_buffer_size.load(Ordering::Relaxed), 0);
         assert_eq!(metrics.buffer_overflows.load(Ordering::Relaxed), 0);
-        assert_eq!(
-            metrics.buffer_overflow_restarts.load(Ordering::Relaxed),
-            0
-        );
+        assert_eq!(metrics.buffer_overflow_restarts.load(Ordering::Relaxed), 0);
 
         // Test metric updates
         metrics.max_buffer_size.store(1024, Ordering::Relaxed);
         metrics.buffer_overflows.store(5, Ordering::Relaxed);
-        metrics
-            .buffer_overflow_restarts
-            .store(2, Ordering::Relaxed);
+        metrics.buffer_overflow_restarts.store(2, Ordering::Relaxed);
 
         assert_eq!(metrics.max_buffer_size.load(Ordering::Relaxed), 1024);
         assert_eq!(metrics.buffer_overflows.load(Ordering::Relaxed), 5);
-        assert_eq!(
-            metrics.buffer_overflow_restarts.load(Ordering::Relaxed),
-            2
-        );
+        assert_eq!(metrics.buffer_overflow_restarts.load(Ordering::Relaxed), 2);
     }
 
     #[test]
