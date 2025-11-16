@@ -691,7 +691,8 @@ impl FfmpegProcessPool {
                             consecutive_failures = consecutive_failures,
                             "Process is degraded"
                         );
-                        healthy_count += 1; // Degraded processes are still usable
+                        // Degraded processes are NOT counted as healthy - they're not used for extraction
+                        // They will either recover via watchdog timeout and restart, or become Failed
                     }
                     ProcessHealth::Stuck { seconds_stuck } => {
                         warn!(
