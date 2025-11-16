@@ -226,7 +226,7 @@ async fn test_severity_based_rules() {
     // Look for escalated events
     let escalated_events: Vec<_> = events
         .iter()
-        .filter(|e| e.metadata.get("escalated").is_some())
+        .filter(|e| e.metadata.contains_key("escalated"))
         .collect();
 
     println!(
@@ -341,7 +341,7 @@ async fn test_event_count_rules() {
             // After we have 3+ events in history
             let burst_events: Vec<_> = events
                 .iter()
-                .filter(|e| e.metadata.get("burst_detected").is_some())
+                .filter(|e| e.metadata.contains_key("burst_detected"))
                 .collect();
 
             if !burst_events.is_empty() {

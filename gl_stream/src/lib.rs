@@ -519,7 +519,7 @@ mod tests {
         // Fast receiver should get recent frames
         if let Ok(frame) = receiver1.try_recv() {
             // Should be able to receive something
-            assert!(frame.len() > 0);
+            assert!(!frame.is_empty());
         }
 
         // Slow receiver might lag
@@ -705,7 +705,10 @@ mod tests {
             // Can call receiver methods directly thanks to Deref
             // try_recv() requires &mut self, demonstrating DerefMut works
             let result = guard.try_recv();
-            assert!(matches!(result, Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
+            assert!(matches!(
+                result,
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
 
             // Guard still auto-cleanup on drop
             drop(guard);

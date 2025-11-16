@@ -16,7 +16,7 @@ pub use openai::OpenAiClient;
 pub use stub::StubClient;
 
 /// Classification result for events
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum EventClassification {
     /// Motion detected
     Motion,
@@ -33,13 +33,8 @@ pub enum EventClassification {
     /// Normal/no significant event
     Normal,
     /// Unknown or unclassifiable
+    #[default]
     Unknown,
-}
-
-impl Default for EventClassification {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Event data for classification
