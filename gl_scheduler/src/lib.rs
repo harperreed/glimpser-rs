@@ -52,6 +52,14 @@ pub struct SchedulerConfig {
     pub history_retention_days: u32,
     /// Enable job metrics collection
     pub enable_metrics: bool,
+    /// Maximum number of retry attempts for database operations
+    pub persistence_max_retries: u32,
+    /// Initial retry delay in milliseconds
+    pub persistence_retry_delay_ms: u64,
+    /// Maximum retry delay in milliseconds (for exponential backoff)
+    pub persistence_max_retry_delay_ms: u64,
+    /// Enable dead letter queue for failed persists
+    pub enable_dead_letter_queue: bool,
 }
 
 impl Default for SchedulerConfig {
@@ -62,6 +70,10 @@ impl Default for SchedulerConfig {
             enable_persistence: true,
             history_retention_days: 30,
             enable_metrics: true,
+            persistence_max_retries: 3,
+            persistence_retry_delay_ms: 100,
+            persistence_max_retry_delay_ms: 5000,
+            enable_dead_letter_queue: true,
         }
     }
 }
@@ -199,6 +211,16 @@ impl JobContext {
     }
 }
 
+/// Dead letter queue entry for failed persistence operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeadLetterEntry {
+    pub execution_id: String,
+    pub result: JobResult,
+    pub failed_at: DateTime<Utc>,
+    pub error_message: String,
+    pub retry_count: u32,
+}
+
 /// Main job scheduler
 pub struct JobScheduler {
     config: SchedulerConfig,
@@ -209,6 +231,7 @@ pub struct JobScheduler {
     metrics: JobMetrics,
     db: Db,
     capture_service: Arc<dyn CaptureService>,
+    dead_letter_queue: Arc<RwLock<Vec<DeadLetterEntry>>>,
 }
 
 impl JobScheduler {
@@ -234,6 +257,7 @@ impl JobScheduler {
             metrics: JobMetrics::new(),
             db,
             capture_service,
+            dead_letter_queue: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -317,6 +341,214 @@ impl JobScheduler {
         Ok(execution_id)
     }
 
+    /// Static helper method to persist job result with retry logic (used in spawned tasks)
+    async fn persist_job_result_with_retry(
+        job_storage: &Arc<dyn JobStorage>,
+        dead_letter_queue: &Arc<RwLock<Vec<DeadLetterEntry>>>,
+        config: &SchedulerConfig,
+        metrics: &JobMetrics,
+        execution_id: &str,
+        result: &JobResult,
+    ) -> Result<()> {
+        let mut retry_count = 0;
+        let mut delay_ms = config.persistence_retry_delay_ms;
+
+        loop {
+            match job_storage.save_job_result(execution_id, result).await {
+                Ok(_) => {
+                    if retry_count > 0 {
+                        debug!(
+                            "Successfully saved job result after {} retries for execution: {}",
+                            retry_count, execution_id
+                        );
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    retry_count += 1;
+                    metrics
+                        .persistence_retries
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    if retry_count > config.persistence_max_retries {
+                        warn!(
+                            "Failed to save job result after {} retries for execution {}: {}",
+                            config.persistence_max_retries, execution_id, e
+                        );
+                        metrics
+                            .persistence_failures
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        // Add to dead letter queue if enabled
+                        if config.enable_dead_letter_queue {
+                            Self::add_to_dead_letter_queue_static(
+                                dead_letter_queue,
+                                metrics,
+                                execution_id.to_string(),
+                                result.clone(),
+                                e.to_string(),
+                                retry_count,
+                            )
+                            .await;
+                        }
+
+                        return Err(e);
+                    }
+
+                    warn!(
+                        "Failed to save job result (attempt {}/{}), retrying in {}ms: {}",
+                        retry_count, config.persistence_max_retries, delay_ms, e
+                    );
+
+                    // Sleep before retry
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+
+                    // Exponential backoff with max cap
+                    delay_ms = std::cmp::min(delay_ms * 2, config.persistence_max_retry_delay_ms);
+                }
+            }
+        }
+    }
+
+    /// Save job result with retry logic (instance method wrapper)
+    async fn save_job_result_with_retry(
+        &self,
+        execution_id: &str,
+        result: &JobResult,
+    ) -> Result<()> {
+        Self::persist_job_result_with_retry(
+            &self.job_storage,
+            &self.dead_letter_queue,
+            &self.config,
+            &self.metrics,
+            execution_id,
+            result,
+        )
+        .await
+    }
+
+    /// Static helper to add to dead letter queue (used in spawned tasks)
+    async fn add_to_dead_letter_queue_static(
+        dead_letter_queue: &Arc<RwLock<Vec<DeadLetterEntry>>>,
+        metrics: &JobMetrics,
+        execution_id: String,
+        result: JobResult,
+        error_message: String,
+        retry_count: u32,
+    ) {
+        let entry = DeadLetterEntry {
+            execution_id: execution_id.clone(),
+            result,
+            failed_at: Utc::now(),
+            error_message,
+            retry_count,
+        };
+
+        let mut dlq = dead_letter_queue.write().await;
+        dlq.push(entry);
+
+        metrics
+            .dead_letter_queue_size
+            .store(dlq.len() as u64, std::sync::atomic::Ordering::Relaxed);
+
+        warn!(
+            "Added execution {} to dead letter queue. Queue size: {}",
+            execution_id,
+            dlq.len()
+        );
+    }
+
+    /// Add failed persistence operation to dead letter queue (instance method wrapper)
+    #[allow(dead_code)]
+    async fn add_to_dead_letter_queue(
+        &self,
+        execution_id: String,
+        result: JobResult,
+        error_message: String,
+        retry_count: u32,
+    ) {
+        Self::add_to_dead_letter_queue_static(
+            &self.dead_letter_queue,
+            &self.metrics,
+            execution_id,
+            result,
+            error_message,
+            retry_count,
+        )
+        .await;
+    }
+
+    /// Get dead letter queue entries
+    pub async fn get_dead_letter_queue(&self) -> Vec<DeadLetterEntry> {
+        self.dead_letter_queue.read().await.clone()
+    }
+
+    /// Retry processing dead letter queue entries
+    pub async fn retry_dead_letter_queue(&self) -> Result<(u32, u32)> {
+        let mut dlq = self.dead_letter_queue.write().await;
+        let initial_count = dlq.len();
+        let mut success_count = 0;
+        let mut failed_count = 0;
+
+        info!("Retrying {} dead letter queue entries", initial_count);
+
+        // Process entries (in reverse order to allow safe removal)
+        let mut i = 0;
+        while i < dlq.len() {
+            let entry = &dlq[i];
+            match self
+                .job_storage
+                .save_job_result(&entry.execution_id, &entry.result)
+                .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Successfully persisted dead letter entry: {}",
+                        entry.execution_id
+                    );
+                    dlq.remove(i);
+                    success_count += 1;
+                    // Don't increment i since we removed an element
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to persist dead letter entry {}: {}",
+                        entry.execution_id, e
+                    );
+                    failed_count += 1;
+                    i += 1; // Move to next entry
+                }
+            }
+        }
+
+        self.metrics
+            .dead_letter_queue_size
+            .store(dlq.len() as u64, std::sync::atomic::Ordering::Relaxed);
+
+        info!(
+            "Dead letter queue retry complete. Success: {}, Failed: {}, Remaining: {}",
+            success_count,
+            failed_count,
+            dlq.len()
+        );
+
+        Ok((success_count, failed_count))
+    }
+
+    /// Clear dead letter queue (use with caution)
+    pub async fn clear_dead_letter_queue(&self) -> u32 {
+        let mut dlq = self.dead_letter_queue.write().await;
+        let count = dlq.len() as u32;
+        dlq.clear();
+
+        self.metrics
+            .dead_letter_queue_size
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
+        warn!("Cleared {} entries from dead letter queue", count);
+        count
+    }
+
     /// Execute a job immediately
     pub async fn execute_now(&self, job_def: JobDefinition) -> Result<String> {
         info!("Executing job immediately: {}", job_def.name);
@@ -350,15 +582,29 @@ impl JobScheduler {
         let config = self.config.clone();
         let metrics = self.metrics.clone();
         let running_jobs = self.running_jobs.clone();
+        let dead_letter_queue = self.dead_letter_queue.clone();
 
         let handle = tokio::spawn(async move {
             let mut result = JobResult::new();
             result.status = JobStatus::Running;
 
             if config.enable_persistence {
-                let _ = job_storage
-                    .save_job_result(&execution_id_for_task, &result)
-                    .await;
+                // Save initial "Running" status with retry logic
+                if let Err(e) = Self::persist_job_result_with_retry(
+                    &job_storage,
+                    &dead_letter_queue,
+                    &config,
+                    &metrics,
+                    &execution_id_for_task,
+                    &result,
+                )
+                .await
+                {
+                    warn!(
+                        "Failed to persist initial job status for {}: {}",
+                        execution_id_for_task, e
+                    );
+                }
             }
 
             // Execute the job with timeout
@@ -392,9 +638,22 @@ impl JobScheduler {
             }
 
             if config.enable_persistence {
-                let _ = job_storage
-                    .save_job_result(&execution_id_for_task, &result)
-                    .await;
+                // Save final result with retry logic
+                if let Err(e) = Self::persist_job_result_with_retry(
+                    &job_storage,
+                    &dead_letter_queue,
+                    &config,
+                    &metrics,
+                    &execution_id_for_task,
+                    &result,
+                )
+                .await
+                {
+                    warn!(
+                        "Failed to persist final job result for {}: {}",
+                        execution_id_for_task, e
+                    );
+                }
             }
 
             // Remove from running jobs
@@ -440,9 +699,15 @@ impl JobScheduler {
                 let mut result = JobResult::new();
                 result.status = JobStatus::Cancelled;
                 result.completed_at = Some(Utc::now());
-                self.job_storage
-                    .save_job_result(execution_id, &result)
-                    .await?;
+
+                // Use retry logic for cancellation persistence
+                if let Err(e) = self.save_job_result_with_retry(execution_id, &result).await {
+                    warn!(
+                        "Failed to persist job cancellation for {}: {}",
+                        execution_id, e
+                    );
+                    // Don't return error - job is already cancelled
+                }
             }
 
             Ok(())
@@ -481,6 +746,9 @@ pub struct JobMetrics {
     pub jobs_completed: std::sync::atomic::AtomicU64,
     pub jobs_failed: std::sync::atomic::AtomicU64,
     pub jobs_cancelled: std::sync::atomic::AtomicU64,
+    pub persistence_failures: std::sync::atomic::AtomicU64,
+    pub persistence_retries: std::sync::atomic::AtomicU64,
+    pub dead_letter_queue_size: std::sync::atomic::AtomicU64,
 }
 
 impl Clone for JobMetrics {
@@ -501,6 +769,18 @@ impl Clone for JobMetrics {
                 self.jobs_cancelled
                     .load(std::sync::atomic::Ordering::Relaxed),
             ),
+            persistence_failures: std::sync::atomic::AtomicU64::new(
+                self.persistence_failures
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            persistence_retries: std::sync::atomic::AtomicU64::new(
+                self.persistence_retries
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            dead_letter_queue_size: std::sync::atomic::AtomicU64::new(
+                self.dead_letter_queue_size
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
         }
     }
 }
@@ -518,6 +798,9 @@ impl JobMetrics {
             jobs_completed: std::sync::atomic::AtomicU64::new(0),
             jobs_failed: std::sync::atomic::AtomicU64::new(0),
             jobs_cancelled: std::sync::atomic::AtomicU64::new(0),
+            persistence_failures: std::sync::atomic::AtomicU64::new(0),
+            persistence_retries: std::sync::atomic::AtomicU64::new(0),
+            dead_letter_queue_size: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -537,6 +820,21 @@ impl JobMetrics {
 
     pub fn get_cancelled(&self) -> u64 {
         self.jobs_cancelled
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn get_persistence_failures(&self) -> u64 {
+        self.persistence_failures
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn get_persistence_retries(&self) -> u64 {
+        self.persistence_retries
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn get_dead_letter_queue_size(&self) -> u64 {
+        self.dead_letter_queue_size
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
