@@ -205,42 +205,59 @@ impl StreamSession {
     /// Returns `SubscriptionError::MaxSubscribersReached` if the maximum number of
     /// concurrent subscribers (`max_clients`) has been reached.
     pub fn subscribe(&self) -> Result<broadcast::Receiver<Bytes>, SubscriptionError> {
-        // Check current subscriber count against max_clients limit
-        let current_count = self.subscribers.load(Ordering::Relaxed);
+        // Use compare-and-swap loop to atomically check and increment
+        // This prevents race conditions where multiple threads could exceed max_clients
+        loop {
+            let current_count = self.subscribers.load(Ordering::Acquire);
 
-        if current_count >= self.config.max_clients as u64 {
-            warn!(
-                session_id = %self.id,
-                current_subscribers = current_count,
-                max_clients = self.config.max_clients,
-                "Subscription rejected: max_clients limit reached"
-            );
-            self.metrics.connections_rejected.inc();
-            return Err(SubscriptionError::MaxSubscribersReached {
-                max_clients: self.config.max_clients,
-            });
+            // Check if we've reached the limit
+            if current_count >= self.config.max_clients as u64 {
+                warn!(
+                    session_id = %self.id,
+                    current_subscribers = current_count,
+                    max_clients = self.config.max_clients,
+                    "Subscription rejected: max_clients limit reached"
+                );
+                self.metrics.connections_rejected.inc();
+                return Err(SubscriptionError::MaxSubscribersReached {
+                    max_clients: self.config.max_clients,
+                });
+            }
+
+            // Try to atomically increment from current to current + 1
+            // This ensures we only increment if count hasn't changed since we checked
+            match self.subscribers.compare_exchange_weak(
+                current_count,
+                current_count + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    // Successfully incremented - we got a slot
+                    let new_count = current_count + 1;
+                    self.metrics.subscribers.set(new_count as i64);
+
+                    info!(
+                        session_id = %self.id,
+                        subscriber_count = new_count,
+                        max_clients = self.config.max_clients,
+                        "New subscriber joined"
+                    );
+
+                    return Ok(self.frame_sender.subscribe());
+                }
+                Err(_) => {
+                    // Count was modified by another thread, retry the loop
+                    continue;
+                }
+            }
         }
-
-        // Atomically increment subscriber count
-        let subscriber_count = self.subscribers.fetch_add(1, Ordering::Relaxed) + 1;
-        self.metrics.subscribers.set(subscriber_count as i64);
-
-        info!(
-            session_id = %self.id,
-            subscriber_count,
-            max_clients = self.config.max_clients,
-            "New subscriber joined"
-        );
-
-        Ok(self.frame_sender.subscribe())
     }
 
     /// Remove a subscriber
     pub fn unsubscribe(&self) {
-        let subscriber_count = self
-            .subscribers
-            .fetch_sub(1, Ordering::Relaxed)
-            .saturating_sub(1);
+        let prev_count = self.subscribers.fetch_sub(1, Ordering::Release);
+        let subscriber_count = prev_count.saturating_sub(1);
         self.metrics.subscribers.set(subscriber_count as i64);
 
         info!(
