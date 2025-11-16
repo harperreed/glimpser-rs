@@ -141,7 +141,7 @@ impl Default for ProcessPoolMetrics {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProcessHealth {
     Healthy,
-    Degraded { consecutive_failures: u32 },
+    Degraded,
     Failed { reason: String },
 }
 
@@ -189,9 +189,7 @@ impl ProcessHealthTracker {
             );
             self.health = ProcessHealth::Failed { reason };
         } else {
-            self.health = ProcessHealth::Degraded {
-                consecutive_failures: self.consecutive_failures,
-            };
+            self.health = ProcessHealth::Degraded;
             warn!(
                 consecutive_failures = self.consecutive_failures,
                 reason = %reason,
@@ -477,6 +475,11 @@ impl FfmpegProcess {
         self.health_tracker.health()
     }
 
+    /// Get the consecutive failure count
+    pub fn consecutive_failures(&self) -> u32 {
+        self.health_tracker.consecutive_failures()
+    }
+
     /// Kill the process
     pub async fn kill(&mut self) -> Result<()> {
         if let Err(e) = self.child.kill().await {
@@ -650,12 +653,10 @@ impl FfmpegProcessPool {
                     ProcessHealth::Healthy => {
                         healthy_count += 1;
                     }
-                    ProcessHealth::Degraded {
-                        consecutive_failures,
-                    } => {
+                    ProcessHealth::Degraded => {
                         warn!(
                             process_index = index,
-                            consecutive_failures = consecutive_failures,
+                            consecutive_failures = process.consecutive_failures(),
                             "Process is degraded"
                         );
                         healthy_count += 1; // Degraded processes are still usable
@@ -849,10 +850,7 @@ mod tests {
             tracker.mark_failure(format!("Test failure {}", i));
             assert!(!tracker.is_healthy());
             assert_eq!(tracker.consecutive_failures(), i);
-            assert!(matches!(
-                tracker.health(),
-                ProcessHealth::Degraded { consecutive_failures } if *consecutive_failures == i
-            ));
+            assert!(matches!(tracker.health(), ProcessHealth::Degraded));
         }
 
         // Final failure should mark as Failed
