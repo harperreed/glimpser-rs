@@ -112,6 +112,25 @@ pub struct DatabaseConfig {
     #[validate(range(min = 1, max = 100))]
     pub pool_size: u32,
     pub sqlite_wal: bool,
+    #[validate(nested)]
+    pub retry: DatabaseRetryConfig,
+}
+
+/// Database connection retry configuration
+#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+pub struct DatabaseRetryConfig {
+    /// Maximum number of retry attempts for database connections
+    #[validate(range(min = 0, max = 20))]
+    pub max_attempts: u32,
+    /// Initial delay between retries in milliseconds
+    #[validate(range(min = 100, max = 30000))]
+    pub initial_delay_ms: u64,
+    /// Maximum delay between retries in milliseconds
+    #[validate(range(min = 1000, max = 300000))]
+    pub max_delay_ms: u64,
+    /// Multiplier for exponential backoff
+    #[validate(range(min = 1.0, max = 5.0))]
+    pub backoff_multiplier: f64,
 }
 
 impl Default for DatabaseConfig {
@@ -120,6 +139,18 @@ impl Default for DatabaseConfig {
             path: "glimpser.db".to_string(),
             pool_size: 10,
             sqlite_wal: true,
+            retry: DatabaseRetryConfig::default(),
+        }
+    }
+}
+
+impl Default for DatabaseRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 5,
+            initial_delay_ms: 1000,    // Start with 1 second
+            max_delay_ms: 30000,       // Max 30 seconds
+            backoff_multiplier: 2.0,   // Double the delay each time
         }
     }
 }
@@ -353,6 +384,10 @@ impl Config {
             .set_default("database.path", "glimpser.db")?
             .set_default("database.pool_size", 10)?
             .set_default("database.sqlite_wal", true)?
+            .set_default("database.retry.max_attempts", 5)?
+            .set_default("database.retry.initial_delay_ms", 1000)?
+            .set_default("database.retry.max_delay_ms", 30000)?
+            .set_default("database.retry.backoff_multiplier", 2.0)?
             .set_default("security.argon2_params.memory_cost", 19456)?
             .set_default("security.argon2_params.time_cost", 2)?
             .set_default("security.argon2_params.parallelism", 1)?

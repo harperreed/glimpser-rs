@@ -7,7 +7,75 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
     Row, Sqlite, SqlitePool,
 };
-use tracing::{debug, info, instrument};
+use std::time::Duration;
+use tracing::{debug, info, warn, instrument};
+
+/// Database connection retry configuration
+#[derive(Debug, Clone)]
+pub struct DatabaseRetryConfig {
+    /// Maximum number of retry attempts
+    pub max_attempts: u32,
+    /// Initial delay between retries
+    pub initial_delay_ms: u64,
+    /// Maximum delay between retries
+    pub max_delay_ms: u64,
+    /// Multiplier for exponential backoff
+    pub backoff_multiplier: f64,
+}
+
+impl Default for DatabaseRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 5,
+            initial_delay_ms: 1000,
+            max_delay_ms: 30000,
+            backoff_multiplier: 2.0,
+        }
+    }
+}
+
+impl DatabaseRetryConfig {
+    /// Create a new retry configuration
+    pub fn new(
+        max_attempts: u32,
+        initial_delay_ms: u64,
+        max_delay_ms: u64,
+        backoff_multiplier: f64,
+    ) -> Self {
+        Self {
+            max_attempts,
+            initial_delay_ms,
+            max_delay_ms,
+            backoff_multiplier,
+        }
+    }
+
+    /// Calculate delay for a given attempt number with exponential backoff and jitter
+    fn calculate_delay(&self, attempt: u32) -> Duration {
+        // Calculate exponential backoff: initial_delay * multiplier^attempt
+        let delay_ms = self.initial_delay_ms as f64
+            * self.backoff_multiplier.powi(attempt as i32);
+
+        // Cap at max_delay_ms
+        let capped_delay = delay_ms.min(self.max_delay_ms as f64);
+
+        // Add simple jitter based on current time to prevent thundering herd
+        // Use nanoseconds to create variation (±10%)
+        let jitter = {
+            use std::time::SystemTime;
+            let nanos = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos();
+            // Convert nanos to a value between 0.9 and 1.1
+            0.9 + ((nanos % 200) as f64 / 1000.0)
+        };
+
+        let final_delay = (capped_delay * jitter) as u64;
+
+        Duration::from_millis(final_delay)
+    }
+}
 
 /// Database connection pool and operations
 #[derive(Debug, Clone)]
@@ -16,19 +84,97 @@ pub struct Db {
 }
 
 impl Db {
-    /// Create a new database connection with migrations
+    /// Create a new database connection with migrations and default retry configuration
     #[instrument(skip(db_path))]
     pub async fn new(db_path: &str) -> Result<Self> {
-        info!("Initializing database at: {}", db_path);
+        Self::new_with_retry(db_path, DatabaseRetryConfig::default()).await
+    }
 
-        // Create database if it doesn't exist
+    /// Create a new database connection with migrations and custom retry configuration
+    #[instrument(skip(db_path, retry_config))]
+    pub async fn new_with_retry(
+        db_path: &str,
+        retry_config: DatabaseRetryConfig,
+    ) -> Result<Self> {
+        info!(
+            "Initializing database at: {} (max_attempts: {}, initial_delay: {}ms)",
+            db_path, retry_config.max_attempts, retry_config.initial_delay_ms
+        );
+
         let database_url = format!("sqlite://{}", db_path);
-        if !Sqlite::database_exists(&database_url)
+        let mut last_error = None;
+
+        // Retry loop for database initialization
+        for attempt in 0..retry_config.max_attempts {
+            if attempt > 0 {
+                let delay = retry_config.calculate_delay(attempt - 1);
+                warn!(
+                    attempt = attempt + 1,
+                    max_attempts = retry_config.max_attempts,
+                    delay_ms = delay.as_millis(),
+                    "Database connection failed, retrying after delay..."
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            match Self::try_initialize(db_path, &database_url).await {
+                Ok(db) => {
+                    // Run migrations with retry
+                    match Self::try_migrate_with_retry(&db, &retry_config).await {
+                        Ok(_) => {
+                            info!(
+                                attempts = attempt + 1,
+                                "Database initialized and migrated successfully"
+                            );
+                            return Ok(db);
+                        }
+                        Err(e) => {
+                            warn!(
+                                attempt = attempt + 1,
+                                error = %e,
+                                "Database migration failed"
+                            );
+                            last_error = Some(e);
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        attempt = attempt + 1,
+                        error = %e,
+                        "Database initialization failed"
+                    );
+                    last_error = Some(e);
+                    continue;
+                }
+            }
+        }
+
+        // All retries exhausted
+        let error_msg = match last_error {
+            Some(e) => format!(
+                "Failed to initialize database after {} attempts: {}",
+                retry_config.max_attempts, e
+            ),
+            None => format!(
+                "Failed to initialize database after {} attempts",
+                retry_config.max_attempts
+            ),
+        };
+
+        Err(Error::Database(error_msg))
+    }
+
+    /// Try to initialize the database connection (single attempt)
+    async fn try_initialize(db_path: &str, database_url: &str) -> Result<Self> {
+        // Create database if it doesn't exist
+        if !Sqlite::database_exists(database_url)
             .await
             .unwrap_or(false)
         {
-            info!("Creating database: {}", database_url);
-            Sqlite::create_database(&database_url)
+            debug!("Creating database: {}", database_url);
+            Sqlite::create_database(database_url)
                 .await
                 .map_err(|e| Error::Database(format!("Failed to create database: {}", e)))?;
         }
@@ -53,13 +199,58 @@ impl Db {
             .await
             .map_err(|e| Error::Database(format!("Failed to create connection pool: {}", e)))?;
 
-        let db = Self { pool };
+        Ok(Self { pool })
+    }
 
-        // Run migrations
-        db.migrate().await?;
+    /// Try to run migrations with retry logic
+    async fn try_migrate_with_retry(
+        db: &Db,
+        retry_config: &DatabaseRetryConfig,
+    ) -> Result<()> {
+        let mut last_error = None;
 
-        info!("Database initialized successfully");
-        Ok(db)
+        for attempt in 0..retry_config.max_attempts {
+            if attempt > 0 {
+                let delay = retry_config.calculate_delay(attempt - 1);
+                warn!(
+                    attempt = attempt + 1,
+                    max_attempts = retry_config.max_attempts,
+                    delay_ms = delay.as_millis(),
+                    "Migration failed, retrying after delay..."
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            match db.migrate().await {
+                Ok(_) => {
+                    info!(attempts = attempt + 1, "Database migrations completed successfully");
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        attempt = attempt + 1,
+                        error = %e,
+                        "Migration attempt failed"
+                    );
+                    last_error = Some(e);
+                    continue;
+                }
+            }
+        }
+
+        // All retries exhausted
+        let error_msg = match last_error {
+            Some(e) => format!(
+                "Failed to run migrations after {} attempts: {}",
+                retry_config.max_attempts, e
+            ),
+            None => format!(
+                "Failed to run migrations after {} attempts",
+                retry_config.max_attempts
+            ),
+        };
+
+        Err(Error::Database(error_msg))
     }
 
     /// Run database migrations

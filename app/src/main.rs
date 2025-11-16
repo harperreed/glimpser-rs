@@ -44,8 +44,15 @@ async fn main() {
         }
     };
 
-    // Initialize database with migrations
-    let db = match Db::new(&config.database.path).await {
+    // Initialize database with migrations and retry logic
+    let retry_config = gl_db::DatabaseRetryConfig::new(
+        config.database.retry.max_attempts,
+        config.database.retry.initial_delay_ms,
+        config.database.retry.max_delay_ms,
+        config.database.retry.backoff_multiplier,
+    );
+
+    let db = match Db::new_with_retry(&config.database.path, retry_config).await {
         Ok(db) => {
             tracing::info!("Database initialized successfully");
             db
