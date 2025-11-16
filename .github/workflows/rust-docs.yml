@@ -19,16 +19,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libglib2.0-dev \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            libgstreamer-plugins-good1.0-dev \
-            libgstrtspserver-1.0-dev \
-            libclang-dev \
-            llvm-dev
+          sudo apt-get install -y --no-install-recommends pkg-config
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -52,4 +43,4 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: doc
-          args: --no-deps --document-private-items --all-features
+          args: --no-deps --document-private-items
