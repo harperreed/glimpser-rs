@@ -34,10 +34,12 @@ pub trait CaptureService: Send + Sync {
 pub mod jobs;
 pub mod storage;
 pub mod types;
+pub mod distributed_lock;
 
 pub use jobs::*;
 pub use storage::*;
 pub use types::*;
+pub use distributed_lock::*;
 
 /// Job scheduler configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +54,10 @@ pub struct SchedulerConfig {
     pub history_retention_days: u32,
     /// Enable job metrics collection
     pub enable_metrics: bool,
+    /// Enable distributed locking (prevents duplicate execution across instances)
+    pub enable_distributed_locking: bool,
+    /// Distributed lock lease duration in seconds
+    pub lock_lease_seconds: i64,
 }
 
 impl Default for SchedulerConfig {
@@ -62,6 +68,8 @@ impl Default for SchedulerConfig {
             enable_persistence: true,
             history_retention_days: 30,
             enable_metrics: true,
+            enable_distributed_locking: true, // Enable by default for safety
+            lock_lease_seconds: 360, // 6 minutes (job timeout + buffer)
         }
     }
 }
@@ -209,6 +217,7 @@ pub struct JobScheduler {
     metrics: JobMetrics,
     db: Db,
     capture_service: Arc<dyn CaptureService>,
+    lock_manager: Option<Arc<DistributedLockManager>>,
 }
 
 impl JobScheduler {
@@ -223,6 +232,24 @@ impl JobScheduler {
             gl_core::Error::Config(format!("Failed to create cron scheduler: {}", e))
         })?;
 
+        // Initialize distributed lock manager if enabled
+        let lock_manager = if config.enable_distributed_locking {
+            let lock_config = LockConfig {
+                default_lease_seconds: config.lock_lease_seconds,
+                enable_cleanup: true,
+                cleanup_interval_seconds: 60,
+            };
+            let manager = DistributedLockManager::new(db.pool().clone(), lock_config);
+            info!(
+                "Distributed locking enabled for instance: {}",
+                manager.instance_id()
+            );
+            Some(Arc::new(manager))
+        } else {
+            warn!("Distributed locking is DISABLED - not safe for multi-instance deployments!");
+            None
+        };
+
         info!("Job scheduler initialized with config: {:?}", config);
 
         Ok(Self {
@@ -234,6 +261,7 @@ impl JobScheduler {
             metrics: JobMetrics::new(),
             db,
             capture_service,
+            lock_manager,
         })
     }
 
@@ -245,6 +273,41 @@ impl JobScheduler {
             .start()
             .await
             .map_err(|e| gl_core::Error::Config(format!("Failed to start scheduler: {}", e)))?;
+
+        // Start lock cleanup task if distributed locking is enabled
+        if let Some(ref lock_manager) = self.lock_manager {
+            let lock_manager_clone = lock_manager.clone();
+            let retention_days = self.config.history_retention_days;
+
+            tokio::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(tokio::time::Duration::from_secs(60)); // Run every minute
+
+                loop {
+                    interval.tick().await;
+
+                    // Expire stale locks (locks that have passed their lease)
+                    if let Err(e) = lock_manager_clone.expire_stale_locks().await {
+                        warn!("Failed to expire stale locks: {}", e);
+                    }
+
+                    // Cleanup old locks (every hour)
+                    static mut CLEANUP_COUNTER: u32 = 0;
+                    unsafe {
+                        CLEANUP_COUNTER += 1;
+                        if CLEANUP_COUNTER >= 60 {
+                            if let Err(e) = lock_manager_clone.cleanup_old_locks(retention_days).await
+                            {
+                                warn!("Failed to cleanup old locks: {}", e);
+                            }
+                            CLEANUP_COUNTER = 0;
+                        }
+                    }
+                }
+            });
+
+            info!("Lock cleanup task started");
+        }
 
         // Load and schedule persisted jobs
         if self.config.enable_persistence {
@@ -325,6 +388,34 @@ impl JobScheduler {
         let execution_id_for_task = execution_id.clone();
         let job_id = job_def.id.clone();
 
+        // Try to acquire distributed lock if enabled
+        let lock = if let Some(ref lock_manager) = self.lock_manager {
+            match lock_manager
+                .try_acquire_lock(&job_id, &execution_id, Some(self.config.lock_lease_seconds))
+                .await?
+            {
+                Some(lock) => {
+                    info!(
+                        "Acquired lock for job {} (execution {})",
+                        job_id, execution_id
+                    );
+                    Some(lock)
+                }
+                None => {
+                    info!(
+                        "Job {} is already locked by another instance, skipping execution",
+                        job_id
+                    );
+                    return Err(gl_core::Error::External(format!(
+                        "Job {} is currently being executed by another instance",
+                        job_id
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
         // Check if we have a handler for this job type
         let handlers = self.job_handlers.read().await;
         let handler = handlers.get(&job_def.job_type).cloned();
@@ -350,6 +441,7 @@ impl JobScheduler {
         let config = self.config.clone();
         let metrics = self.metrics.clone();
         let running_jobs = self.running_jobs.clone();
+        let lock_manager = self.lock_manager.clone();
 
         let handle = tokio::spawn(async move {
             let mut result = JobResult::new();
@@ -357,7 +449,7 @@ impl JobScheduler {
 
             if config.enable_persistence {
                 let _ = job_storage
-                    .save_job_result(&execution_id_for_task, &result)
+                    .save_job_result(&job_id, &execution_id_for_task, &result)
                     .await;
             }
 
@@ -393,8 +485,19 @@ impl JobScheduler {
 
             if config.enable_persistence {
                 let _ = job_storage
-                    .save_job_result(&execution_id_for_task, &result)
+                    .save_job_result(&job_id, &execution_id_for_task, &result)
                     .await;
+            }
+
+            // Release the distributed lock if we acquired it
+            if let Some(ref lock) = lock {
+                if let Some(ref manager) = lock_manager {
+                    if let Err(e) = manager.release_lock(&lock.id).await {
+                        warn!("Failed to release lock for job {}: {}", lock.job_id, e);
+                    } else {
+                        info!("Released lock for job {}", lock.job_id);
+                    }
+                }
             }
 
             // Remove from running jobs
@@ -420,6 +523,22 @@ impl JobScheduler {
         self.metrics.clone()
     }
 
+    /// Get distributed lock statistics
+    pub async fn get_lock_stats(&self) -> Result<Option<LockStats>> {
+        if let Some(ref lock_manager) = self.lock_manager {
+            Ok(Some(lock_manager.get_lock_stats().await?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get the instance ID (useful for debugging multi-instance deployments)
+    pub fn get_instance_id(&self) -> Option<String> {
+        self.lock_manager
+            .as_ref()
+            .map(|lm| lm.instance_id().to_string())
+    }
+
     /// Get job execution history
     pub async fn get_job_history(
         &self,
@@ -441,7 +560,7 @@ impl JobScheduler {
                 result.status = JobStatus::Cancelled;
                 result.completed_at = Some(Utc::now());
                 self.job_storage
-                    .save_job_result(execution_id, &result)
+                    .save_job_result("unknown", execution_id, &result)
                     .await?;
             }
 

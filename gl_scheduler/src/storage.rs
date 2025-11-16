@@ -37,7 +37,12 @@ pub trait JobStorage: Send + Sync {
     async fn delete_job(&self, job_id: &str) -> Result<()>;
 
     /// Save job execution result
-    async fn save_job_result(&self, execution_id: &str, result: &JobResult) -> Result<()>;
+    async fn save_job_result(
+        &self,
+        job_id: &str,
+        execution_id: &str,
+        result: &JobResult,
+    ) -> Result<()>;
 
     /// Get job execution results for a specific job
     async fn get_job_results(&self, job_id: &str, limit: Option<u32>) -> Result<Vec<JobResult>>;
@@ -318,7 +323,12 @@ impl JobStorage for SqliteJobStorage {
         Ok(())
     }
 
-    async fn save_job_result(&self, execution_id: &str, result: &JobResult) -> Result<()> {
+    async fn save_job_result(
+        &self,
+        job_id: &str,
+        execution_id: &str,
+        result: &JobResult,
+    ) -> Result<()> {
         debug!("Saving job result for execution: {}", execution_id);
 
         let result_json = result
@@ -330,17 +340,16 @@ impl JobStorage for SqliteJobStorage {
                 gl_core::Error::Validation(format!("Failed to serialize result: {}", e))
             })?;
 
-        // For now, we'll create a simplified execution record
-        // In a real implementation, we'd need to track the job_id properly
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO job_executions (
                 id, job_id, status, started_at, completed_at,
                 duration_ms, result, error, retry_count
-            ) VALUES (?, 'unknown', ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(execution_id)
+        .bind(job_id)
         .bind(result.status.as_str())
         .bind(result.started_at.to_rfc3339())
         .bind(result.completed_at.map(|t| t.to_rfc3339()))
