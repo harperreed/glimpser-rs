@@ -57,22 +57,20 @@ impl SnapshotResourceLimiter {
     /// Returns a permit guard that will automatically release the permit when dropped
     #[instrument(skip(self))]
     pub async fn acquire(&self) -> Result<SnapshotPermit> {
-        // Record waiting metrics
-        let available = self.semaphore.available_permits();
-        let waiting = self.config.max_concurrent_operations.saturating_sub(available);
+        // Check if we'll need to wait before acquiring
+        let available_before = self.semaphore.available_permits();
+        let will_block = available_before == 0;
 
-        gauge!("snapshot_limiter_waiting_operations").set(waiting as f64);
-        gauge!("snapshot_limiter_available_permits").set(available as f64);
+        gauge!("snapshot_limiter_available_permits").set(available_before as f64);
 
-        if waiting > 0 {
+        if will_block {
             debug!(
-                waiting = waiting,
-                available = available,
+                available = available_before,
                 max = self.config.max_concurrent_operations,
-                "Waiting for snapshot operation permit"
+                "No permits available, will block until one is released"
             );
 
-            // Increment blocking pool saturation metric when waiting
+            // Increment blocking pool saturation metric when we have to wait
             counter!("snapshot_limiter_wait_events_total").increment(1);
         }
 

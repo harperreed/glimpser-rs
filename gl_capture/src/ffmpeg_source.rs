@@ -129,7 +129,15 @@ impl FfmpegSource {
     }
 
     /// Update the configuration
+    /// Note: This will create a new resource limiter if the limiter_config has changed.
+    /// In-flight operations will continue using the old limiter.
     pub fn set_config(&mut self, config: FfmpegConfig) {
+        // Recreate the limiter if the config changed
+        if config.limiter_config.max_concurrent_operations
+            != self.config.limiter_config.max_concurrent_operations
+        {
+            self.limiter = SnapshotResourceLimiter::new(config.limiter_config.clone());
+        }
         self.config = config;
     }
 
@@ -141,6 +149,11 @@ impl FfmpegSource {
     /// Get restart count for metrics
     pub fn restart_count(&self) -> u64 {
         self.restart_count.load(Ordering::SeqCst)
+    }
+
+    /// Get the resource limiter for monitoring
+    pub fn limiter(&self) -> &SnapshotResourceLimiter {
+        &self.limiter
     }
 
     /// Build FFmpeg command for snapshot extraction
