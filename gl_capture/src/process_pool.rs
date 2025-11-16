@@ -725,7 +725,9 @@ impl Drop for FfmpegProcessPool {
                     ));
 
                     if timeout_result.is_err() {
-                        warn!("Process pool cleanup timed out during drop - some processes may leak");
+                        warn!(
+                            "Process pool cleanup timed out during drop - some processes may leak"
+                        );
                     }
                 } else {
                     // Multi-threaded runtime - spawn a dedicated thread to avoid blocking workers

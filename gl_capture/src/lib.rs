@@ -5,11 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use gl_core::{Error, Result};
 use gl_proc::{run, CommandSpec};
-use std::{
-    path::Path,
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -114,15 +110,11 @@ impl Drop for CaptureHandle {
                     }
                 };
 
-                if runtime_handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread
-                {
+                if runtime_handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
                     // Current thread runtime - safe to block_on directly
                     // Give cleanup 5 seconds to complete
-                    let timeout_result =
-                        runtime_handle.block_on(tokio::time::timeout(
-                            Duration::from_secs(5),
-                            cleanup_future,
-                        ));
+                    let timeout_result = runtime_handle
+                        .block_on(tokio::time::timeout(Duration::from_secs(5), cleanup_future));
 
                     if timeout_result.is_err() {
                         error!("Capture cleanup timed out during drop - process may be leaked");
@@ -130,10 +122,8 @@ impl Drop for CaptureHandle {
                 } else {
                     // Multi-threaded runtime - spawn a dedicated thread to avoid blocking workers
                     match std::thread::spawn(move || {
-                        let timeout_result = runtime_handle.block_on(tokio::time::timeout(
-                            Duration::from_secs(5),
-                            cleanup_future,
-                        ));
+                        let timeout_result = runtime_handle
+                            .block_on(tokio::time::timeout(Duration::from_secs(5), cleanup_future));
 
                         if timeout_result.is_err() {
                             error!("Capture cleanup timed out during drop - process may be leaked");
@@ -286,10 +276,7 @@ pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
 
                         // Only kill if it matches our pattern AND is orphaned
                         if has_pipe_output && has_mjpeg && is_orphaned {
-                            debug!(
-                                pid,
-                                "Killing orphaned FFmpeg process (matches our pattern)"
-                            );
+                            debug!(pid, "Killing orphaned FFmpeg process (matches our pattern)");
 
                             // Try to kill the orphaned process using signals
                             #[cfg(unix)]
@@ -309,10 +296,7 @@ pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
                                     tokio::time::sleep(Duration::from_millis(100)).await;
 
                                     // Check if still running, use SIGKILL if needed
-                                    if tokio::fs::metadata(format!("/proc/{}", pid))
-                                        .await
-                                        .is_ok()
-                                    {
+                                    if tokio::fs::metadata(format!("/proc/{}", pid)).await.is_ok() {
                                         warn!(
                                             pid,
                                             "Process didn't respond to SIGTERM, using SIGKILL"
@@ -350,8 +334,7 @@ pub async fn cleanup_orphaned_ffmpeg_processes() -> Result<()> {
             if killed_count > 0 {
                 info!(
                     killed_count,
-                    checked_count,
-                    "Cleaned up orphaned FFmpeg processes"
+                    checked_count, "Cleaned up orphaned FFmpeg processes"
                 );
             } else {
                 debug!(checked_count, "No orphaned FFmpeg processes found");
