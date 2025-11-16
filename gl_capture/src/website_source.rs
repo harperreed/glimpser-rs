@@ -612,13 +612,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires Chrome installation"]
     async fn test_website_source_lifecycle() {
-        #[cfg(feature = "website_embedded")]
-        {
-            if headless_chrome::browser::default_executable().is_err() {
-                panic!("Chrome executable not found");
-            }
-        }
         let config = WebsiteConfig {
             url: "https://example.com".to_string(),
             ..Default::default()
@@ -657,6 +652,7 @@ mod tests {
 
     #[cfg(feature = "website_embedded")]
     #[tokio::test]
+    #[ignore = "Requires Chrome installation"]
     async fn test_headless_element_screenshot_size() {
         use image::ImageFormat;
 
@@ -682,6 +678,7 @@ mod tests {
 
     #[cfg(feature = "website_embedded")]
     #[tokio::test]
+    #[ignore = "Requires Chrome installation"]
     async fn test_headless_zero_size_element_error() {
         use std::io::Write;
 
