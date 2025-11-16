@@ -334,22 +334,20 @@ impl BackgroundSnapshotProcessor {
                 }
             }
 
-            // Process in a blocking task to avoid blocking the async executor
+            // Process the snapshot asynchronously
+            // Note: generate_snapshot_with_ffmpeg will handle spawn_blocking internally
             let jobs_clone = jobs.clone();
             let processing_job = request.job.clone();
             let result_sender = request.result_sender;
             let limiter_clone = limiter.clone();
 
-            tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Handle::current();
-                let result = runtime.block_on(async {
-                    generate_snapshot_with_ffmpeg(
-                        &processing_job.input_path,
-                        &processing_job.config,
-                        Some(&limiter_clone),
-                    )
-                    .await
-                });
+            tokio::spawn(async move {
+                let result = generate_snapshot_with_ffmpeg(
+                    &processing_job.input_path,
+                    &processing_job.config,
+                    Some(&limiter_clone),
+                )
+                .await;
 
                 // Update job status based on result
                 {

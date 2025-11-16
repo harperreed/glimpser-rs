@@ -193,14 +193,16 @@ pub async fn generate_snapshot_with_ffmpeg(
     debug!(command = ?spec, "Running ffmpeg command");
 
     // Acquire permit if limiter is provided
-    let _permit = if let Some(limiter) = limiter {
+    let permit = if let Some(limiter) = limiter {
         Some(limiter.acquire().await?)
     } else {
         None
     };
 
     // Run FFmpeg in a blocking thread to avoid blocking the async executor
+    // The permit must be moved into the closure to ensure it's held for the entire operation
     let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit; // Hold permit until this closure completes
         let runtime = tokio::runtime::Handle::current();
         runtime.block_on(run(spec))
     })

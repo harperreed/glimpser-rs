@@ -379,10 +379,12 @@ impl CaptureSource for FfmpegSource {
         debug!(command = ?command, "Running FFmpeg snapshot command");
 
         // Acquire permit from resource limiter to prevent thread pool exhaustion
-        let _permit = self.limiter.acquire().await?;
+        let permit = self.limiter.acquire().await?;
 
         // Run FFmpeg in a blocking thread to avoid blocking the async executor
+        // The permit must be moved into the closure to ensure it's held for the entire operation
         let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit; // Hold permit until this closure completes
             let runtime = tokio::runtime::Handle::current();
             runtime.block_on(run(command))
         })
