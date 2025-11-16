@@ -641,11 +641,11 @@ impl CaptureManager {
         // Setup snapshot timer
         let mut snapshot_timer = interval(Duration::from_secs(snapshot_interval));
 
-        // Get duration from config (default: 1 hour, 0 = infinite)
+        // Get duration from config (default: 0 = infinite)
         let duration = config
             .get("duration")
             .and_then(|v| v.as_u64())
-            .unwrap_or(3600); // Default 1 hour
+            .unwrap_or(0); // Default: infinite (0 = no timeout)
 
         // Setup end time for finite duration captures
         let end_time = if duration > 0 {
