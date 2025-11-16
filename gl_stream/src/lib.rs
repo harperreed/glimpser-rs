@@ -256,20 +256,37 @@ impl StreamSession {
 
     /// Remove a subscriber
     pub fn unsubscribe(&self) {
-        let prev_count = self.subscribers.fetch_sub(1, Ordering::Release);
-        let subscriber_count = prev_count.saturating_sub(1);
-        self.metrics.subscribers.set(subscriber_count as i64);
+        // Use fetch_update to prevent underflow
+        let subscriber_count = self
+            .subscribers
+            .fetch_update(Ordering::Release, Ordering::Acquire, |current| {
+                // Only decrement if count is greater than 0
+                if current > 0 {
+                    Some(current - 1)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0); // If already 0, return 0
+
+        // Update metrics with the new count
+        let new_count = if subscriber_count > 0 {
+            subscriber_count - 1
+        } else {
+            0
+        };
+        self.metrics.subscribers.set(new_count as i64);
 
         info!(
             session_id = %self.id,
-            subscriber_count,
+            subscriber_count = new_count,
             "Subscriber left"
         );
     }
 
     /// Get current subscriber count
     pub fn subscriber_count(&self) -> u64 {
-        self.subscribers.load(Ordering::Relaxed)
+        self.subscribers.load(Ordering::Acquire)
     }
 }
 
@@ -499,6 +516,43 @@ mod tests {
 
                 // Note: We can't easily verify the metric value in tests without
                 // exposing it, but we ensure the code path is exercised
+            }
+            Err(_) => {
+                // Expected when ffmpeg isn't available
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unsubscribe_underflow_protection() {
+        let _test_id = create_test_id();
+        let (_temp_dir, video_path) = create_test_video_file().await;
+
+        let template_id = Id::new();
+        let source = FileSource::new(video_path);
+        let config = StreamConfig::default();
+        let metrics = StreamMetrics::new();
+
+        match source.start().await {
+            Ok(capture) => {
+                let session = Arc::new(StreamSession::new(template_id, capture, config, metrics));
+
+                // Initially count is 0
+                assert_eq!(session.subscriber_count(), 0);
+
+                // Calling unsubscribe when count is 0 should not underflow
+                session.unsubscribe();
+                assert_eq!(session.subscriber_count(), 0, "Count should remain 0, not underflow");
+
+                // Subscribe and verify count increases
+                let _receiver = session.subscribe().expect("Should succeed");
+                assert_eq!(session.subscriber_count(), 1);
+
+                // Unsubscribe twice (second should be protected)
+                session.unsubscribe();
+                assert_eq!(session.subscriber_count(), 0);
+                session.unsubscribe();
+                assert_eq!(session.subscriber_count(), 0, "Count should remain 0 after extra unsubscribe");
             }
             Err(_) => {
                 // Expected when ffmpeg isn't available
