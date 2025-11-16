@@ -75,12 +75,10 @@ impl SnapshotResourceLimiter {
         }
 
         // Acquire permit (will wait if none available)
-        let permit = self
-            .semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| gl_core::Error::Config(format!("Failed to acquire semaphore: {}", e)))?;
+        let permit =
+            self.semaphore.clone().acquire_owned().await.map_err(|e| {
+                gl_core::Error::Config(format!("Failed to acquire semaphore: {}", e))
+            })?;
 
         // Update active operations counter
         let active = self.active_operations.fetch_add(1, Ordering::SeqCst) + 1;
@@ -141,10 +139,7 @@ impl Drop for SnapshotPermit {
         let active = self.active_operations.fetch_sub(1, Ordering::SeqCst) - 1;
         gauge!("snapshot_limiter_active_operations").set(active as f64);
 
-        debug!(
-            active = active,
-            "Released snapshot operation permit"
-        );
+        debug!(active = active, "Released snapshot operation permit");
     }
 }
 
