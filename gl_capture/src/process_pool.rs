@@ -701,16 +701,38 @@ impl Drop for FfmpegProcessPool {
 
         // Try to get a runtime handle for async cleanup
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            // We have a runtime - use it to kill processes
+            // We have a runtime - use it to kill processes with timeout
             let processes = self.processes.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                handle.block_on(async move {
-                    let mut procs = processes.write().await;
-                    for process in procs.iter_mut() {
-                        let _ = process.kill().await;
+                // Use a separate thread to avoid blocking the runtime
+                let cleanup_future = async move {
+                    // Timeout for the entire cleanup operation
+                    let cleanup = async {
+                        let mut procs = processes.write().await;
+                        for process in procs.iter_mut() {
+                            let _ = process.kill().await;
+                        }
+                        procs.clear();
+                    };
+
+                    // Give cleanup 10 seconds (longer than CaptureHandle due to multiple processes)
+                    if tokio::time::timeout(Duration::from_secs(10), cleanup)
+                        .await
+                        .is_err()
+                    {
+                        warn!("Process pool cleanup timed out during drop - some processes may leak");
                     }
-                    procs.clear();
-                })
+                };
+
+                // Spawn in a separate thread to avoid potential runtime issues
+                if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+                    handle.block_on(cleanup_future);
+                } else {
+                    let _ = std::thread::spawn(move || {
+                        handle.block_on(cleanup_future);
+                    })
+                    .join();
+                }
             }));
 
             if let Err(e) = result {
@@ -726,6 +748,7 @@ impl Drop for FfmpegProcessPool {
             if let Ok(mut procs) = self.processes.try_write() {
                 for process in procs.iter_mut() {
                     // Synchronous kill using the child process directly
+                    // Note: child.kill_on_drop is true, so dropping will also kill
                     match process.child.try_wait() {
                         Ok(Some(_)) => {
                             // Process already exited
@@ -743,7 +766,9 @@ impl Drop for FfmpegProcessPool {
                 }
                 procs.clear();
             } else {
-                warn!("Could not acquire lock on processes during drop - some processes may leak");
+                warn!("Could not acquire lock on processes during drop - relying on kill_on_drop");
+                // Note: Even if we can't get the lock, Child processes have kill_on_drop(true)
+                // so they should be killed when the Child structs are dropped
             }
         }
     }
