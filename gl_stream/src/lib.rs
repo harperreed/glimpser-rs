@@ -193,11 +193,7 @@ impl StreamSession {
                     // Broadcast frame to all subscribers
                     match self.frame_sender.send(frame) {
                         Ok(subscriber_count) => {
-                            debug!(
-                                subscriber_count,
-                                sequence,
-                                "Frame broadcast to subscribers"
-                            );
+                            debug!(subscriber_count, sequence, "Frame broadcast to subscribers");
                         }
                         Err(_) => {
                             warn!(sequence, "No active subscribers for frame");
