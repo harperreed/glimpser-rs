@@ -20,6 +20,8 @@ pub struct StreamMetrics {
     pub disconnections_total: Counter,
     /// Total number of dropped frames (backpressure)
     pub frames_dropped: Counter,
+    /// Total number of sequence gaps detected across all subscribers
+    pub sequence_gaps_total: Counter,
 }
 
 impl StreamMetrics {
