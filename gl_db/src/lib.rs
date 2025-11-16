@@ -5,9 +5,11 @@ use gl_core::{Error, Result};
 use sqlx::{
     migrate::MigrateDatabase,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
-    Row, Sqlite, SqlitePool,
+    Row, Sqlite, SqlitePool, Transaction,
 };
-use tracing::{debug, info, instrument};
+use std::future::Future;
+use std::time::Duration;
+use tracing::{debug, info, instrument, warn};
 
 /// Database connection pool and operations
 #[derive(Debug, Clone)]
@@ -126,6 +128,80 @@ impl Db {
 
         debug!("Database statistics gathered successfully");
         Ok(DatabaseStats { table_counts })
+    }
+
+    /// Execute a function within a database transaction with timeout
+    ///
+    /// This method provides automatic transaction management with:
+    /// - Automatic rollback on error
+    /// - Timeout protection to prevent long-running transactions
+    /// - Proper error handling and logging
+    ///
+    /// # Example
+    /// ```ignore
+    /// db.with_transaction(|tx| async move {
+    ///     sqlx::query("UPDATE users SET name = ?").bind("new_name").execute(&mut **tx).await?;
+    ///     sqlx::query("INSERT INTO audit_log ...").execute(&mut **tx).await?;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    #[instrument(skip(self, f))]
+    pub async fn with_transaction<F, T, Fut>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Transaction<'_, sqlx::Sqlite>) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        self.with_transaction_timeout(f, Duration::from_secs(30)).await
+    }
+
+    /// Execute a function within a database transaction with custom timeout
+    ///
+    /// Same as `with_transaction` but allows specifying a custom timeout duration.
+    #[instrument(skip(self, f))]
+    pub async fn with_transaction_timeout<F, T, Fut>(
+        &self,
+        f: F,
+        timeout: Duration,
+    ) -> Result<T>
+    where
+        F: FnOnce(&mut Transaction<'_, sqlx::Sqlite>) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        debug!("Starting transaction with timeout: {:?}", timeout);
+
+        // Begin transaction
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
+
+        // Execute the function with timeout
+        let result = tokio::time::timeout(timeout, f(&mut tx))
+            .await
+            .map_err(|_| {
+                warn!("Transaction timeout exceeded: {:?}", timeout);
+                Error::Database(format!(
+                    "Transaction timeout exceeded after {:?}",
+                    timeout
+                ))
+            })?;
+
+        match result {
+            Ok(value) => {
+                // Commit the transaction on success
+                tx.commit()
+                    .await
+                    .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
+                debug!("Transaction committed successfully");
+                Ok(value)
+            }
+            Err(e) => {
+                // Rollback happens automatically when tx is dropped
+                warn!("Transaction failed, rolling back: {}", e);
+                Err(e)
+            }
+        }
     }
 }
 
@@ -371,5 +447,187 @@ mod tests {
                 table
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_transaction_rollback_on_constraint_violation() {
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+        let repo = UserRepository::new(db.pool());
+
+        // Create a user
+        let create_request = CreateUserRequest {
+            username: "uniqueuser".to_string(),
+            email: "unique@example.com".to_string(),
+            password_hash: "hashed_password".to_string(),
+        };
+
+        repo.create(create_request)
+            .await
+            .expect("Failed to create user");
+
+        // Try to create another user with the same username (should violate UNIQUE constraint)
+        let duplicate_request = CreateUserRequest {
+            username: "uniqueuser".to_string(),
+            email: "different@example.com".to_string(),
+            password_hash: "hashed_password".to_string(),
+        };
+
+        let result = repo.create(duplicate_request).await;
+        assert!(result.is_err(), "Duplicate username should fail");
+
+        // Verify only one user exists
+        let users = repo.list_active().await.expect("Failed to list users");
+        assert_eq!(
+            users.len(),
+            1,
+            "Should only have one user after failed insert"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_user_update_transaction_atomicity() {
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+        let repo = UserRepository::new(db.pool());
+
+        // Create a user
+        let create_request = CreateUserRequest {
+            username: "atomicuser".to_string(),
+            email: "atomic@example.com".to_string(),
+            password_hash: "hashed_password".to_string(),
+        };
+
+        let user = repo
+            .create(create_request)
+            .await
+            .expect("Failed to create user");
+
+        // Update the user
+        let update_request = UpdateUserRequest {
+            username: Some("updateduser".to_string()),
+            email: Some("updated@example.com".to_string()),
+            password_hash: None,
+            is_active: None,
+        };
+
+        let updated_user = repo
+            .update(&user.id, update_request)
+            .await
+            .expect("Failed to update user");
+
+        assert_eq!(updated_user.username, "updateduser");
+        assert_eq!(updated_user.email, "updated@example.com");
+
+        // Verify the user was actually updated in the database
+        let found_user = repo
+            .find_by_id(&user.id)
+            .await
+            .expect("Failed to find user")
+            .expect("User should exist");
+
+        assert_eq!(found_user.username, "updateduser");
+        assert_eq!(found_user.email, "updated@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_stream_update_transaction_atomicity() {
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+        let user_repo = UserRepository::new(db.pool());
+        let stream_repo = StreamRepository::new(db.pool());
+
+        // Create a user first
+        let user = user_repo
+            .create(CreateUserRequest {
+                username: "streamuser".to_string(),
+                email: "stream@example.com".to_string(),
+                password_hash: "hashed_password".to_string(),
+            })
+            .await
+            .expect("Failed to create user");
+
+        // Create a stream
+        let create_request = CreateStreamRequest {
+            user_id: user.id.clone(),
+            name: "Test Stream".to_string(),
+            description: Some("Original description".to_string()),
+            config: "{}".to_string(),
+            is_default: false,
+        };
+
+        let stream = stream_repo
+            .create(create_request)
+            .await
+            .expect("Failed to create stream");
+
+        // Update the stream
+        let update_request = UpdateStreamRequest {
+            name: Some("Updated Stream".to_string()),
+            description: Some("Updated description".to_string()),
+            config: None,
+            is_default: None,
+        };
+
+        let updated_stream = stream_repo
+            .update(&stream.id, update_request)
+            .await
+            .expect("Failed to update stream")
+            .expect("Stream should exist");
+
+        assert_eq!(updated_stream.name, "Updated Stream");
+        assert_eq!(
+            updated_stream.description,
+            Some("Updated description".to_string())
+        );
+
+        // Verify the stream was actually updated in the database
+        let found_stream = stream_repo
+            .find_by_id(&stream.id)
+            .await
+            .expect("Failed to find stream")
+            .expect("Stream should exist");
+
+        assert_eq!(found_stream.name, "Updated Stream");
+        assert_eq!(
+            found_stream.description,
+            Some("Updated description".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_background_job_create_transaction_atomicity() {
+        let db = create_test_db()
+            .await
+            .expect("Failed to create test database");
+
+        // Create a background job
+        let request = CreateBackgroundJobRequest {
+            input_path: "/test/path".to_string(),
+            stream_id: Some("test_stream_id".to_string()),
+            config: "{}".to_string(),
+            created_by: Some("test_user".to_string()),
+            metadata: None,
+        };
+
+        let job = BackgroundSnapshotJobsRepository::create(db.pool(), request)
+            .await
+            .expect("Failed to create background job");
+
+        assert!(!job.id.is_empty());
+        assert_eq!(job.input_path, "/test/path");
+        assert_eq!(job.status, "pending");
+
+        // Verify the job exists in the database
+        let found_job = BackgroundSnapshotJobsRepository::get_by_id(db.pool(), &job.id)
+            .await
+            .expect("Failed to get job")
+            .expect("Job should exist");
+
+        assert_eq!(found_job.id, job.id);
+        assert_eq!(found_job.input_path, "/test/path");
     }
 }

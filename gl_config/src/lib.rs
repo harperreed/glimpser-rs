@@ -112,6 +112,9 @@ pub struct DatabaseConfig {
     #[validate(range(min = 1, max = 100))]
     pub pool_size: u32,
     pub sqlite_wal: bool,
+    /// Transaction timeout in seconds
+    #[validate(range(min = 1, max = 300))]
+    pub transaction_timeout_seconds: u64,
 }
 
 impl Default for DatabaseConfig {
@@ -120,6 +123,7 @@ impl Default for DatabaseConfig {
             path: "glimpser.db".to_string(),
             pool_size: 10,
             sqlite_wal: true,
+            transaction_timeout_seconds: 30,
         }
     }
 }
@@ -353,6 +357,7 @@ impl Config {
             .set_default("database.path", "glimpser.db")?
             .set_default("database.pool_size", 10)?
             .set_default("database.sqlite_wal", true)?
+            .set_default("database.transaction_timeout_seconds", 30)?
             .set_default("security.argon2_params.memory_cost", 19456)?
             .set_default("security.argon2_params.time_cost", 2)?
             .set_default("security.argon2_params.parallelism", 1)?

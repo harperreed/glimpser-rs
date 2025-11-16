@@ -152,11 +152,23 @@ impl<'a> UserRepository<'a> {
 
         let now = now_iso8601();
 
-        // Get current user to preserve unchanged fields
-        let current_user = self
-            .find_by_id(id)
-            .await?
-            .ok_or_else(|| Error::NotFound("User not found".to_string()))?;
+        // Use transaction to ensure atomicity of read-then-write operation
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
+
+        // Get current user to preserve unchanged fields within transaction
+        let current_user = sqlx::query_as!(
+            User,
+            "SELECT id, username, email, password_hash, is_active, created_at, updated_at FROM users WHERE id = ?1",
+            id
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to find user by id: {}", e)))?
+        .ok_or_else(|| Error::NotFound("User not found".to_string()))?;
 
         // Use provided values or fall back to current values
         let username = request.username.unwrap_or(current_user.username);
@@ -166,7 +178,7 @@ impl<'a> UserRepository<'a> {
             .is_active
             .unwrap_or(current_user.is_active.unwrap_or(true));
 
-        // Single update query with all fields
+        // Single update query with all fields within transaction
         let user = sqlx::query_as!(
             User,
             r#"
@@ -182,9 +194,14 @@ impl<'a> UserRepository<'a> {
             now,
             id
         )
-        .fetch_one(self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to update user: {}", e)))?;
+
+        // Commit transaction
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
 
         debug!("Successfully updated user: {}", user.id);
         Ok(user)

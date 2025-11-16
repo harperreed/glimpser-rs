@@ -102,6 +102,12 @@ impl BackgroundSnapshotJobsRepository {
         let id = Id::new().to_string();
         let now = now_iso8601();
 
+        // Use transaction to ensure atomicity of insert-then-select operation
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
+
         let _row = sqlx::query!(
             r#"
             INSERT INTO background_snapshot_jobs (
@@ -119,11 +125,11 @@ impl BackgroundSnapshotJobsRepository {
             request.created_by,
             request.metadata
         )
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to create background snapshot job: {}", e)))?;
 
-        // Get the created job
+        // Get the created job within same transaction
         let job = sqlx::query!(
             r#"
             SELECT
@@ -145,7 +151,7 @@ impl BackgroundSnapshotJobsRepository {
             "#,
             id
         )
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
             Error::Database(format!(
@@ -169,6 +175,11 @@ impl BackgroundSnapshotJobsRepository {
             created_by: job.created_by,
             metadata: job.metadata,
         };
+
+        // Commit transaction
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(job)
     }

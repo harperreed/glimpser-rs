@@ -94,8 +94,27 @@ impl<'a> StreamRepository<'a> {
     pub async fn update(&self, id: &str, request: UpdateStreamRequest) -> Result<Option<Stream>> {
         let now = now_iso8601();
 
-        // Fetch existing first
-        let existing = match self.find_by_id(id).await? {
+        // Use transaction to ensure atomicity of read-then-write operation
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
+
+        // Fetch existing stream within transaction
+        let existing = sqlx::query_as::<_, Stream>(
+            r#"
+            SELECT id, user_id, name, description, config, is_default, created_at, updated_at,
+                   execution_status, last_executed_at, last_error_message
+            FROM streams WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to find stream: {}", e)))?;
+
+        let existing = match existing {
             Some(s) => s,
             None => return Ok(None),
         };
@@ -120,9 +139,14 @@ impl<'a> StreamRepository<'a> {
         .bind(is_default)
         .bind(&now)
         .bind(id)
-        .fetch_optional(self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to update stream: {}", e)))?;
+
+        // Commit transaction
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(stream)
     }
