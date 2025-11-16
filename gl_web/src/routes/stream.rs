@@ -75,7 +75,7 @@ pub struct JobStatusResponse {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(snapshot, snapshot_async, job_status, job_result, recent_snapshots, mjpeg_stream, start_stream, stop_stream),
+    paths(snapshot, snapshot_async, job_status, job_result, recent_snapshots, mjpeg_stream, start_stream, stop_stream, stream_health, reset_stream_health),
     components(schemas(SnapshotJobResponse, JobStatusResponse)),
     tags((name = "stream", description = "Stream snapshot, MJPEG streaming, and lifecycle operations"))
 )]
@@ -1325,4 +1325,111 @@ async fn submit_snapshot_job_impl(
         created_at: gl_core::time::now_iso8601(),
         message: Some("Snapshot job submitted successfully".to_string()),
     })
+}
+
+/// Get stream health status (circuit breaker state)
+#[utoipa::path(
+    get,
+    path = "/api/stream/{stream_id}/health",
+    params(
+        ("stream_id" = String, Path, description = "Stream ID")
+    ),
+    responses(
+        (status = 200, description = "Stream health status retrieved successfully"),
+        (status = 404, description = "Stream not found or not running"),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    security(("jwt_auth" = []), ("api_key" = []))
+)]
+#[actix_web::get("/{stream_id}/health")]
+pub async fn stream_health(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> ActixResult<HttpResponse> {
+    let stream_id_str = path.into_inner();
+
+    info!(stream_id = %stream_id_str, "Getting stream health status");
+
+    // Parse stream ID to gl_core::Id
+    let stream_id: Id = match stream_id_str.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(ErrorResponse::new("invalid_id", "Invalid stream ID format")))
+        }
+    };
+
+    // Get the session from the stream manager
+    match state.stream_manager.get_session(&stream_id) {
+        Some(session) => {
+            let health = session.health().await;
+
+            Ok(HttpResponse::Ok().json(serde_json::json!({
+                "stream_id": stream_id_str,
+                "health": health,
+                "subscriber_count": session.subscriber_count()
+            })))
+        }
+        None => {
+            warn!(stream_id = %stream_id, "No active stream session found for health check");
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new(
+                "stream_not_running",
+                "Stream is not running. Health status unavailable.",
+            )))
+        }
+    }
+}
+
+/// Reset stream health (circuit breaker)
+#[utoipa::path(
+    post,
+    path = "/api/stream/{stream_id}/health/reset",
+    params(
+        ("stream_id" = String, Path, description = "Stream ID")
+    ),
+    responses(
+        (status = 200, description = "Stream health reset successfully"),
+        (status = 404, description = "Stream not found or not running"),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    security(("jwt_auth" = []), ("api_key" = []))
+)]
+#[actix_web::post("/{stream_id}/health/reset")]
+pub async fn reset_stream_health(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> ActixResult<HttpResponse> {
+    let stream_id_str = path.into_inner();
+
+    info!(stream_id = %stream_id_str, "Resetting stream health/circuit breaker");
+
+    // Parse stream ID to gl_core::Id
+    let stream_id: Id = match stream_id_str.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(ErrorResponse::new("invalid_id", "Invalid stream ID format")))
+        }
+    };
+
+    // Get the session from the stream manager
+    match state.stream_manager.get_session(&stream_id) {
+        Some(session) => {
+            session.reset_circuit_breaker().await;
+
+            info!(stream_id = %stream_id, "Stream health reset successfully");
+
+            Ok(HttpResponse::Ok().json(serde_json::json!({
+                "message": "Stream health reset successfully",
+                "stream_id": stream_id_str
+            })))
+        }
+        None => {
+            warn!(stream_id = %stream_id, "No active stream session found for health reset");
+            Ok(HttpResponse::NotFound().json(ErrorResponse::new(
+                "stream_not_running",
+                "Stream is not running. Cannot reset health.",
+            )))
+        }
+    }
 }

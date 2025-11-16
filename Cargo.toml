@@ -92,3 +92,6 @@ hostname = "0.4"
 
 # Testing
 wiremock = "0.6"
+
+# Time formatting
+humantime = "2.1"

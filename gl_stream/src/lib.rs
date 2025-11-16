@@ -18,11 +18,13 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+mod circuit_breaker;
 mod metrics;
 mod mjpeg;
 #[cfg(feature = "rtsp")]
 mod rtsp;
 
+pub use circuit_breaker::*;
 pub use metrics::*;
 pub use mjpeg::*;
 #[cfg(feature = "rtsp")]
@@ -99,6 +101,8 @@ pub struct StreamSession {
     metrics: StreamMetrics,
     /// Current subscriber count
     subscribers: Arc<AtomicU64>,
+    /// Circuit breaker for health management
+    circuit_breaker: Arc<CircuitBreaker>,
 }
 
 impl StreamSession {
@@ -119,18 +123,22 @@ impl StreamSession {
             config,
             metrics,
             subscribers: Arc::new(AtomicU64::new(0)),
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
         }
     }
 
     /// Start the streaming session (frame generation loop)
     pub async fn start(self: Arc<Self>) {
         let mut interval = interval(Duration::from_millis(1000 / self.config.max_fps as u64));
+        let session_id = self.id;
+        let template_id = self.template_id.clone();
+        let max_fps = self.config.max_fps;
 
         info!(
-            session_id = %self.id,
-            template_id = %self.template_id,
-            max_fps = self.config.max_fps,
-            "Starting MJPEG streaming session"
+            session_id = ?session_id,
+            template_id = ?template_id,
+            max_fps = max_fps,
+            "Starting MJPEG streaming session with circuit breaker"
         );
 
         loop {
@@ -143,19 +151,40 @@ impl StreamSession {
                 continue;
             }
 
+            // Check circuit breaker before attempting capture
+            if !self.circuit_breaker.should_allow_request().await {
+                let backoff = self.circuit_breaker.get_backoff_duration().await;
+                let circuit_state = self.circuit_breaker.get_state().await;
+
+                debug!(
+                    session_id = ?session_id,
+                    circuit_state = ?circuit_state,
+                    backoff_secs = backoff.as_secs(),
+                    "Circuit breaker blocking request, applying backoff"
+                );
+
+                // Sleep for the backoff duration
+                sleep(backoff).await;
+                continue;
+            }
+
             // Generate frame
             let frame_start = Instant::now();
             match tokio::time::timeout(self.config.frame_timeout, self.capture.snapshot()).await {
                 Ok(Ok(frame)) => {
+                    // Record success with circuit breaker
+                    self.circuit_breaker.record_success().await;
                     self.metrics.frames_generated.inc();
                     let frame_duration = frame_start.elapsed();
+                    let circuit_state = self.circuit_breaker.get_state().await;
 
                     debug!(
-                        session_id = %self.id,
+                        session_id = ?session_id,
                         frame_size = frame.len(),
                         duration_ms = frame_duration.as_millis(),
                         subscribers = self.subscribers.load(Ordering::Relaxed),
-                        "Generated frame"
+                        circuit_state = ?circuit_state,
+                        "Generated frame successfully"
                     );
 
                     // Broadcast frame to all subscribers
@@ -169,22 +198,44 @@ impl StreamSession {
                     }
                 }
                 Ok(Err(e)) => {
+                    // Record failure with circuit breaker
+                    self.circuit_breaker.record_failure().await;
+                    self.metrics.frame_errors.inc();
+
+                    let circuit_state = self.circuit_breaker.get_state().await;
+                    let backoff = self.circuit_breaker.get_backoff_duration().await;
+                    let error_msg = e.to_string();
+
                     error!(
-                        error = %e,
-                        session_id = %self.id,
+                        error = ?error_msg,
+                        session_id = ?session_id,
+                        circuit_state = ?circuit_state,
+                        backoff_secs = backoff.as_secs(),
                         "Failed to capture frame"
                     );
-                    self.metrics.frame_errors.inc();
-                    // Brief delay before retrying
-                    sleep(Duration::from_millis(500)).await;
+
+                    // Apply exponential backoff
+                    sleep(backoff).await;
                 }
                 Err(_) => {
+                    // Record timeout as failure with circuit breaker
+                    self.circuit_breaker.record_failure().await;
+                    self.metrics.frame_timeouts.inc();
+
+                    let circuit_state = self.circuit_breaker.get_state().await;
+                    let backoff = self.circuit_breaker.get_backoff_duration().await;
+                    let timeout_ms = self.config.frame_timeout.as_millis();
+
                     error!(
-                        session_id = %self.id,
-                        timeout_ms = self.config.frame_timeout.as_millis(),
+                        session_id = ?session_id,
+                        timeout_ms = timeout_ms,
+                        circuit_state = ?circuit_state,
+                        backoff_secs = backoff.as_secs(),
                         "Frame capture timeout"
                     );
-                    self.metrics.frame_timeouts.inc();
+
+                    // Apply exponential backoff
+                    sleep(backoff).await;
                 }
             }
         }
@@ -222,6 +273,16 @@ impl StreamSession {
     /// Get current subscriber count
     pub fn subscriber_count(&self) -> u64 {
         self.subscribers.load(Ordering::Relaxed)
+    }
+
+    /// Get current stream health status
+    pub async fn health(&self) -> StreamHealth {
+        self.circuit_breaker.health().await
+    }
+
+    /// Reset the circuit breaker (for manual recovery)
+    pub async fn reset_circuit_breaker(&self) {
+        self.circuit_breaker.reset().await
     }
 }
 

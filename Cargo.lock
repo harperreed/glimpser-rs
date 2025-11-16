@@ -1996,6 +1996,7 @@ dependencies = [
  "gstreamer-app",
  "gstreamer-rtsp-server",
  "gstreamer-video",
+ "humantime",
  "prometheus-client",
  "serde",
  "serde_json",
