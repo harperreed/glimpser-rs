@@ -25,6 +25,8 @@ use utoipa_swagger_ui::SwaggerUi;
         stream::mjpeg_stream,
         stream::start_stream,
         stream::stop_stream,
+        stream::stream_health,
+        stream::reset_stream_health,
     ),
     components(
         schemas(
@@ -113,6 +115,8 @@ pub fn create_app(
                         .service(stream::mjpeg_stream)
                         .service(stream::start_stream)
                         .service(stream::stop_stream)
+                        .service(stream::stream_health)
+                        .service(stream::reset_stream_health)
                         .service(stream::thumbnail)
                         .service(stream::stream_details)
                         .service(stream::live_stream),

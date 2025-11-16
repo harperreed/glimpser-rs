@@ -203,19 +203,16 @@ impl StreamSession {
                     self.metrics.frame_errors.inc();
 
                     let circuit_state = self.circuit_breaker.get_state().await;
-                    let backoff = self.circuit_breaker.get_backoff_duration().await;
                     let error_msg = e.to_string();
 
                     error!(
                         error = ?error_msg,
                         session_id = ?session_id,
                         circuit_state = ?circuit_state,
-                        backoff_secs = backoff.as_secs(),
                         "Failed to capture frame"
                     );
 
-                    // Apply exponential backoff
-                    sleep(backoff).await;
+                    // Circuit breaker will handle backoff on next iteration
                 }
                 Err(_) => {
                     // Record timeout as failure with circuit breaker
@@ -223,19 +220,16 @@ impl StreamSession {
                     self.metrics.frame_timeouts.inc();
 
                     let circuit_state = self.circuit_breaker.get_state().await;
-                    let backoff = self.circuit_breaker.get_backoff_duration().await;
                     let timeout_ms = self.config.frame_timeout.as_millis();
 
                     error!(
                         session_id = ?session_id,
                         timeout_ms = timeout_ms,
                         circuit_state = ?circuit_state,
-                        backoff_secs = backoff.as_secs(),
                         "Frame capture timeout"
                     );
 
-                    // Apply exponential backoff
-                    sleep(backoff).await;
+                    // Circuit breaker will handle backoff on next iteration
                 }
             }
         }

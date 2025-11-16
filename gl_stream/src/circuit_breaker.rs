@@ -86,8 +86,8 @@ struct CircuitBreakerState {
     state: CircuitState,
     consecutive_failures: u64,
     consecutive_successes: u64,
-    last_failure_time: Option<Instant>,
-    last_success_time: Option<Instant>,
+    last_failure_time: Option<std::time::SystemTime>,
+    last_success_time: Option<std::time::SystemTime>,
     current_backoff: Duration,
     opened_at: Option<Instant>,
 }
@@ -156,7 +156,7 @@ impl CircuitBreaker {
     pub async fn record_success(&self) {
         let mut state = self.state.write().await;
         self.total_successes.fetch_add(1, Ordering::Relaxed);
-        state.last_success_time = Some(Instant::now());
+        state.last_success_time = Some(std::time::SystemTime::now());
         state.consecutive_failures = 0;
 
         match state.state {
@@ -190,7 +190,7 @@ impl CircuitBreaker {
     pub async fn record_failure(&self) {
         let mut state = self.state.write().await;
         self.total_failures.fetch_add(1, Ordering::Relaxed);
-        state.last_failure_time = Some(Instant::now());
+        state.last_failure_time = Some(std::time::SystemTime::now());
         state.consecutive_failures += 1;
         state.consecutive_successes = 0;
 
@@ -259,11 +259,19 @@ impl CircuitBreaker {
         let state = self.state.read().await;
 
         let next_retry_at = if state.state == CircuitState::Open {
-            state.opened_at.map(|opened| {
+            state.opened_at.and_then(|opened| {
                 let next_retry = opened + self.config.open_timeout;
-                let duration = next_retry.duration_since(Instant::now());
-                let future_time = std::time::SystemTime::now() + duration;
-                humantime::format_rfc3339(future_time).to_string()
+                let now = Instant::now();
+
+                // Only calculate if next_retry is in the future
+                if next_retry > now {
+                    let duration = next_retry.duration_since(now);
+                    let future_time = std::time::SystemTime::now() + duration;
+                    Some(humantime::format_rfc3339(future_time).to_string())
+                } else {
+                    // Retry time has passed, should transition to half-open soon
+                    None
+                }
             })
         } else {
             None
@@ -274,11 +282,11 @@ impl CircuitBreaker {
             consecutive_failures: state.consecutive_failures,
             total_failures: self.total_failures.load(Ordering::Relaxed),
             total_successes: self.total_successes.load(Ordering::Relaxed),
-            last_failure: state.last_failure_time.map(|_| {
-                humantime::format_rfc3339(std::time::SystemTime::now()).to_string()
+            last_failure: state.last_failure_time.map(|time| {
+                humantime::format_rfc3339(time).to_string()
             }),
-            last_success: state.last_success_time.map(|_| {
-                humantime::format_rfc3339(std::time::SystemTime::now()).to_string()
+            last_success: state.last_success_time.map(|time| {
+                humantime::format_rfc3339(time).to_string()
             }),
             current_backoff_secs: state.current_backoff.as_secs(),
             next_retry_at,
