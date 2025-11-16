@@ -78,6 +78,8 @@ pub struct MjpegStream {
     frames_dropped_count: u64,
     /// Total number of sequence gaps detected
     sequence_gaps: u64,
+    /// Expected number of frames in next gap (from Lagged error)
+    expected_gap: Option<u64>,
 }
 
 impl MjpegStream {
@@ -101,6 +103,7 @@ impl MjpegStream {
             last_sequence: None,
             frames_dropped_count: 0,
             sequence_gaps: 0,
+            expected_gap: None,
         }
     }
 
@@ -159,17 +162,51 @@ impl Stream for MjpegStream {
                 if let Some(last_seq) = self.last_sequence {
                     let expected_seq = last_seq + 1;
                     if frame.sequence != expected_seq {
-                        let gap = frame.sequence.saturating_sub(expected_seq);
-                        self.sequence_gaps += 1;
-                        self.metrics.sequence_gaps_total.inc();
-                        warn!(
-                            connection_id = %self.connection_id,
-                            expected = expected_seq,
-                            received = frame.sequence,
-                            gap = gap,
-                            total_gaps = self.sequence_gaps,
-                            "Sequence gap detected - frames missed"
-                        );
+                        if frame.sequence < expected_seq {
+                            // Backwards sequence - this shouldn't happen with broadcast channels
+                            warn!(
+                                connection_id = %self.connection_id,
+                                expected = expected_seq,
+                                received = frame.sequence,
+                                "Received out-of-order frame with backwards sequence"
+                            );
+                        } else {
+                            // Forward gap - frames were missed
+                            let gap = frame.sequence - expected_seq;
+
+                            // Check if this gap matches a recent Lagged error
+                            let is_expected = self.expected_gap == Some(gap);
+
+                            if is_expected {
+                                // This gap matches the lag we just reported, log at debug level
+                                debug!(
+                                    connection_id = %self.connection_id,
+                                    expected = expected_seq,
+                                    received = frame.sequence,
+                                    gap = gap,
+                                    "Sequence gap matches reported lag"
+                                );
+                            } else {
+                                // Unexpected gap - could be generator issue or mismatch with lag report
+                                self.sequence_gaps += 1;
+                                self.metrics.sequence_gaps_total.inc();
+                                warn!(
+                                    connection_id = %self.connection_id,
+                                    expected = expected_seq,
+                                    received = frame.sequence,
+                                    gap = gap,
+                                    total_gaps = self.sequence_gaps,
+                                    expected_from_lag = ?self.expected_gap,
+                                    "Unexpected sequence gap detected"
+                                );
+                            }
+
+                            // Clear expected gap after checking
+                            self.expected_gap = None;
+                        }
+                    } else {
+                        // Sequence is as expected, clear any pending expected gap
+                        self.expected_gap = None;
                     }
                 }
 
@@ -209,13 +246,17 @@ impl Stream for MjpegStream {
                 self.frames_dropped_count += skipped;
                 self.metrics.frames_dropped.inc_by(skipped);
 
+                // Accumulate expected gap (handles multiple consecutive Lagged errors)
+                self.expected_gap = Some(self.expected_gap.unwrap_or(0) + skipped);
+
                 warn!(
                     connection_id = %self.connection_id,
                     session_id = %self.session.id,
                     skipped_frames = skipped,
                     total_dropped = self.frames_dropped_count,
+                    cumulative_expected_gap = ?self.expected_gap,
                     last_sequence = ?self.last_sequence,
-                    "Stream lagged behind - subscriber too slow, frames dropped"
+                    "Stream lagged - broadcast channel dropped frames due to backpressure"
                 );
 
                 // Continue polling for the next frame
@@ -499,5 +540,48 @@ mod tests {
 
         // Note: This test validates that the tracking fields exist and work.
         // The actual lag behavior is tested in the backpressure test.
+    }
+
+    #[tokio::test]
+    async fn test_unexpected_vs_expected_gaps() {
+        let tmp_file = std::env::temp_dir().join("mjpeg_gap_test.mp4");
+        fs::File::create(&tmp_file).await.unwrap();
+        let source = FileSource::new(&tmp_file);
+        let capture = source.start().await.unwrap();
+        let session = Arc::new(crate::StreamSession::new(
+            Id::new(),
+            capture,
+            crate::StreamConfig::default(),
+            StreamMetrics::default(),
+        ));
+        let (tx, rx) = broadcast::channel(10);
+        let stream = MjpegStream::new(session, rx, StreamMetrics::default());
+
+        tokio::pin!(stream);
+
+        // Get boundary
+        stream.next().await;
+
+        // Send frame 0
+        tx.send(crate::Frame::new(0, Bytes::from_static(b"frame0")))
+            .unwrap();
+        stream.next().await.unwrap().unwrap();
+        assert_eq!(stream.last_sequence(), Some(0));
+
+        // Send frames that will cause an unexpected gap (frame 3 instead of 1)
+        // This gap is NOT from a Lagged error, so it should be counted
+        tx.send(crate::Frame::new(3, Bytes::from_static(b"frame3")))
+            .unwrap();
+        stream.next().await.unwrap().unwrap();
+
+        // This should be counted as an unexpected gap
+        assert_eq!(stream.last_sequence(), Some(3));
+        assert_eq!(stream.sequence_gaps(), 1);
+
+        // Continue normally
+        tx.send(crate::Frame::new(4, Bytes::from_static(b"frame4")))
+            .unwrap();
+        stream.next().await.unwrap().unwrap();
+        assert_eq!(stream.sequence_gaps(), 1); // No new gap
     }
 }
