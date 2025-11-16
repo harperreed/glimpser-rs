@@ -358,8 +358,10 @@ impl JobScheduler {
                 Ok(_) => {
                     if retry_count > 0 {
                         debug!(
-                            "Successfully saved job result after {} retries for execution: {}",
-                            retry_count, execution_id
+                            "Successfully saved job result after {} {} for execution: {}",
+                            retry_count,
+                            if retry_count == 1 { "retry" } else { "retries" },
+                            execution_id
                         );
                     }
                     return Ok(());
@@ -372,8 +374,8 @@ impl JobScheduler {
 
                     if retry_count > config.persistence_max_retries {
                         warn!(
-                            "Failed to save job result after {} retries for execution {}: {}",
-                            config.persistence_max_retries, execution_id, e
+                            "Failed to save job result after {} attempts ({} retries) for execution {}: {}",
+                            retry_count, config.persistence_max_retries, execution_id, e
                         );
                         metrics
                             .persistence_failures
@@ -396,7 +398,7 @@ impl JobScheduler {
                     }
 
                     warn!(
-                        "Failed to save job result (attempt {}/{}), retrying in {}ms: {}",
+                        "Failed to save job result (retry {}/{}), retrying in {}ms: {}",
                         retry_count, config.persistence_max_retries, delay_ms, e
                     );
 
@@ -484,6 +486,10 @@ impl JobScheduler {
     }
 
     /// Retry processing dead letter queue entries
+    ///
+    /// Note: This performs a single save attempt per entry without retry logic
+    /// to avoid infinite loops. If the database is still unavailable, entries
+    /// will remain in the queue and can be retried again later.
     pub async fn retry_dead_letter_queue(&self) -> Result<(u32, u32)> {
         let mut dlq = self.dead_letter_queue.write().await;
         let initial_count = dlq.len();
@@ -492,7 +498,7 @@ impl JobScheduler {
 
         info!("Retrying {} dead letter queue entries", initial_count);
 
-        // Process entries (in reverse order to allow safe removal)
+        // Process entries forward, removing successful ones as we go
         let mut i = 0;
         while i < dlq.len() {
             let entry = &dlq[i];
