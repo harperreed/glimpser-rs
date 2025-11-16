@@ -12,9 +12,74 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Job handler trait that all job types must implement
+///
+/// # Resource Cleanup
+///
+/// Job handlers MUST implement proper resource cleanup to prevent leaks when:
+/// - The job times out
+/// - The job is cancelled
+/// - The scheduler is shutting down
+///
+/// ## Cleanup Guidelines
+///
+/// 1. **Check cancellation token regularly** during long-running operations:
+///    ```rust
+///    if context.cancellation_token.is_cancelled() {
+///        // Clean up resources (close files, connections, etc.)
+///        return Err(gl_core::Error::Cancelled("Job was cancelled".into()));
+///    }
+///    ```
+///
+/// 2. **Use timeout-aware operations** where possible:
+///    ```rust
+///    tokio::select! {
+///        result = some_operation() => { /* handle result */ },
+///        _ = context.cancellation_token.cancelled() => {
+///            // Clean up and return early
+///            return Err(gl_core::Error::Cancelled("Job was cancelled".into()));
+///        }
+///    }
+///    ```
+///
+/// 3. **Clean up resources in all code paths**:
+///    - Use RAII patterns (Drop trait) for automatic cleanup
+///    - Ensure cleanup happens on error, timeout, and cancellation
+///    - Consider using `defer` patterns or scopeguard crate
+///
+/// 4. **Grace period**: When a timeout or cancellation occurs, the scheduler
+///    provides a 500ms grace period for cleanup before forcibly aborting the task.
+///
+/// ## Example Implementation
+///
+/// ```rust,ignore
+/// async fn execute(&self, context: JobContext) -> Result<serde_json::Value> {
+///     // Open resource (file, connection, etc.)
+///     let mut file = open_file().await?;
+///
+///     loop {
+///         // Check for cancellation before each iteration
+///         if context.cancellation_token.is_cancelled() {
+///             file.close().await?;  // Clean up
+///             return Err(gl_core::Error::Cancelled("Job cancelled".into()));
+///         }
+///
+///         // Do work...
+///         process_chunk(&mut file).await?;
+///     }
+///
+///     file.close().await?;
+///     Ok(serde_json::json!({"status": "success"}))
+/// }
+/// ```
 #[async_trait]
 pub trait JobHandler: Send + Sync {
     /// Execute the job with the given context
+    ///
+    /// # Cancellation
+    ///
+    /// Job implementations MUST check `context.cancellation_token.is_cancelled()`
+    /// or use `tokio::select!` with `context.cancellation_token.cancelled()` to
+    /// handle timeouts and cancellations gracefully.
     async fn execute(&self, context: JobContext) -> Result<serde_json::Value>;
 
     /// Get job type name
@@ -49,6 +114,11 @@ impl JobHandler for SmartSnapshotJob {
     async fn execute(&self, context: JobContext) -> Result<serde_json::Value> {
         info!("Executing smart snapshot job: {}", context.job_id);
 
+        // Check for cancellation at start
+        if context.cancellation_token.is_cancelled() {
+            return Err(gl_core::Error::Cancelled("Job cancelled before start".into()));
+        }
+
         // Extract parameters
         let params: SmartSnapshotParams =
             serde_json::from_value(context.parameters).map_err(|e| {
@@ -61,6 +131,11 @@ impl JobHandler for SmartSnapshotJob {
         use gl_db::repositories::settings::SettingsRepository;
         let settings_repo = SettingsRepository::new(context.db.pool());
         let threshold = settings_repo.get_phash_threshold().await.unwrap_or(0.85); // Default to 0.85 if setting is not found
+
+        // Check for cancellation before capture
+        if context.cancellation_token.is_cancelled() {
+            return Err(gl_core::Error::Cancelled("Job cancelled before capture".into()));
+        }
 
         // 1. Take screenshot using capture service
         let capture_result = match context.capture_service.capture(&params.stream_id).await {
@@ -76,6 +151,11 @@ impl JobHandler for SmartSnapshotJob {
                 }));
             }
         };
+
+        // Check for cancellation after capture
+        if context.cancellation_token.is_cancelled() {
+            return Err(gl_core::Error::Cancelled("Job cancelled after capture".into()));
+        }
 
         // 2. Load image once and calculate both hash and dimensions efficiently
         let image_bytes = &capture_result.data;
@@ -161,6 +241,11 @@ impl JobHandler for SmartSnapshotJob {
         }
 
         let mut snapshot_id = None;
+
+        // Check for cancellation before storage operation
+        if context.cancellation_token.is_cancelled() {
+            return Err(gl_core::Error::Cancelled("Job cancelled before storage".into()));
+        }
 
         // 5. Only store if hash changed significantly or no previous hash exists
         if hash_changed {
@@ -355,6 +440,11 @@ impl JobHandler for MotionDetectionJob {
     async fn execute(&self, context: JobContext) -> Result<serde_json::Value> {
         info!("Executing motion detection job: {}", context.job_id);
 
+        // Check for cancellation
+        if context.cancellation_token.is_cancelled() {
+            return Err(gl_core::Error::Cancelled("Job cancelled".into()));
+        }
+
         let params: MotionDetectionParams = serde_json::from_value(context.parameters)
             .map_err(|e| gl_core::Error::Validation(format!("Invalid motion parameters: {}", e)))?;
 
@@ -425,6 +515,11 @@ impl JobHandler for MaintenanceJob {
     async fn execute(&self, context: JobContext) -> Result<serde_json::Value> {
         info!("Executing maintenance job: {}", context.job_id);
 
+        // Check for cancellation
+        if context.cancellation_token.is_cancelled() {
+            return Err(gl_core::Error::Cancelled("Job cancelled".into()));
+        }
+
         let params: MaintenanceParams =
             serde_json::from_value(context.parameters).map_err(|e| {
                 gl_core::Error::Validation(format!("Invalid maintenance parameters: {}", e))
@@ -434,6 +529,9 @@ impl JobHandler for MaintenanceJob {
 
         // Cleanup old job results
         if params.cleanup_old_jobs.unwrap_or(true) {
+            if context.cancellation_token.is_cancelled() {
+                return Err(gl_core::Error::Cancelled("Job cancelled during cleanup".into()));
+            }
             info!("Cleaning up old job execution records");
             // TODO: Implement cleanup logic
             tasks_completed.push("job_cleanup");
@@ -441,6 +539,9 @@ impl JobHandler for MaintenanceJob {
 
         // Cleanup old snapshots (keep based on retention policy)
         if params.cleanup_old_snapshots.unwrap_or(true) {
+            if context.cancellation_token.is_cancelled() {
+                return Err(gl_core::Error::Cancelled("Job cancelled during cleanup".into()));
+            }
             info!("Cleaning up old snapshot files based on retention policy");
             // TODO: Implement snapshot cleanup
             // Should respect hash-based deduplication - only delete files not referenced
@@ -449,6 +550,9 @@ impl JobHandler for MaintenanceJob {
 
         // Database maintenance
         if params.database_maintenance.unwrap_or(true) {
+            if context.cancellation_token.is_cancelled() {
+                return Err(gl_core::Error::Cancelled("Job cancelled during cleanup".into()));
+            }
             info!("Running database maintenance tasks");
             // TODO: VACUUM, analyze, etc.
             tasks_completed.push("database_maintenance");
@@ -497,6 +601,11 @@ impl AiAnalysisJob {
 impl JobHandler for AiAnalysisJob {
     async fn execute(&self, context: JobContext) -> Result<serde_json::Value> {
         info!("Executing AI analysis job: {}", context.job_id);
+
+        // Check for cancellation
+        if context.cancellation_token.is_cancelled() {
+            return Err(gl_core::Error::Cancelled("Job cancelled".into()));
+        }
 
         let params: AiAnalysisParams = serde_json::from_value(context.parameters)
             .map_err(|e| gl_core::Error::Validation(format!("Invalid AI parameters: {}", e)))?;

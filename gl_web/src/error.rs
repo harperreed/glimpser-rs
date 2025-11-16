@@ -158,6 +158,9 @@ impl From<gl_core::Error> for ApiError {
             gl_core::Error::Storage(msg) => {
                 Self::internal_server_error(format!("Storage error: {}", msg))
             }
+            gl_core::Error::Cancelled(msg) => {
+                Self::internal_server_error(format!("Operation cancelled: {}", msg))
+            }
         }
     }
 }

@@ -21,6 +21,9 @@ pub enum Error {
 
     #[error("Storage error: {0}")]
     Storage(String),
+
+    #[error("Operation cancelled: {0}")]
+    Cancelled(String),
 }
 
 impl From<config::ConfigError> for Error {

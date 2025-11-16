@@ -199,12 +199,18 @@ impl JobContext {
     }
 }
 
+/// Running job handle with cancellation token
+struct RunningJob {
+    handle: tokio::task::JoinHandle<()>,
+    cancellation_token: tokio_util::sync::CancellationToken,
+}
+
 /// Main job scheduler
 pub struct JobScheduler {
     config: SchedulerConfig,
     cron_scheduler: TokioCronScheduler,
     job_storage: Arc<dyn JobStorage>,
-    running_jobs: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    running_jobs: Arc<RwLock<HashMap<String, RunningJob>>>,
     job_handlers: Arc<RwLock<HashMap<String, Arc<dyn JobHandler>>>>,
     metrics: JobMetrics,
     db: Db,
@@ -259,11 +265,14 @@ impl JobScheduler {
     pub async fn stop(&mut self) -> Result<()> {
         info!("Stopping job scheduler");
 
-        // Cancel all running jobs
+        // Cancel all running jobs gracefully
         let running_jobs = self.running_jobs.read().await;
-        for (job_id, handle) in running_jobs.iter() {
+        for (job_id, running_job) in running_jobs.iter() {
             debug!("Cancelling running job: {}", job_id);
-            handle.abort();
+            running_job.cancellation_token.cancel();
+            // Give a brief grace period for cleanup
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            running_job.handle.abort();
         }
         drop(running_jobs);
 
@@ -345,6 +354,10 @@ impl JobScheduler {
             self.capture_service.clone(),
         );
 
+        // Clone cancellation token for timeout handling and tracking
+        let cancellation_token = context.cancellation_token.clone();
+        let cancellation_token_for_task = cancellation_token.clone();
+
         // Execute in background task
         let job_storage = self.job_storage.clone();
         let config = self.config.clone();
@@ -361,30 +374,48 @@ impl JobScheduler {
                     .await;
             }
 
-            // Execute the job with timeout
-            let execution_result = tokio::time::timeout(
-                std::time::Duration::from_secs(config.job_timeout_seconds),
-                handler.execute(context),
-            )
-            .await;
+            // Spawn a watchdog task to handle timeout
+            let timeout_token = cancellation_token_for_task.clone();
+            let timeout_seconds = config.job_timeout_seconds;
+            let execution_id_for_timeout = execution_id_for_task.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(timeout_seconds)).await;
+                if !timeout_token.is_cancelled() {
+                    debug!("Job {} timeout watchdog firing, signaling cancellation", execution_id_for_timeout);
+                    timeout_token.cancel();
+                }
+            });
+
+            // Execute the job (it should check cancellation_token regularly)
+            let execution_result = handler.execute(context).await;
 
             match execution_result {
-                Ok(Ok(output)) => {
-                    result = result.with_success(output);
-                    metrics
-                        .jobs_completed
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(output) => {
+                    if cancellation_token_for_task.is_cancelled() {
+                        // Job completed but was cancelled/timed out
+                        warn!("Job {} completed after cancellation/timeout", execution_id_for_task);
+                        result.status = JobStatus::TimedOut;
+                        result.error = Some("Job execution timed out".to_string());
+                        result.completed_at = Some(Utc::now());
+                        metrics
+                            .jobs_failed
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    } else {
+                        result = result.with_success(output);
+                        metrics
+                            .jobs_completed
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
-                Ok(Err(e)) => {
-                    result = result.with_error(e.to_string());
-                    metrics
-                        .jobs_failed
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                Err(_) => {
-                    result.status = JobStatus::TimedOut;
-                    result.error = Some("Job execution timed out".to_string());
-                    result.completed_at = Some(Utc::now());
+                Err(e) => {
+                    // Check if it's a cancellation error
+                    if matches!(e, gl_core::Error::Cancelled(_)) {
+                        result.status = JobStatus::TimedOut;
+                        result.error = Some("Job was cancelled/timed out".to_string());
+                        result.completed_at = Some(Utc::now());
+                    } else {
+                        result = result.with_error(e.to_string());
+                    }
                     metrics
                         .jobs_failed
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -406,11 +437,15 @@ impl JobScheduler {
             );
         });
 
-        // Track running job
+        // Track running job with cancellation token
+        let running_job = RunningJob {
+            handle,
+            cancellation_token: cancellation_token.clone(),
+        };
         self.running_jobs
             .write()
             .await
-            .insert(execution_id.clone(), handle);
+            .insert(execution_id.clone(), running_job);
 
         Ok(execution_id)
     }
@@ -432,8 +467,16 @@ impl JobScheduler {
     /// Cancel a running job
     pub async fn cancel_job(&self, execution_id: &str) -> Result<()> {
         let mut running_jobs = self.running_jobs.write().await;
-        if let Some(handle) = running_jobs.remove(execution_id) {
-            handle.abort();
+        if let Some(running_job) = running_jobs.remove(execution_id) {
+            // Signal cancellation to allow job to clean up resources
+            running_job.cancellation_token.cancel();
+
+            // Give job a grace period to clean up
+            drop(running_jobs); // Release lock during grace period
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            // Force abort if still running
+            running_job.handle.abort();
             info!("Cancelled job: {}", execution_id);
 
             if self.config.enable_persistence {
@@ -471,6 +514,266 @@ impl JobScheduler {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Mock capture service for testing
+    struct MockCaptureService;
+
+    #[async_trait]
+    impl CaptureService for MockCaptureService {
+        async fn capture(&self, _stream_id: &str) -> Result<CaptureResult> {
+            Err(gl_core::Error::External("Mock capture".into()))
+        }
+    }
+
+    // Mock job storage for testing
+    struct MockJobStorage;
+
+    #[async_trait]
+    impl JobStorage for MockJobStorage {
+        async fn save_job(&self, _job: &JobDefinition) -> Result<()> {
+            Ok(())
+        }
+
+        async fn get_job(&self, _id: &str) -> Result<Option<JobDefinition>> {
+            Ok(None)
+        }
+
+        async fn list_jobs(&self) -> Result<Vec<JobDefinition>> {
+            Ok(vec![])
+        }
+
+        async fn list_jobs_filtered(
+            &self,
+            _enabled_only: bool,
+            _job_type: Option<&str>,
+            _tags: Option<&[String]>,
+            _limit: Option<u32>,
+        ) -> Result<Vec<JobDefinition>> {
+            Ok(vec![])
+        }
+
+        async fn update_job(&self, _job: &JobDefinition) -> Result<()> {
+            Ok(())
+        }
+
+        async fn delete_job(&self, _id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn save_job_result(&self, _execution_id: &str, _result: &JobResult) -> Result<()> {
+            Ok(())
+        }
+
+        async fn get_job_result(&self, _execution_id: &str) -> Result<Option<JobResult>> {
+            Ok(None)
+        }
+
+        async fn get_job_results(&self, _job_id: &str, _limit: Option<u32>) -> Result<Vec<JobResult>> {
+            Ok(vec![])
+        }
+
+        async fn get_queue_stats(&self) -> Result<JobQueueStats> {
+            Ok(JobQueueStats {
+                pending_jobs: 0,
+                running_jobs: 0,
+                completed_today: 0,
+                failed_today: 0,
+                avg_execution_time_ms: None,
+                throughput_per_hour: None,
+                updated_at: chrono::Utc::now(),
+            })
+        }
+
+        async fn cleanup_old_results(&self, _retention_days: u32) -> Result<u64> {
+            Ok(0)
+        }
+    }
+
+    // Test job that respects cancellation
+    struct TestJobWithCancellation {
+        cleanup_called: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl JobHandler for TestJobWithCancellation {
+        async fn execute(&self, context: JobContext) -> Result<serde_json::Value> {
+            // Simulate work with cancellation checking using tokio::select!
+            for i in 0..100 {
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        debug!("Test job iteration {}", i);
+                    }
+                    _ = context.cancellation_token.cancelled() => {
+                        // Simulate cleanup
+                        info!("Job cancelled, cleaning up...");
+                        self.cleanup_called.store(true, Ordering::SeqCst);
+                        return Err(gl_core::Error::Cancelled("Job was cancelled".into()));
+                    }
+                }
+            }
+            Ok(serde_json::json!({"status": "completed"}))
+        }
+
+        fn job_type(&self) -> &'static str {
+            "test_cancellation"
+        }
+    }
+
+    // Test job that doesn't respect cancellation (bad practice)
+    struct TestJobWithoutCancellation;
+
+    #[async_trait]
+    impl JobHandler for TestJobWithoutCancellation {
+        async fn execute(&self, _context: JobContext) -> Result<serde_json::Value> {
+            // Simulate long-running work without checking cancellation
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            Ok(serde_json::json!({"status": "completed"}))
+        }
+
+        fn job_type(&self) -> &'static str {
+            "test_no_cancellation"
+        }
+    }
+
+    async fn create_test_scheduler() -> Result<JobScheduler> {
+        let config = SchedulerConfig {
+            max_concurrent_jobs: 5,
+            job_timeout_seconds: 1, // Short timeout for testing
+            enable_persistence: false,
+            history_retention_days: 7,
+            enable_metrics: true,
+        };
+
+        // Create test database
+        let test_id = gl_core::Id::new().to_string();
+        let db_path = format!("test_scheduler_{}.db", test_id);
+        let _ = tokio::fs::remove_file(&db_path).await; // Clean up any existing
+        let db = gl_db::Db::new(&db_path).await?;
+
+        let storage = Arc::new(MockJobStorage) as Arc<dyn JobStorage>;
+        let capture_service = Arc::new(MockCaptureService) as Arc<dyn CaptureService>;
+
+        JobScheduler::new(config, storage, db, capture_service).await
+    }
+
+    #[tokio::test]
+    async fn test_job_timeout_signals_cancellation() {
+        let scheduler = create_test_scheduler().await.unwrap();
+        let cleanup_called = Arc::new(AtomicBool::new(false));
+
+        let handler = Arc::new(TestJobWithCancellation {
+            cleanup_called: cleanup_called.clone(),
+        });
+
+        scheduler.register_handler("test_cancellation".to_string(), handler).await;
+        scheduler.start().await.unwrap();
+
+        let job = JobDefinition::new(
+            "Test Timeout".to_string(),
+            "test_cancellation".to_string(),
+            "0 0 * * * *".to_string(),
+            serde_json::json!({}),
+            "test_user".to_string(),
+        );
+
+        let execution_id = scheduler.execute_now(job).await.unwrap();
+
+        // Wait for timeout + grace period + extra time for cleanup to execute
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        // Verify cleanup was called
+        assert!(
+            cleanup_called.load(Ordering::SeqCst),
+            "Cleanup should have been called when job timed out"
+        );
+
+        // Verify job is no longer in running jobs
+        let running_jobs = scheduler.running_jobs.read().await;
+        assert!(
+            !running_jobs.contains_key(&execution_id),
+            "Job should be removed from running jobs after timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cancel_job_signals_cancellation() {
+        let scheduler = create_test_scheduler().await.unwrap();
+        let cleanup_called = Arc::new(AtomicBool::new(false));
+
+        let handler = Arc::new(TestJobWithCancellation {
+            cleanup_called: cleanup_called.clone(),
+        });
+
+        scheduler.register_handler("test_cancellation".to_string(), handler).await;
+        scheduler.start().await.unwrap();
+
+        let job = JobDefinition::new(
+            "Test Cancel".to_string(),
+            "test_cancellation".to_string(),
+            "0 0 * * * *".to_string(),
+            serde_json::json!({}),
+            "test_user".to_string(),
+        );
+
+        let execution_id = scheduler.execute_now(job).await.unwrap();
+
+        // Give job time to start
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Cancel the job
+        scheduler.cancel_job(&execution_id).await.unwrap();
+
+        // Wait for grace period
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        // Verify cleanup was called
+        assert!(
+            cleanup_called.load(Ordering::SeqCst),
+            "Cleanup should have been called when job was cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_stop_signals_cancellation() {
+        let mut scheduler = create_test_scheduler().await.unwrap();
+        let cleanup_called = Arc::new(AtomicBool::new(false));
+
+        let handler = Arc::new(TestJobWithCancellation {
+            cleanup_called: cleanup_called.clone(),
+        });
+
+        scheduler.register_handler("test_cancellation".to_string(), handler).await;
+        scheduler.start().await.unwrap();
+
+        let job = JobDefinition::new(
+            "Test Stop".to_string(),
+            "test_cancellation".to_string(),
+            "0 0 * * * *".to_string(),
+            serde_json::json!({}),
+            "test_user".to_string(),
+        );
+
+        scheduler.execute_now(job).await.unwrap();
+
+        // Give job time to start
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Stop the scheduler
+        scheduler.stop().await.unwrap();
+
+        // Verify cleanup was called
+        assert!(
+            cleanup_called.load(Ordering::SeqCst),
+            "Cleanup should have been called when scheduler stopped"
+        );
     }
 }
 
