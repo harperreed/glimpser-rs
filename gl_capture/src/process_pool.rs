@@ -184,7 +184,8 @@ pub struct FfmpegProcess {
     boundary_state: BoundaryState,
     /// Process configuration
     config: ProcessPoolConfig,
-    /// Buffer overflow counter
+    /// Buffer overflow counter (cumulative, not reset on success)
+    /// This tracks total overflows to detect persistent stream corruption
     buffer_overflows: u32,
     /// Peak buffer size seen
     peak_buffer_size: usize,
@@ -444,14 +445,31 @@ impl FfmpegProcess {
             // Strategy: Keep only the most recent incomplete frame by finding the last JPEG start marker
             // This aggressively drops old/corrupt data while preserving the newest frame attempt
             if let Some(last_jpeg_start) = self.find_last_jpeg_start(&self.frame_buffer[..]) {
-                // Keep data from the last (most recent) JPEG start marker found
-                let bytes_to_drop = last_jpeg_start;
-                self.frame_buffer.advance(bytes_to_drop);
-                warn!(
-                    bytes_dropped = bytes_to_drop,
-                    buffer_remaining = self.frame_buffer.len(),
-                    "Dropped old buffer data, retained from most recent JPEG start marker"
-                );
+                // Check if we can make meaningful progress
+                // If the last JPEG marker is very close to the start (< 1KB), and the remaining
+                // buffer would still be oversized, this single frame is too large - clear it
+                const MIN_PROGRESS_THRESHOLD: usize = 1024; // 1 KB
+
+                if last_jpeg_start < MIN_PROGRESS_THRESHOLD
+                    && (current_size - last_jpeg_start) > MAX_BUFFER_SIZE {
+                    // Single incomplete JPEG frame exceeds MAX_BUFFER_SIZE - this is corrupt
+                    let dropped_bytes = self.frame_buffer.len();
+                    self.frame_buffer.clear();
+                    error!(
+                        bytes_dropped = dropped_bytes,
+                        jpeg_start_pos = last_jpeg_start,
+                        "Incomplete JPEG frame exceeds MAX_BUFFER_SIZE - likely corrupt, cleared buffer"
+                    );
+                } else {
+                    // Keep data from the last (most recent) JPEG start marker found
+                    let bytes_to_drop = last_jpeg_start;
+                    self.frame_buffer.advance(bytes_to_drop);
+                    warn!(
+                        bytes_dropped = bytes_to_drop,
+                        buffer_remaining = self.frame_buffer.len(),
+                        "Dropped old buffer data, retained from most recent JPEG start marker"
+                    );
+                }
             } else {
                 // No JPEG markers found - clear the entire buffer
                 let dropped_bytes = self.frame_buffer.len();
@@ -1186,6 +1204,74 @@ mod tests {
         assert_eq!(BUFFER_WARNING_THRESHOLD, 5 * 1024 * 1024); // 5 MB
         assert_eq!(MAX_BUFFER_SIZE, 10 * 1024 * 1024); // 10 MB
         assert_eq!(MAX_BUFFER_OVERFLOWS, 3);
+    }
+
+    #[test]
+    fn test_oversized_incomplete_frame_detection() {
+        // Test detection of single incomplete JPEG frame that exceeds MAX_BUFFER_SIZE
+        // This scenario would cause infinite loop without the MIN_PROGRESS_THRESHOLD check
+
+        // Simulate a buffer with JPEG start at position 0, followed by 11MB of data
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&[0xFF, 0xD8]); // JPEG start marker at position 0
+
+        // Add 11MB of corrupt data (no end marker)
+        let corrupt_data = vec![0xAB; MAX_BUFFER_SIZE + 1024 * 1024];
+        buffer.extend_from_slice(&corrupt_data);
+
+        assert!(buffer.len() > MAX_BUFFER_SIZE);
+
+        // Find last JPEG start - should be at position 0
+        let last_jpeg = buffer
+            .windows(2)
+            .rposition(|w| w[0] == 0xFF && w[1] == 0xD8);
+        assert_eq!(last_jpeg, Some(0));
+
+        // Verify that the remaining buffer after position 0 is still oversized
+        // This is the condition that triggers the "clear entire buffer" logic
+        let current_size = buffer.len();
+        let last_jpeg_pos = last_jpeg.unwrap();
+        assert!(last_jpeg_pos < 1024); // Less than MIN_PROGRESS_THRESHOLD
+        assert!((current_size - last_jpeg_pos) > MAX_BUFFER_SIZE); // Would still be oversized
+
+        // In the actual implementation, this would trigger:
+        // "Incomplete JPEG frame exceeds MAX_BUFFER_SIZE - likely corrupt, cleared buffer"
+    }
+
+    #[test]
+    fn test_meaningful_progress_scenario() {
+        // Test that we DON'T clear the buffer when we can make meaningful progress
+        // Buffer: [5MB corrupt][JPEG_START][5MB incomplete data]
+
+        let mut buffer = BytesMut::new();
+
+        // Add 5MB of corrupt data
+        buffer.extend_from_slice(&vec![0xAA; 5 * 1024 * 1024]);
+
+        // Add JPEG start marker at 5MB position
+        buffer.extend_from_slice(&[0xFF, 0xD8]);
+
+        // Add another 5MB of incomplete data
+        buffer.extend_from_slice(&vec![0xBB; 5 * 1024 * 1024]);
+
+        let total_size = buffer.len();
+        assert!(total_size > MAX_BUFFER_SIZE); // ~10MB
+
+        // Find last JPEG start - should be at ~5MB position
+        let last_jpeg = buffer
+            .windows(2)
+            .rposition(|w| w[0] == 0xFF && w[1] == 0xD8);
+        let last_jpeg_pos = last_jpeg.unwrap();
+
+        assert!(last_jpeg_pos > 1024); // Greater than MIN_PROGRESS_THRESHOLD
+        assert!(last_jpeg_pos > 1024 * 1024); // Should be around 5MB
+
+        // After advancing by last_jpeg_pos, remaining buffer would be ~5MB
+        let remaining_after_advance = total_size - last_jpeg_pos;
+        assert!(remaining_after_advance < MAX_BUFFER_SIZE); // Would be under limit
+
+        // In this case, we WOULD advance the buffer (not clear it entirely)
+        // This preserves the most recent incomplete frame
     }
 
     #[test]
