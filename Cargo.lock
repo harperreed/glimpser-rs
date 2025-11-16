@@ -2001,6 +2001,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "test_support",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-test",
  "tracing",

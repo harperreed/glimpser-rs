@@ -28,6 +28,14 @@ pub use mjpeg::*;
 #[cfg(feature = "rtsp")]
 pub use rtsp::*;
 
+/// Error type for subscription failures
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum SubscriptionError {
+    /// Maximum number of subscribers reached
+    #[error("Maximum number of subscribers ({max_clients}) reached")]
+    MaxSubscribersReached { max_clients: usize },
+}
+
 /// Configuration for MJPEG streaming
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StreamConfig {
@@ -191,17 +199,40 @@ impl StreamSession {
     }
 
     /// Subscribe to the frame stream
-    pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns `SubscriptionError::MaxSubscribersReached` if the maximum number of
+    /// concurrent subscribers (`max_clients`) has been reached.
+    pub fn subscribe(&self) -> Result<broadcast::Receiver<Bytes>, SubscriptionError> {
+        // Check current subscriber count against max_clients limit
+        let current_count = self.subscribers.load(Ordering::Relaxed);
+
+        if current_count >= self.config.max_clients as u64 {
+            warn!(
+                session_id = %self.id,
+                current_subscribers = current_count,
+                max_clients = self.config.max_clients,
+                "Subscription rejected: max_clients limit reached"
+            );
+            self.metrics.connections_rejected.inc();
+            return Err(SubscriptionError::MaxSubscribersReached {
+                max_clients: self.config.max_clients,
+            });
+        }
+
+        // Atomically increment subscriber count
         let subscriber_count = self.subscribers.fetch_add(1, Ordering::Relaxed) + 1;
         self.metrics.subscribers.set(subscriber_count as i64);
 
         info!(
             session_id = %self.id,
             subscriber_count,
+            max_clients = self.config.max_clients,
             "New subscriber joined"
         );
 
-        self.frame_sender.subscribe()
+        Ok(self.frame_sender.subscribe())
     }
 
     /// Remove a subscriber
@@ -282,10 +313,10 @@ mod tests {
                 let session = Arc::new(StreamSession::new(template_id, capture, config, metrics));
 
                 // Test subscription
-                let _receiver1 = session.subscribe();
+                let _receiver1 = session.subscribe().expect("Should subscribe successfully");
                 assert_eq!(session.subscriber_count(), 1);
 
-                let _receiver2 = session.subscribe();
+                let _receiver2 = session.subscribe().expect("Should subscribe successfully");
                 assert_eq!(session.subscriber_count(), 2);
 
                 // Test unsubscription
@@ -360,6 +391,102 @@ mod tests {
         let _ = &metrics.connections_total;
         let _ = &metrics.disconnections_total;
         let _ = &metrics.frames_dropped;
+    }
+
+    #[tokio::test]
+    async fn test_max_clients_enforcement() {
+        let _test_id = create_test_id();
+        let (_temp_dir, video_path) = create_test_video_file().await;
+
+        let template_id = Id::new();
+        let source = FileSource::new(video_path);
+        let config = StreamConfig {
+            max_clients: 2, // Set low limit for testing
+            ..Default::default()
+        };
+        let metrics = StreamMetrics::new();
+
+        match source.start().await {
+            Ok(capture) => {
+                let session = Arc::new(StreamSession::new(template_id, capture, config, metrics));
+
+                // First subscriber should succeed
+                let _receiver1 = session.subscribe().expect("First subscription should succeed");
+                assert_eq!(session.subscriber_count(), 1);
+
+                // Second subscriber should succeed
+                let _receiver2 = session.subscribe().expect("Second subscription should succeed");
+                assert_eq!(session.subscriber_count(), 2);
+
+                // Third subscriber should fail (max_clients = 2)
+                let result3 = session.subscribe();
+                assert!(result3.is_err(), "Third subscription should fail");
+                assert_eq!(session.subscriber_count(), 2, "Count should remain at 2");
+
+                // Verify error message
+                if let Err(e) = result3 {
+                    let error_msg = e.to_string();
+                    assert!(
+                        error_msg.contains("Maximum number of subscribers"),
+                        "Error message should mention max subscribers: {}",
+                        error_msg
+                    );
+                    assert!(error_msg.contains("2"), "Error should show max_clients value");
+                }
+
+                // After unsubscribing, should be able to subscribe again
+                session.unsubscribe();
+                assert_eq!(session.subscriber_count(), 1);
+
+                let _receiver3 = session
+                    .subscribe()
+                    .expect("Should succeed after unsubscribe");
+                assert_eq!(session.subscriber_count(), 2);
+            }
+            Err(_) => {
+                // Expected when ffmpeg isn't available
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_subscription_rejected_metric() {
+        let _test_id = create_test_id();
+        let (_temp_dir, video_path) = create_test_video_file().await;
+
+        let template_id = Id::new();
+        let source = FileSource::new(video_path);
+        let config = StreamConfig {
+            max_clients: 1, // Only allow 1 client
+            ..Default::default()
+        };
+        let metrics = StreamMetrics::new();
+
+        match source.start().await {
+            Ok(capture) => {
+                let session = Arc::new(StreamSession::new(
+                    template_id,
+                    capture,
+                    config,
+                    metrics.clone(),
+                ));
+
+                // First subscription succeeds
+                let _receiver1 = session.subscribe().expect("Should succeed");
+
+                // Second subscription should be rejected
+                let _ = session.subscribe();
+
+                // Third subscription should also be rejected
+                let _ = session.subscribe();
+
+                // Note: We can't easily verify the metric value in tests without
+                // exposing it, but we ensure the code path is exercised
+            }
+            Err(_) => {
+                // Expected when ffmpeg isn't available
+            }
+        }
     }
 
     // Integration test with a mock streaming scenario

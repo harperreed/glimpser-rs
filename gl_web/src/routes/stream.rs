@@ -720,7 +720,20 @@ pub async fn mjpeg_stream(
             debug!(stream_id = %stream_id, "New client connected to MJPEG stream via StreamManager");
 
             // Subscribe to the frame broadcaster
-            let frame_receiver = session.subscribe();
+            let frame_receiver = match session.subscribe() {
+                Ok(receiver) => receiver,
+                Err(e) => {
+                    warn!(
+                        stream_id = %stream_id,
+                        error = %e,
+                        "Subscription rejected"
+                    );
+                    return Ok(HttpResponse::ServiceUnavailable().json(ErrorResponse::new(
+                        "too_many_subscribers",
+                        &format!("Too many subscribers: {}", e),
+                    )));
+                }
+            };
 
             // Create the real MjpegStream from the gl_stream crate
             let mjpeg_stream = MjpegStream::new(

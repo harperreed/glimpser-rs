@@ -240,7 +240,21 @@ pub async fn mjpeg_stream_handler(
     );
 
     // Subscribe to the frame stream
-    let frame_receiver = session.subscribe();
+    let frame_receiver = match session.subscribe() {
+        Ok(receiver) => receiver,
+        Err(e) => {
+            warn!(
+                template_id = %template_id,
+                session_id = %session.id,
+                error = %e,
+                "Subscription rejected"
+            );
+            return Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                "error": "Too many subscribers",
+                "message": e.to_string()
+            })));
+        }
+    };
     stream_manager.metrics().connections_total.inc();
 
     // Create the MJPEG stream
@@ -343,7 +357,7 @@ mod tests {
                 config,
                 metrics.clone(),
             ));
-            let frame_receiver = session.subscribe();
+            let frame_receiver = session.subscribe().expect("Should subscribe successfully");
             let mjpeg_stream = MjpegStream::new(session, frame_receiver, metrics);
 
             assert!(mjpeg_stream.boundary.contains("mjpeg_boundary_"));

@@ -20,6 +20,8 @@ pub struct StreamMetrics {
     pub disconnections_total: Counter,
     /// Total number of dropped frames (backpressure)
     pub frames_dropped: Counter,
+    /// Total number of rejected connections (max_clients limit reached)
+    pub connections_rejected: Counter,
 }
 
 impl StreamMetrics {
