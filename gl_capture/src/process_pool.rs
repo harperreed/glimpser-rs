@@ -43,6 +43,10 @@ pub struct ProcessPoolConfig {
     pub frame_rate: f64,
     /// Enable health monitoring
     pub health_monitoring: bool,
+    /// Process watchdog timeout - kill processes stuck longer than this
+    pub process_timeout: Duration,
+    /// Frame extraction timeout - individual operation timeout
+    pub frame_extraction_timeout: Duration,
 }
 
 impl Default for ProcessPoolConfig {
@@ -52,6 +56,8 @@ impl Default for ProcessPoolConfig {
             pool_size: 2,
             frame_rate: 10.0,
             health_monitoring: true,
+            process_timeout: Duration::from_secs(60), // Kill processes stuck for 60s
+            frame_extraction_timeout: Duration::from_secs(30), // Individual operation timeout
         }
     }
 }
@@ -79,6 +85,8 @@ impl ProcessPoolConfig {
             pool_size: 2,
             frame_rate: 10.0,
             health_monitoring: true,
+            process_timeout: Duration::from_secs(60),
+            frame_extraction_timeout: Duration::from_secs(30),
         })
     }
 
@@ -106,6 +114,8 @@ impl ProcessPoolConfig {
             pool_size: 2,
             frame_rate: 10.0,
             health_monitoring: true,
+            process_timeout: Duration::from_secs(60),
+            frame_extraction_timeout: Duration::from_secs(30),
         })
     }
 }
@@ -123,6 +133,12 @@ pub struct ProcessPoolMetrics {
     pub extraction_errors: Arc<AtomicU64>,
     /// Average frame extraction time (microseconds)
     pub avg_extraction_time_us: Arc<AtomicU64>,
+    /// Total processes killed due to timeout
+    pub processes_killed_timeout: Arc<AtomicU64>,
+    /// Total stuck process detections
+    pub stuck_processes_detected: Arc<AtomicU64>,
+    /// Total frame extraction timeouts
+    pub frame_extraction_timeouts: Arc<AtomicU64>,
 }
 
 impl Default for ProcessPoolMetrics {
@@ -133,6 +149,9 @@ impl Default for ProcessPoolMetrics {
             healthy_processes: Arc::new(AtomicU64::new(0)),
             extraction_errors: Arc::new(AtomicU64::new(0)),
             avg_extraction_time_us: Arc::new(AtomicU64::new(0)),
+            processes_killed_timeout: Arc::new(AtomicU64::new(0)),
+            stuck_processes_detected: Arc::new(AtomicU64::new(0)),
+            frame_extraction_timeouts: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -142,6 +161,7 @@ impl Default for ProcessPoolMetrics {
 pub enum ProcessHealth {
     Healthy,
     Degraded { consecutive_failures: u32 },
+    Stuck { seconds_stuck: u64 },
     Failed { reason: String },
 }
 
@@ -158,6 +178,8 @@ pub struct FfmpegProcess {
     created_at: Instant,
     /// Last successful frame extraction
     last_frame_at: Option<Instant>,
+    /// Last activity timestamp (for watchdog)
+    last_activity_at: Instant,
     /// Consecutive failure count
     consecutive_failures: u32,
     /// Frame output buffer
@@ -204,13 +226,15 @@ impl FfmpegProcess {
         info!("FFmpeg continuous streaming process spawned successfully");
 
         let reader = child.stdout.take().map(BufReader::new);
+        let now = Instant::now();
 
         Ok(Self {
             child,
             reader,
             health: ProcessHealth::Healthy,
-            created_at: Instant::now(),
+            created_at: now,
             last_frame_at: None,
+            last_activity_at: now,
             consecutive_failures: 0,
             frame_buffer: BytesMut::with_capacity(BOUNDARY_BUFFER_SIZE),
             boundary_state: BoundaryState::SeekingBoundary,
@@ -397,6 +421,7 @@ impl FfmpegProcess {
     fn mark_success(&mut self) {
         self.consecutive_failures = 0;
         self.health = ProcessHealth::Healthy;
+        self.last_activity_at = Instant::now();
     }
 
     /// Mark the process as having failed
@@ -430,6 +455,26 @@ impl FfmpegProcess {
     /// Get the current health status
     pub fn health(&self) -> &ProcessHealth {
         &self.health
+    }
+
+    /// Check if the process is stuck based on last activity time
+    pub fn is_stuck(&self, timeout: Duration) -> bool {
+        self.last_activity_at.elapsed() > timeout
+    }
+
+    /// Get time since last activity
+    pub fn time_since_activity(&self) -> Duration {
+        self.last_activity_at.elapsed()
+    }
+
+    /// Mark the process as stuck
+    pub fn mark_stuck(&mut self) {
+        let seconds_stuck = self.last_activity_at.elapsed().as_secs();
+        warn!(
+            seconds_stuck,
+            "Marking FFmpeg process as stuck"
+        );
+        self.health = ProcessHealth::Stuck { seconds_stuck };
     }
 
     /// Kill the process
@@ -533,8 +578,11 @@ impl FfmpegProcessPool {
 
         for (index, process) in processes.iter_mut().enumerate() {
             if process.is_healthy() {
-                match process.extract_frame().await {
-                    Ok(frame) => {
+                // Wrap extraction with timeout
+                let timeout_duration = self.config.frame_extraction_timeout;
+
+                match tokio::time::timeout(timeout_duration, process.extract_frame()).await {
+                    Ok(Ok(frame)) => {
                         self.metrics
                             .frames_extracted
                             .fetch_add(1, Ordering::Relaxed);
@@ -564,7 +612,7 @@ impl FfmpegProcessPool {
 
                         return Ok(frame);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         warn!(
                             process_index = index,
                             error = %e,
@@ -573,6 +621,20 @@ impl FfmpegProcessPool {
                         self.metrics
                             .extraction_errors
                             .fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(_) => {
+                        // Timeout occurred
+                        warn!(
+                            process_index = index,
+                            timeout_seconds = timeout_duration.as_secs(),
+                            "Frame extraction timed out"
+                        );
+                        self.metrics
+                            .frame_extraction_timeouts
+                            .fetch_add(1, Ordering::Relaxed);
+
+                        // Mark process as stuck for health monitor to handle
+                        process.mark_stuck();
                     }
                 }
             }
@@ -601,6 +663,20 @@ impl FfmpegProcessPool {
             let mut healthy_count = 0u64;
 
             for (index, process) in processes_guard.iter_mut().enumerate() {
+                // First check if process is stuck based on watchdog timer
+                if process.is_stuck(config.process_timeout)
+                    && matches!(process.health(), ProcessHealth::Healthy | ProcessHealth::Degraded { .. }) {
+                    let time_stuck = process.time_since_activity();
+                    warn!(
+                        process_index = index,
+                        seconds_stuck = time_stuck.as_secs(),
+                        "Process watchdog detected stuck process"
+                    );
+                    process.mark_stuck();
+                    metrics.stuck_processes_detected.fetch_add(1, Ordering::Relaxed);
+                }
+
+                // Handle different health states
                 match process.health() {
                     ProcessHealth::Healthy => {
                         healthy_count += 1;
@@ -614,6 +690,37 @@ impl FfmpegProcessPool {
                             "Process is degraded"
                         );
                         healthy_count += 1; // Degraded processes are still usable
+                    }
+                    ProcessHealth::Stuck { seconds_stuck } => {
+                        warn!(
+                            process_index = index,
+                            seconds_stuck = seconds_stuck,
+                            "Killing and restarting stuck process"
+                        );
+
+                        // Kill the stuck process
+                        let _ = process.kill().await;
+                        metrics.processes_killed_timeout.fetch_add(1, Ordering::Relaxed);
+
+                        // Wait a bit before restarting
+                        sleep(RESTART_DELAY).await;
+
+                        // Spawn a new process
+                        match FfmpegProcess::spawn(config.clone()).await {
+                            Ok(new_process) => {
+                                *process = new_process;
+                                metrics.process_restarts.fetch_add(1, Ordering::Relaxed);
+                                healthy_count += 1;
+                                info!(process_index = index, "Stuck process restarted successfully");
+                            }
+                            Err(e) => {
+                                error!(
+                                    process_index = index,
+                                    error = %e,
+                                    "Failed to restart stuck process"
+                                );
+                            }
+                        }
                     }
                     ProcessHealth::Failed { reason } => {
                         warn!(
@@ -634,7 +741,7 @@ impl FfmpegProcessPool {
                                 *process = new_process;
                                 metrics.process_restarts.fetch_add(1, Ordering::Relaxed);
                                 healthy_count += 1;
-                                info!(process_index = index, "Process restarted successfully");
+                                info!(process_index = index, "Failed process restarted successfully");
                             }
                             Err(e) => {
                                 error!(
@@ -727,19 +834,17 @@ mod tests {
         assert_eq!(metrics.healthy_processes.load(Ordering::Relaxed), 0);
         assert_eq!(metrics.extraction_errors.load(Ordering::Relaxed), 0);
         assert_eq!(metrics.avg_extraction_time_us.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.processes_killed_timeout.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.stuck_processes_detected.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.frame_extraction_timeouts.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn test_continuous_args_generation() {
-        let config = ProcessPoolConfig {
-            ffmpeg_config: FfmpegConfig {
-                input_url: "rtsp://test.com/stream".to_string(),
-                hardware_accel: HardwareAccel::Cuda,
-                ..Default::default()
-            },
-            frame_rate: 15.0,
-            ..Default::default()
-        };
+        let mut config = ProcessPoolConfig::default();
+        config.ffmpeg_config.input_url = "rtsp://test.com/stream".to_string();
+        config.ffmpeg_config.hardware_accel = HardwareAccel::Cuda;
+        config.frame_rate = 15.0;
 
         let args = FfmpegProcess::build_continuous_args(&config);
 
@@ -794,12 +899,14 @@ mod tests {
     #[ignore = "Test uses unsafe code that causes UB panics"]
     fn test_process_health_state_machine() {
         let config = ProcessPoolConfig::default();
+        let now = Instant::now();
         let mut process = FfmpegProcess {
             child: unsafe { std::mem::zeroed() },
             reader: None,
             health: ProcessHealth::Healthy,
-            created_at: Instant::now(),
+            created_at: now,
             last_frame_at: None,
+            last_activity_at: now,
             consecutive_failures: 0,
             frame_buffer: BytesMut::new(),
             boundary_state: BoundaryState::SeekingBoundary,
@@ -828,19 +935,78 @@ mod tests {
         assert_eq!(process.consecutive_failures, 0);
     }
 
+    #[test]
+    fn test_watchdog_timeout_configuration() {
+        let config = ProcessPoolConfig::default();
+        assert_eq!(config.process_timeout, Duration::from_secs(60));
+        assert_eq!(config.frame_extraction_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    #[ignore = "Test uses unsafe code that causes UB panics"]
+    fn test_stuck_process_detection() {
+        let config = ProcessPoolConfig::default();
+        let now = Instant::now();
+        let mut process = FfmpegProcess {
+            child: unsafe { std::mem::zeroed() },
+            reader: None,
+            health: ProcessHealth::Healthy,
+            created_at: now,
+            last_frame_at: None,
+            last_activity_at: now - Duration::from_secs(70), // Simulate stuck process
+            consecutive_failures: 0,
+            frame_buffer: BytesMut::new(),
+            boundary_state: BoundaryState::SeekingBoundary,
+            config: config.clone(),
+        };
+
+        // Process should be detected as stuck
+        assert!(process.is_stuck(config.process_timeout));
+
+        let time_since = process.time_since_activity();
+        assert!(time_since > Duration::from_secs(60));
+
+        // Mark as stuck
+        process.mark_stuck();
+        assert!(matches!(process.health(), ProcessHealth::Stuck { .. }));
+    }
+
+    #[test]
+    fn test_stuck_process_metrics() {
+        let metrics = ProcessPoolMetrics::default();
+
+        // Simulate stuck process detection
+        metrics.stuck_processes_detected.fetch_add(1, Ordering::Relaxed);
+        metrics.processes_killed_timeout.fetch_add(1, Ordering::Relaxed);
+        metrics.frame_extraction_timeouts.fetch_add(1, Ordering::Relaxed);
+
+        assert_eq!(metrics.stuck_processes_detected.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.processes_killed_timeout.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.frame_extraction_timeouts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_process_health_variants() {
+        let healthy = ProcessHealth::Healthy;
+        let degraded = ProcessHealth::Degraded { consecutive_failures: 3 };
+        let stuck = ProcessHealth::Stuck { seconds_stuck: 120 };
+        let failed = ProcessHealth::Failed { reason: "test".to_string() };
+
+        assert!(matches!(healthy, ProcessHealth::Healthy));
+        assert!(matches!(degraded, ProcessHealth::Degraded { .. }));
+        assert!(matches!(stuck, ProcessHealth::Stuck { .. }));
+        assert!(matches!(failed, ProcessHealth::Failed { .. }));
+    }
+
     // Integration tests would go here but require ffmpeg to be installed
     #[tokio::test]
     #[ignore = "Requires ffmpeg installation and network access"]
     async fn test_process_pool_integration() {
-        let config = ProcessPoolConfig {
-            ffmpeg_config: FfmpegConfig {
-                input_url: "testsrc=duration=1:size=320x240:rate=10".to_string(),
-                ..Default::default()
-            },
-            pool_size: 1,
-            frame_rate: 1.0,
-            health_monitoring: false, // Disable for test
-        };
+        let mut config = ProcessPoolConfig::default();
+        config.ffmpeg_config.input_url = "testsrc=duration=1:size=320x240:rate=10".to_string();
+        config.pool_size = 1;
+        config.frame_rate = 1.0;
+        config.health_monitoring = false; // Disable for test
 
         match FfmpegProcessPool::new(config).await {
             Ok(mut pool) => {

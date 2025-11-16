@@ -72,6 +72,8 @@ impl StreamingFfmpegSource {
             pool_size: config.pool_size,
             frame_rate: config.frame_rate,
             health_monitoring: config.health_monitoring,
+            process_timeout: Duration::from_secs(60), // Kill processes stuck for 60s
+            frame_extraction_timeout: config.frame_timeout,
         };
 
         // Initialize the process pool

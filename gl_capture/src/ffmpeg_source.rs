@@ -355,13 +355,44 @@ impl CaptureSource for FfmpegSource {
         let command = self.build_snapshot_command();
         debug!(command = ?command, "Running FFmpeg snapshot command");
 
-        // Run FFmpeg in a blocking thread to avoid blocking the async executor
-        let result = tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(run(command))
-        })
-        .await
-        .map_err(|e| Error::Config(format!("Background FFmpeg task failed: {}", e)))??;
+        // Calculate total deadline: snapshot timeout + grace period
+        let snapshot_timeout = self.config.snapshot_config.timeout;
+        let grace_period = Duration::from_secs(5); // Extra time for process cleanup
+        let total_deadline = snapshot_timeout + grace_period;
+
+        // Run FFmpeg in a blocking thread with timeout protection
+        let result = match tokio::time::timeout(
+            total_deadline,
+            tokio::task::spawn_blocking(move || {
+                let runtime = tokio::runtime::Handle::current();
+                runtime.block_on(run(command))
+            })
+        ).await {
+            Ok(spawn_result) => {
+                spawn_result.map_err(|e| Error::Config(format!("Background FFmpeg task failed: {}", e)))?
+            },
+            Err(_) => {
+                // Timeout occurred - FFmpeg process is stuck
+                counter!(
+                    "ffmpeg_snapshot_timeouts_total",
+                    "input_url" => self.config.input_url.clone(),
+                    "timeout_seconds" => total_deadline.as_secs().to_string()
+                )
+                .increment(1);
+
+                warn!(
+                    url = %self.config.input_url,
+                    timeout_seconds = total_deadline.as_secs(),
+                    "FFmpeg snapshot operation timed out - process may be stuck"
+                );
+
+                return Err(Error::Config(format!(
+                    "FFmpeg snapshot timed out after {}s for {}",
+                    total_deadline.as_secs(),
+                    self.config.input_url
+                )));
+            }
+        }?;
 
         if !result.success() {
             // Log stderr for debugging
