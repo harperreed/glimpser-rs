@@ -60,6 +60,8 @@ pub struct SchedulerConfig {
     pub persistence_max_retry_delay_ms: u64,
     /// Enable dead letter queue for failed persists
     pub enable_dead_letter_queue: bool,
+    /// Maximum dead letter queue size (0 = unlimited)
+    pub max_dead_letter_queue_size: usize,
 }
 
 impl Default for SchedulerConfig {
@@ -74,6 +76,7 @@ impl Default for SchedulerConfig {
             persistence_retry_delay_ms: 100,
             persistence_max_retry_delay_ms: 5000,
             enable_dead_letter_queue: true,
+            max_dead_letter_queue_size: 1000, // Prevent unbounded memory growth
         }
     }
 }
@@ -390,6 +393,7 @@ impl JobScheduler {
                                 result.clone(),
                                 e.to_string(),
                                 retry_count,
+                                config,
                             )
                             .await;
                         }
@@ -437,6 +441,7 @@ impl JobScheduler {
         result: JobResult,
         error_message: String,
         retry_count: u32,
+        config: &SchedulerConfig,
     ) {
         let entry = DeadLetterEntry {
             execution_id: execution_id.clone(),
@@ -447,6 +452,18 @@ impl JobScheduler {
         };
 
         let mut dlq = dead_letter_queue.write().await;
+
+        // Check size limit before adding
+        if config.max_dead_letter_queue_size > 0 && dlq.len() >= config.max_dead_letter_queue_size {
+            warn!(
+                "Dead letter queue is at capacity ({}/{}). Dropping oldest entry to make room for execution {}",
+                dlq.len(),
+                config.max_dead_letter_queue_size,
+                execution_id
+            );
+            dlq.remove(0); // Remove oldest entry (FIFO)
+        }
+
         dlq.push(entry);
 
         metrics
@@ -454,9 +471,14 @@ impl JobScheduler {
             .store(dlq.len() as u64, std::sync::atomic::Ordering::Relaxed);
 
         warn!(
-            "Added execution {} to dead letter queue. Queue size: {}",
+            "Added execution {} to dead letter queue. Queue size: {}/{}",
             execution_id,
-            dlq.len()
+            dlq.len(),
+            if config.max_dead_letter_queue_size > 0 {
+                config.max_dead_letter_queue_size.to_string()
+            } else {
+                "unlimited".to_string()
+            }
         );
     }
 
@@ -476,6 +498,7 @@ impl JobScheduler {
             result,
             error_message,
             retry_count,
+            &self.config,
         )
         .await;
     }
@@ -487,10 +510,22 @@ impl JobScheduler {
 
     /// Retry processing dead letter queue entries
     ///
-    /// Note: This performs a single save attempt per entry without retry logic
+    /// This performs a single save attempt per entry without retry logic
     /// to avoid infinite loops. If the database is still unavailable, entries
     /// will remain in the queue and can be retried again later.
-    pub async fn retry_dead_letter_queue(&self) -> Result<(u32, u32)> {
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of `(success_count, failed_count)` indicating how many
+    /// entries were successfully persisted and how many failed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (success, failed) = scheduler.retry_dead_letter_queue().await;
+    /// println!("Retried DLQ: {} succeeded, {} failed", success, failed);
+    /// ```
+    pub async fn retry_dead_letter_queue(&self) -> (u32, u32) {
         let mut dlq = self.dead_letter_queue.write().await;
         let initial_count = dlq.len();
         let mut success_count = 0;
@@ -538,7 +573,7 @@ impl JobScheduler {
             dlq.len()
         );
 
-        Ok((success_count, failed_count))
+        (success_count, failed_count)
     }
 
     /// Clear dead letter queue (use with caution)
