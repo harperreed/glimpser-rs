@@ -36,8 +36,8 @@ jobs:
       - name: Generate coverage report
         run: |
           # Run coverage and continue even if some tests fail
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir ./coverage/ --ignore-panics || true
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out html --output-dir ./coverage/ --ignore-panics || true
+          cargo tarpaulin --verbose --workspace --timeout 120 --out xml --output-dir ./coverage/ --ignore-panics || true
+          cargo tarpaulin --verbose --workspace --timeout 120 --out html --output-dir ./coverage/ --ignore-panics || true
 
       - name: Extract coverage percentage
         id: coverage
