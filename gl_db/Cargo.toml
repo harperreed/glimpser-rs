@@ -17,6 +17,8 @@ tracing.workspace = true
 ulid.workspace = true
 thiserror.workspace = true
 linked-hash-map.workspace = true
+prometheus-client.workspace = true
+futures-util.workspace = true
 
 [dev-dependencies]
 # Testing utilities

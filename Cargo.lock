@@ -1845,8 +1845,10 @@ dependencies = [
 name = "gl_db"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "gl_core",
  "linked-hash-map",
+ "prometheus-client",
  "serde",
  "serde_json",
  "sqlx",

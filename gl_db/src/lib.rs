@@ -7,12 +7,21 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
     Row, Sqlite, SqlitePool,
 };
+use std::sync::Arc;
 use tracing::{debug, info, instrument};
+
+// Pool management modules
+pub mod circuit_breaker;
+pub mod metrics;
+pub mod pool_manager;
+
+// Types are re-exported below and used via module paths
 
 /// Database connection pool and operations
 #[derive(Debug, Clone)]
 pub struct Db {
     pool: SqlitePool,
+    pool_manager: pool_manager::PoolManager,
 }
 
 impl Db {
@@ -45,20 +54,26 @@ impl Db {
             .pragma("busy_timeout", "30000") // 30 second timeout for lock contention
             .pragma("mmap_size", "268435456"); // 256 MB memory-mapped I/O
 
-        // Create connection pool
+        // Create connection pool with improved configuration
         let pool = SqlitePoolOptions::new()
             .max_connections(10)
             .min_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(10)) // Explicit acquire timeout
+            .idle_timeout(Some(std::time::Duration::from_secs(600))) // Close idle connections after 10 minutes
+            .max_lifetime(Some(std::time::Duration::from_secs(1800))) // Max connection lifetime 30 minutes
             .connect_with(connect_options)
             .await
             .map_err(|e| Error::Database(format!("Failed to create connection pool: {}", e)))?;
 
-        let db = Self { pool };
+        // Create pool manager with resilience features
+        let pool_manager = pool_manager::PoolManager::new(pool.clone());
+
+        let db = Self { pool, pool_manager };
 
         // Run migrations
         db.migrate().await?;
 
-        info!("Database initialized successfully");
+        info!("Database initialized successfully with connection pool resilience");
         Ok(db)
     }
 
@@ -81,9 +96,42 @@ impl Db {
         &self.pool
     }
 
+    /// Get a reference to the pool manager
+    pub fn pool_manager(&self) -> &pool_manager::PoolManager {
+        &self.pool_manager
+    }
+
+    /// Get pool metrics
+    pub fn metrics(&self) -> &Arc<metrics::PoolMetrics> {
+        self.pool_manager.metrics()
+    }
+
+    /// Get circuit breaker
+    pub fn circuit_breaker(&self) -> &Arc<circuit_breaker::DatabaseCircuitBreaker> {
+        self.pool_manager.circuit_breaker()
+    }
+
     /// Create a Db instance from an existing pool (for testing/reuse)
     pub fn from_pool(pool: SqlitePool) -> Self {
-        Self { pool }
+        let pool_manager = pool_manager::PoolManager::new(pool.clone());
+        Self { pool, pool_manager }
+    }
+
+    /// Create a Db instance with custom pool manager configuration
+    pub fn from_pool_with_config(
+        pool: SqlitePool,
+        pool_config: pool_manager::PoolManagerConfig,
+        circuit_breaker_config: circuit_breaker::CircuitBreakerConfig,
+    ) -> Self {
+        let circuit_breaker = Arc::new(circuit_breaker::DatabaseCircuitBreaker::new(circuit_breaker_config));
+        let metrics = Arc::new(metrics::PoolMetrics::new());
+        let pool_manager = pool_manager::PoolManager::with_components(
+            pool.clone(),
+            pool_config,
+            circuit_breaker,
+            metrics,
+        );
+        Self { pool, pool_manager }
     }
 
     /// Check database health
@@ -91,10 +139,16 @@ impl Db {
     pub async fn health_check(&self) -> Result<()> {
         debug!("Performing database health check");
 
+        // Update pool metrics before health check
+        self.pool_manager.update_pool_metrics();
+
+        // Use pool manager to acquire connection with resilience
+        let mut conn = self.pool_manager.acquire().await?;
+
         sqlx::query("SELECT 1")
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Health check failed: {}", e)))?;
+            .map_err(|e| Error::Database(format!("Health check query failed: {}", e)))?;
 
         debug!("Database health check passed");
         Ok(())
@@ -124,8 +178,31 @@ impl Db {
             table_counts.insert(table.to_string(), count);
         }
 
+        // Include pool statistics
+        let pool_stats = Some(self.get_pool_stats());
+
         debug!("Database statistics gathered successfully");
-        Ok(DatabaseStats { table_counts })
+        Ok(DatabaseStats { table_counts, pool_stats })
+    }
+
+    /// Get detailed pool statistics
+    pub fn get_pool_stats(&self) -> PoolStats {
+        self.pool_manager.update_pool_metrics();
+
+        let circuit_state = self.circuit_breaker().state();
+        let state_str = match circuit_state {
+            circuit_breaker::CircuitState::Closed => "closed",
+            circuit_breaker::CircuitState::Open => "open",
+            circuit_breaker::CircuitState::HalfOpen => "half-open",
+        };
+
+        PoolStats {
+            size: self.pool.size(),
+            idle: self.pool.num_idle(),
+            active: (self.pool.size() as i64) - (self.pool.num_idle() as i64),
+            circuit_breaker_state: state_str.to_string(),
+            circuit_breaker_failures: self.circuit_breaker().failure_count(),
+        }
     }
 }
 
@@ -133,6 +210,18 @@ impl Db {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DatabaseStats {
     pub table_counts: std::collections::HashMap<String, i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool_stats: Option<PoolStats>,
+}
+
+/// Connection pool statistics
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PoolStats {
+    pub size: u32,
+    pub idle: usize,
+    pub active: i64,
+    pub circuit_breaker_state: String,
+    pub circuit_breaker_failures: u64,
 }
 
 // Repository modules
@@ -143,6 +232,9 @@ pub mod cache;
 
 // Re-export common types and repositories
 pub use cache::{CacheStats, DatabaseCache};
+pub use circuit_breaker::{CircuitBreakerConfig, CircuitState, DatabaseCircuitBreaker};
+pub use metrics::PoolMetrics;
+pub use pool_manager::{PoolManager, PoolManagerConfig};
 pub use repositories::{
     alerts::{Alert, AlertRepository, CreateAlertRequest},
     analysis_events::{AnalysisEvent, AnalysisEventRepository, CreateAnalysisEvent},
