@@ -2807,7 +2807,6 @@ async fn auth_setup_signup(
             debug!("JWT token created for first admin: {}", user.id);
 
             let response = crate::models::LoginResponse {
-                access_token: token.clone(),
                 token_type: "Bearer".to_string(),
                 expires_in: crate::auth::JwtAuth::token_expiration_secs(),
                 user: crate::models::UserInfo {

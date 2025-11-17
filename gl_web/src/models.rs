@@ -31,7 +31,6 @@ pub struct SignupRequest {
 /// Response for successful login
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct LoginResponse {
-    pub access_token: String,
     pub token_type: String,
     pub expires_in: u64,
     pub user: UserInfo,

@@ -397,7 +397,6 @@ async fn test_login_success() {
     assert!(resp.status().is_success());
 
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body["access_token"].is_string());
     assert_eq!(body["token_type"], "Bearer");
     assert!(body["user"]["email"].as_str().unwrap() == "test@example.com");
 }
@@ -987,18 +986,14 @@ mod frontend_template_tests {
 mod auth_security_tests {
     use super::*;
 
-    /// Test that verifies login response DOES contain access_token in JSON body
+    /// Test that verifies login response ONLY returns token in HTTP-only cookie
     ///
-    /// This test documents the CURRENT behavior where tokens are returned in both
-    /// the response body AND in HTTP-only cookies. This is not ideal security practice.
-    ///
-    /// SECURITY NOTE: Tokens in response bodies can be stolen via XSS attacks.
+    /// SECURITY: Tokens are NEVER in response bodies to prevent XSS token theft.
     /// HTTP-only cookies cannot be accessed by JavaScript, providing XSS protection.
     ///
-    /// The current implementation returns tokens in JSON for backwards compatibility,
-    /// but also sets them in HTTP-only cookies for security.
+    /// This ensures maximum security by eliminating the JSON token exposure vector.
     #[actix_web::test]
-    async fn test_login_returns_token_in_json_and_cookie() {
+    async fn test_login_returns_token_only_in_cookie() {
         let state = create_test_app_state().await;
         let _user = create_test_user(&state, "test@example.com", "password123").await;
 
@@ -1049,11 +1044,19 @@ mod auth_security_tests {
         );
         // Note: Secure flag is only set when security_config.secure_cookies is true
 
-        // Document current behavior: token IS also in JSON response
+        // Verify token is NOT in JSON response body
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert!(
-            body["access_token"].is_string(),
-            "Current implementation includes token in JSON (for backwards compatibility)"
+            body["access_token"].is_null(),
+            "Token must NOT be in JSON response to prevent XSS theft"
+        );
+        assert!(
+            body["user"].is_object(),
+            "Response should still include user info"
+        );
+        assert_eq!(
+            body["token_type"], "Bearer",
+            "Response should include token_type"
         );
     }
 
