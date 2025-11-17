@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tokio::{
     sync::broadcast,
@@ -27,6 +27,28 @@ pub use metrics::*;
 pub use mjpeg::*;
 #[cfg(feature = "rtsp")]
 pub use rtsp::*;
+
+/// A frame with metadata for sequence tracking and gap detection
+#[derive(Debug, Clone)]
+pub struct Frame {
+    /// Unique sequence number for this frame (monotonically increasing)
+    pub sequence: u64,
+    /// Timestamp when the frame was generated
+    pub timestamp: SystemTime,
+    /// The actual JPEG frame data
+    pub data: Bytes,
+}
+
+impl Frame {
+    /// Create a new frame with sequence number and current timestamp
+    pub fn new(sequence: u64, data: Bytes) -> Self {
+        Self {
+            sequence,
+            timestamp: SystemTime::now(),
+            data,
+        }
+    }
+}
 
 /// Configuration for MJPEG streaming
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -92,13 +114,15 @@ pub struct StreamSession {
     /// Capture handle for getting frames
     capture: CaptureHandle,
     /// Broadcaster for frames
-    frame_sender: broadcast::Sender<Bytes>,
+    frame_sender: broadcast::Sender<Frame>,
     /// Configuration
     config: StreamConfig,
     /// Metrics
     metrics: StreamMetrics,
     /// Current subscriber count
     subscribers: Arc<AtomicU64>,
+    /// Frame sequence counter
+    sequence: Arc<AtomicU64>,
 }
 
 impl StreamSession {
@@ -119,6 +143,7 @@ impl StreamSession {
             config,
             metrics,
             subscribers: Arc::new(AtomicU64::new(0)),
+            sequence: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -146,25 +171,32 @@ impl StreamSession {
             // Generate frame
             let frame_start = Instant::now();
             match tokio::time::timeout(self.config.frame_timeout, self.capture.snapshot()).await {
-                Ok(Ok(frame)) => {
+                Ok(Ok(frame_data)) => {
                     self.metrics.frames_generated.inc();
                     let frame_duration = frame_start.elapsed();
 
+                    // Get next sequence number
+                    let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+
                     debug!(
                         session_id = %self.id,
-                        frame_size = frame.len(),
+                        sequence = sequence,
+                        frame_size = frame_data.len(),
                         duration_ms = frame_duration.as_millis(),
                         subscribers = self.subscribers.load(Ordering::Relaxed),
                         "Generated frame"
                     );
 
+                    // Create frame with sequence number
+                    let frame = Frame::new(sequence, frame_data);
+
                     // Broadcast frame to all subscribers
                     match self.frame_sender.send(frame) {
                         Ok(subscriber_count) => {
-                            debug!(subscriber_count, "Frame broadcast to subscribers");
+                            debug!(subscriber_count, sequence, "Frame broadcast to subscribers");
                         }
                         Err(_) => {
-                            warn!("No active subscribers for frame");
+                            warn!(sequence, "No active subscribers for frame");
                         }
                     }
                 }
@@ -191,7 +223,7 @@ impl StreamSession {
     }
 
     /// Subscribe to the frame stream
-    pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Frame> {
         let subscriber_count = self.subscribers.fetch_add(1, Ordering::Relaxed) + 1;
         self.metrics.subscribers.set(subscriber_count as i64);
 
@@ -360,6 +392,7 @@ mod tests {
         let _ = &metrics.connections_total;
         let _ = &metrics.disconnections_total;
         let _ = &metrics.frames_dropped;
+        let _ = &metrics.sequence_gaps_total;
     }
 
     // Integration test with a mock streaming scenario
@@ -380,14 +413,14 @@ mod tests {
 
         // Send more frames than buffer can hold
         for i in 0..5 {
-            let frame = Bytes::from(format!("frame_{}", i));
+            let frame = Frame::new(i, Bytes::from(format!("frame_{}", i)));
             let _ = sender.send(frame); // Some sends might fail due to buffer size
         }
 
         // Fast receiver should get recent frames
         if let Ok(frame) = receiver1.try_recv() {
             // Should be able to receive something
-            assert!(frame.len() > 0);
+            assert!(frame.data.len() > 0);
         }
 
         // Slow receiver might lag
@@ -395,8 +428,10 @@ mod tests {
             Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
                 // Either got a frame or buffer was empty - both ok
             }
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
                 // This is what we expect for backpressure - receiver lagged behind
+                // With the new system, we can detect how many frames were skipped
+                assert!(skipped > 0, "Lagged error should report skipped frames");
             }
             Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
                 // Channel closed - also acceptable for this test
