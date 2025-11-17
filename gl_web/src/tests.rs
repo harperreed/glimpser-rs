@@ -9,6 +9,21 @@ use gl_core::Id;
 use gl_db::{CreateUserRequest, Db, UserRepository};
 use serde_json::json;
 
+// Routing tests
+
+#[actix_web::test]
+async fn test_no_duplicate_routes() {
+    // This test ensures no route conflicts exist by attempting to create the app
+    // If there are duplicate routes, this will panic during app construction
+    let state = create_test_app_state().await;
+    let app = routing::create_app(state);
+
+    // Initialize the service - this is where route conflicts would be detected
+    let _ = test::init_service(app).await;
+}
+
+// End routing tests
+
 async fn create_test_app_state() -> AppState {
     let test_id = Id::new().to_string();
     let db_path = format!("test_web_{}.db", test_id);

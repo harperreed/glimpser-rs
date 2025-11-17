@@ -20,7 +20,23 @@ pub mod frontend;
 pub mod hybrid_server;
 pub mod middleware;
 pub mod models;
+
+/// Route handler implementations
+///
+/// The routes/ directory contains all HTTP handler functions that process
+/// requests and generate responses. Each module typically exports handler
+/// functions that are referenced by the routing configuration.
 pub mod routes;
+
+/// Route configuration and middleware wiring
+///
+/// The routing/ directory contains functions that configure Actix-web routes,
+/// map URL paths to handlers, and apply middleware. This separation keeps
+/// handler logic (routes/) distinct from routing configuration (routing/).
+///
+/// Architecture:
+/// - routes/ = handler implementations (the "what")
+/// - routing/ = route configuration (the "how" and "where")
 pub mod routing;
 
 #[cfg(test)]
