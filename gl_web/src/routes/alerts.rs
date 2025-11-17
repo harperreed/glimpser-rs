@@ -213,7 +213,7 @@ pub async fn test_notification(
     Ok(HttpResponse::Ok().json(ApiResponse::success(response)))
 }
 
-/// Preview CAP XML for a given template/event
+/// Preview CAP XML for a given stream and event
 pub async fn cap_preview(payload: web::Json<CapPreviewRequest>) -> ActixResult<HttpResponse> {
     info!(
         profile = ?payload.profile,
