@@ -1,5 +1,23 @@
-//! ABOUTME: Authentication utilities for password hashing and JWT operations
-//! ABOUTME: Provides secure password verification and JWT token management
+//! ABOUTME: JWT authentication with secure HTTP-only cookie storage
+//! ABOUTME: Provides login, token validation, and CSRF protection
+//!
+//! ## Security Architecture
+//!
+//! This module implements secure authentication using JWT tokens stored in
+//! HTTP-only cookies, which provides protection against XSS attacks.
+//!
+//! ### Why HTTP-only Cookies (not localStorage)
+//!
+//! - **HttpOnly flag**: Prevents JavaScript from accessing tokens, mitigating XSS
+//! - **Secure flag**: Ensures tokens only sent over HTTPS
+//! - **SameSite flag**: Provides CSRF protection
+//!
+//! ### Security Properties
+//!
+//! 1. Tokens are NEVER exposed to JavaScript
+//! 2. Tokens are NEVER sent in response bodies
+//! 3. Tokens are NEVER stored in localStorage or sessionStorage
+//! 4. All authentication uses HTTP-only, Secure cookies
 
 use crate::models::Claims;
 use argon2::{
