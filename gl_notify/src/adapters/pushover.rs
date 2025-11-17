@@ -182,8 +182,39 @@ impl Notifier for PushoverAdapter {
             ));
         }
 
-        // TODO: Could make a test API call to validate token
-        Ok(())
+        // Validate token with Pushover API
+        debug!("Validating Pushover app token with API");
+
+        let response = self
+            .client
+            .get("https://api.pushover.net/1/apps/limits.json")
+            .query(&[("token", &self.app_token)])
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Failed to validate Pushover token");
+                NotificationError::HttpError(e)
+            })?;
+
+        if response.status().is_success() {
+            info!("Pushover app token validated successfully");
+            Ok(())
+        } else {
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read response".to_string());
+            warn!(
+                status = %status,
+                body = %body,
+                "Pushover token validation failed"
+            );
+            Err(NotificationError::PushoverError(format!(
+                "Token validation failed {}: {}",
+                status, body
+            )))
+        }
     }
 
     fn name(&self) -> &str {
