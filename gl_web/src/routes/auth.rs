@@ -73,7 +73,6 @@ pub async fn login(
                             debug!("JWT token created for user: {}", user.id);
 
                             let response = LoginResponse {
-                                access_token: token.clone(),
                                 token_type: "Bearer".to_string(),
                                 expires_in: JwtAuth::token_expiration_secs(),
                                 user: UserInfo {
@@ -257,7 +256,6 @@ pub async fn setup_signup(
                     debug!("JWT token created for first admin: {}", user.id);
 
                     let response = LoginResponse {
-                        access_token: token.clone(),
                         token_type: "Bearer".to_string(),
                         expires_in: JwtAuth::token_expiration_secs(),
                         user: UserInfo {

@@ -3,7 +3,7 @@
 
 use crate::{
     middleware::auth::get_http_auth_user,
-    models::{ErrorResponse, StreamInfo, StreamStatus, TemplateKind, UserInfo},
+    models::{ErrorResponse, StreamConfig, StreamInfo, StreamStatus, UserInfo},
     AppState,
 };
 use actix_web::{get, web, HttpRequest, HttpResponse, Result};
@@ -114,7 +114,7 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
 
             for stream in streams {
                 // Parse the config JSON string
-                let config: TemplateKind = match serde_json::from_str(&stream.config) {
+                let config: StreamConfig = match serde_json::from_str(&stream.config) {
                     Ok(config) => config,
                     Err(e) => {
                         error!(
@@ -201,20 +201,20 @@ pub async fn streams(state: web::Data<AppState>) -> Result<HttpResponse> {
 }
 
 /// Extract source URL from stream configuration JSON
-fn extract_source_from_stream_config(config: &TemplateKind) -> Option<String> {
+fn extract_source_from_stream_config(config: &StreamConfig) -> Option<String> {
     match config {
-        TemplateKind::Website(c) => Some(c.url.clone()),
-        TemplateKind::Rtsp(c) => Some(c.url.clone()),
-        TemplateKind::Ffmpeg(c) => Some(c.source_url.clone()),
-        TemplateKind::File(c) => Some(c.file_path.clone()),
-        TemplateKind::Yt(c) => Some(c.url.clone()),
+        StreamConfig::Website(c) => Some(c.url.clone()),
+        StreamConfig::Rtsp(c) => Some(c.url.clone()),
+        StreamConfig::Ffmpeg(c) => Some(c.source_url.clone()),
+        StreamConfig::File(c) => Some(c.file_path.clone()),
+        StreamConfig::Yt(c) => Some(c.url.clone()),
     }
 }
 
-/// Extract resolution from template configuration
-fn extract_resolution_from_config(config: &TemplateKind) -> Option<String> {
+/// Extract resolution from stream configuration
+fn extract_resolution_from_config(config: &StreamConfig) -> Option<String> {
     match config {
-        TemplateKind::Website(c) => match (c.width, c.height) {
+        StreamConfig::Website(c) => match (c.width, c.height) {
             (Some(w), Some(h)) => Some(format!("{}x{}", w, h)),
             _ => None,
         },
@@ -222,14 +222,14 @@ fn extract_resolution_from_config(config: &TemplateKind) -> Option<String> {
     }
 }
 
-/// Get appropriate FPS value based on template type
-fn get_fps_for_stream_type(config: &TemplateKind) -> u32 {
+/// Get appropriate FPS value based on stream type
+fn get_fps_for_stream_type(config: &StreamConfig) -> u32 {
     match config {
-        TemplateKind::Website(_) => 1, // Website captures are typically 1 frame per interval
-        TemplateKind::Rtsp(_) => 30,   // RTSP streams are usually 30 FPS
-        TemplateKind::Ffmpeg(_) => 30, // FFmpeg streams are usually 30 FPS
-        TemplateKind::File(_) => 24,   // Video files often 24 FPS
-        TemplateKind::Yt(_) => 30,     // YouTube streams typically 30 FPS
+        StreamConfig::Website(_) => 1, // Website captures are typically 1 frame per interval
+        StreamConfig::Rtsp(_) => 30,   // RTSP streams are usually 30 FPS
+        StreamConfig::Ffmpeg(_) => 30, // FFmpeg streams are usually 30 FPS
+        StreamConfig::File(_) => 24,   // Video files often 24 FPS
+        StreamConfig::Yt(_) => 30,     // YouTube streams typically 30 FPS
     }
 }
 
@@ -243,12 +243,12 @@ pub async fn alerts() -> Result<HttpResponse> {
 mod tests {
     use super::*;
     use crate::models::{
-        FfmpegTemplate, FileTemplate, RtspTemplate, TemplateKind, WebsiteTemplate, YtTemplate,
+        FfmpegConfig, FileConfig, RtspConfig, StreamConfig, WebsiteConfig, YtConfig,
     };
 
     #[test]
     fn extract_source_from_rtsp_config() {
-        let config = TemplateKind::Rtsp(RtspTemplate {
+        let config = StreamConfig::Rtsp(RtspConfig {
             url: "rtsp://camera".into(),
         });
         assert_eq!(
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn extract_source_from_file_config() {
-        let config = TemplateKind::File(FileTemplate {
+        let config = StreamConfig::File(FileConfig {
             file_path: "/tmp/video.mp4".into(),
         });
         assert_eq!(
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn extract_source_from_ffmpeg_config() {
-        let config = TemplateKind::Ffmpeg(FfmpegTemplate {
+        let config = StreamConfig::Ffmpeg(FfmpegConfig {
             source_url: "rtsp://cam".into(),
         });
         assert_eq!(
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn extract_source_from_website_config() {
-        let config = TemplateKind::Website(WebsiteTemplate {
+        let config = StreamConfig::Website(WebsiteConfig {
             url: "https://example.com".into(),
             headless: None,
             stealth: None,
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn extract_source_from_yt_config() {
-        let config = TemplateKind::Yt(YtTemplate {
+        let config = StreamConfig::Yt(YtConfig {
             url: "https://youtu.be/test".into(),
             format: None,
             is_live: None,
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn fps_for_file_config() {
-        let config = TemplateKind::File(FileTemplate {
+        let config = StreamConfig::File(FileConfig {
             file_path: "/tmp/video.mp4".into(),
         });
         assert_eq!(get_fps_for_stream_type(&config), 24);

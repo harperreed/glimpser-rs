@@ -9,7 +9,7 @@ use validator::Validate;
 
 use crate::{
     middleware::auth::get_http_auth_user,
-    models::{ApiResponse, TemplateKind},
+    models::{ApiResponse, StreamConfig},
 };
 
 /// Query parameters for listing streams
@@ -38,7 +38,7 @@ pub struct CreateStreamApiRequest {
     pub name: String,
     #[validate(length(max = 500))]
     pub description: Option<String>,
-    pub config: TemplateKind,
+    pub config: StreamConfig,
     #[serde(default)]
     pub is_default: bool,
 }
@@ -50,7 +50,7 @@ pub struct UpdateStreamApiRequest {
     pub name: Option<String>,
     #[validate(length(max = 500))]
     pub description: Option<String>,
-    pub config: Option<TemplateKind>,
+    pub config: Option<StreamConfig>,
     pub is_default: Option<bool>,
 }
 
@@ -70,13 +70,13 @@ fn generate_etag(stream: &Stream) -> String {
 }
 
 /// Validate stream configuration
-fn validate_stream_config(config: &TemplateKind) -> Result<(), String> {
+fn validate_stream_config(config: &StreamConfig) -> Result<(), String> {
     match config {
-        TemplateKind::Rtsp(c) => c.validate(),
-        TemplateKind::Ffmpeg(c) => c.validate(),
-        TemplateKind::File(c) => c.validate(),
-        TemplateKind::Website(c) => c.validate(),
-        TemplateKind::Yt(c) => c.validate(),
+        StreamConfig::Rtsp(c) => c.validate(),
+        StreamConfig::Ffmpeg(c) => c.validate(),
+        StreamConfig::File(c) => c.validate(),
+        StreamConfig::Website(c) => c.validate(),
+        StreamConfig::Yt(c) => c.validate(),
     }
     .map_err(|e| e.to_string())
 }
@@ -505,20 +505,20 @@ pub async fn delete_stream_service(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::TemplateKind;
+    use crate::models::StreamConfig;
     use gl_db::Stream;
     use serde_json::json;
 
     #[test]
     fn test_ffmpeg_config_validation() {
-        let valid_config: TemplateKind = serde_json::from_value(json!({
+        let valid_config: StreamConfig = serde_json::from_value(json!({
             "kind": "ffmpeg",
             "source_url": "rtsp://camera/stream"
         }))
         .unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "ffmpeg"
         }));
         assert!(invalid_config.is_err());
@@ -526,14 +526,14 @@ mod tests {
 
     #[test]
     fn test_file_config_validation() {
-        let valid_config: TemplateKind = serde_json::from_value(json!({
+        let valid_config: StreamConfig = serde_json::from_value(json!({
             "kind": "file",
             "file_path": "/path/to/video.mp4"
         }))
         .unwrap();
         assert!(validate_stream_config(&valid_config).is_ok());
 
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "file"
         }));
         assert!(invalid_config.is_err());
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_website_config_validation() {
-        let valid_config: TemplateKind = serde_json::from_value(json!({
+        let valid_config: StreamConfig = serde_json::from_value(json!({
             "kind": "website",
             "url": "https://example.com",
             "headless": true,
@@ -554,13 +554,13 @@ mod tests {
         assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "website"
         }));
         assert!(invalid_config.is_err());
 
         // Invalid url
-        let invalid_config: TemplateKind = serde_json::from_value(json!({
+        let invalid_config: StreamConfig = serde_json::from_value(json!({
             "kind": "website",
             "url": "not-a-url"
         }))
@@ -568,7 +568,7 @@ mod tests {
         assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid field types
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "website",
             "url": "https://example.com",
             "headless": "not-a-boolean"
@@ -578,7 +578,7 @@ mod tests {
 
     #[test]
     fn test_yt_config_validation() {
-        let valid_config: TemplateKind = serde_json::from_value(json!({
+        let valid_config: StreamConfig = serde_json::from_value(json!({
             "kind": "yt",
             "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "format": "best",
@@ -592,13 +592,13 @@ mod tests {
         assert!(validate_stream_config(&valid_config).is_ok());
 
         // Missing url
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "yt"
         }));
         assert!(invalid_config.is_err());
 
         // Invalid url
-        let invalid_config: TemplateKind = serde_json::from_value(json!({
+        let invalid_config: StreamConfig = serde_json::from_value(json!({
             "kind": "yt",
             "url": "not-a-url"
         }))
@@ -606,21 +606,21 @@ mod tests {
         assert!(validate_stream_config(&invalid_config).is_err());
 
         // Invalid field types
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "is_live": "not-a-boolean"
         }));
         assert!(invalid_config.is_err());
 
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "timeout": "not-a-number"
         }));
         assert!(invalid_config.is_err());
 
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "yt",
             "url": "https://youtube.com/watch?v=test",
             "options": "not-an-object"
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_unknown_kind_validation() {
-        let invalid_config = serde_json::from_value::<TemplateKind>(json!({
+        let invalid_config = serde_json::from_value::<StreamConfig>(json!({
             "kind": "unknown"
         }));
         assert!(invalid_config.is_err());
